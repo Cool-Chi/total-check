@@ -1,0 +1,46 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+build/
+*/build/
+
+# Local configuration & Secrets (嚴禁入庫)
+local.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pepk
+
+# IDE & Editor files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Logs & OS files
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
