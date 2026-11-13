@@ -22,4 +22,4 @@
 
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。
-- **最高優先級約束 — Git 版控紀律**：所有任務指令結束後，僅在確定通過使用者或實機驗證時，依指示呼叫本地 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交與版本標記；**嚴禁**未經授權手動執行 `git commit` 或 `git tag`。
+- **Git 版控紀律**：每次完成任務修改並通過編譯安裝後，Agent 應直接呼叫本地 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交（Atomic Commit）並打上對應版本 Tag。
