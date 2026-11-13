@@ -3,20 +3,16 @@ package com.example.totalcheck.ui.main
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,7 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.RestartAlt
@@ -50,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -62,23 +59,43 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -91,9 +108,11 @@ import androidx.compose.ui.util.lerp
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import com.example.totalcheck.ui.theme.LocalThemeTransitioning
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 @Composable
 fun CapsuleProgressModule(
@@ -275,12 +294,48 @@ fun CapsuleProgressModule(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DashedCapsuleEmptySlot(
+    heightDp: Dp,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val fillColor = colorScheme.surfaceContainerLow.copy(alpha = 0.45f)
+    val dashColor = colorScheme.primary.copy(alpha = 0.42f)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(heightDp)
+            .clip(RoundedCornerShape(24.dp))
+            .drawBehind {
+                val r = 24.dp.toPx()
+                val corner = CornerRadius(r, r)
+                drawRoundRect(
+                    color = fillColor,
+                    cornerRadius = corner
+                )
+                val strokePx = 1.5.dp.toPx()
+                drawRoundRect(
+                    color = dashColor,
+                    cornerRadius = corner,
+                    style = Stroke(
+                        width = strokePx,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
+                    )
+                )
+            }
+    )
+}
+
 @Composable
 fun CapsuleCheckItemRow(
     item: CheckItemEntity,
     onToggle: () -> Unit,
     isEditing: Boolean = false,
+    isFloatingDragged: Boolean = false,
+    stackDepthProvider: () -> Float = { 0f },
+    isCompressedStackCard: Boolean = false,
+    onCompressedClick: (() -> Unit)? = null,
     resetWaveKey: Int = 0,
     resetDelayMs: Int? = null,
     resetTriggeredAtMillis: Long = 0L,
@@ -288,14 +343,18 @@ fun CapsuleCheckItemRow(
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
     onDelete: () -> Unit = {},
+    onDragCoordsUpdated: ((rowCoords: LayoutCoordinates, handleCoords: LayoutCoordinates) -> Unit)? = null,
+    onDragCoordsCleared: (() -> Unit)? = null,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
     val isReducedMotion = LocalReducedMotion.current
 
     // Staggered Bulk Selection (一鍵重置錯峰波浪)
@@ -380,27 +439,52 @@ fun CapsuleCheckItemRow(
         }
     }
 
-    // Curved Card Deletion (左滑或垃圾桶曲線刪除)
-    var cardWidthPx by remember(item.id) { mutableFloatStateOf(0f) }
+    // Hold-to-Delete Perimeter Ring (按住 150ms 後外圈 24dp 進度環於 1000ms 線性填滿刪除，中途放開/移出/取消於 300ms 內退回)
+    var isPressed by remember(item.id) { mutableStateOf(false) }
     var isDeleting by remember(item.id) { mutableStateOf(false) }
-    var exitStartX by remember(item.id) { mutableFloatStateOf(0f) }
-    val dragOffsetX = remember(item.id) { Animatable(0f) }
-    val exitProgress = remember(item.id) { Animatable(0f) }
-    val curveDropPx = with(density) { 72.dp.toPx() }
-    val cornerRadiusPx = with(density) { 24.dp.toPx() }
+    val holdRingProgress = remember(item.id) { Animatable(0f) }
+    val deleteExitProgress = remember(item.id) { Animatable(0f) }
+    var holdAnimJob by remember(item.id) { mutableStateOf<Job?>(null) }
 
-    val triggerCurvedDelete: () -> Unit = {
+    DisposableEffect(item.id) {
+        onDispose {
+            holdAnimJob?.cancel()
+            holdAnimJob = null
+        }
+    }
+
+    val cornerRadiusPx = with(density) { 24.dp.toPx() }
+    val ringStrokePx = with(density) { 2.5.dp.toPx() }
+    val perimeterPath = remember(item.id) { Path() }
+    val progressSegmentPath = remember(item.id) { Path() }
+    val pathMeasure = remember(item.id) { PathMeasure() }
+    var cachedRingSize by remember(item.id) { mutableStateOf(Size.Zero) }
+    var rowLayoutCoords by remember(item.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var handleLayoutCoords by remember(item.id) { mutableStateOf<LayoutCoordinates?>(null) }
+
+    DisposableEffect(item.id, isEditing, isCompressedStackCard) {
+        if (isEditing || isCompressedStackCard) {
+            onDragCoordsCleared?.invoke()
+        }
+        onDispose {
+            if (isEditing || isCompressedStackCard) {
+                onDragCoordsCleared?.invoke()
+            }
+        }
+    }
+
+    val triggerHoldDelete: () -> Unit = {
         if (!isDeleting) {
             isDeleting = true
+            isPressed = false
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             if (isReducedMotion) {
                 onDelete()
             } else {
                 scope.launch {
-                    exitStartX = dragOffsetX.value
-                    exitProgress.animateTo(
+                    deleteExitProgress.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = 280, easing = FastOutLinearInEasing)
+                        animationSpec = tween(durationMillis = 160, easing = LinearEasing)
                     )
                     onDelete()
                 }
@@ -408,189 +492,235 @@ fun CapsuleCheckItemRow(
         }
     }
 
+    val startRewindRing: () -> Unit = {
+        holdAnimJob?.cancel()
+        holdAnimJob = scope.launch {
+            val current = holdRingProgress.value
+            if (current > 0f) {
+                val rewindDuration = (300f * current).roundToInt().coerceIn(80, 300)
+                holdRingProgress.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = rewindDuration, easing = LinearEasing)
+                )
+            }
+        }
+    }
+
     val pressScale = animateFloatAsState(
-        targetValue = if (isPressed && !isEditing && !isDeleting) 0.97f else 1f,
+        targetValue = when {
+            isFloatingDragged -> 1.03f
+            isPressed && !isEditing && !isDeleting -> 0.97f
+            else -> 1f
+        },
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsulePressScale"
     )
     val uncheckedContainerColor = colorScheme.surfaceContainerHigh
     val checkedContainerColor = colorScheme.surfaceContainerLow
-    val uncheckedBorderColor = if (isEditing) colorScheme.primary else colorScheme.tertiary.copy(alpha = 0.55f)
-    val checkedBorderColor = if (isEditing) colorScheme.primary else colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val uncheckedBorderColor = when {
+        isFloatingDragged || isEditing -> colorScheme.primary
+        else -> colorScheme.tertiary.copy(alpha = 0.55f)
+    }
+    val checkedBorderColor = when {
+        isFloatingDragged || isEditing -> colorScheme.primary
+        else -> colorScheme.outlineVariant.copy(alpha = 0.4f)
+    }
+    val ringTrackBorderColor = colorScheme.outlineVariant.copy(alpha = 0.45f)
+    val ringFillColor = colorScheme.error
     val uncheckedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.tertiary
     val checkedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.outline
     val uncheckedBadgeBgColor = colorScheme.tertiaryContainer
     val checkedBadgeBgColor = colorScheme.surfaceContainerHighest
 
+    val isDarkSurface = colorScheme.surface.luminance() < 0.5f
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .onSizeChanged { cardWidthPx = it.width.toFloat() }
-    ) {
-        // 背景刪除垃圾桶指示膠囊（僅於左滑或曲線退出時於 Layer/Draw 階段顯現）
-        val trashRevealErrorBg = colorScheme.errorContainer
-        val trashThresholdErrorBg = colorScheme.error
-        val trashRevealTint = colorScheme.onErrorContainer
-        val trashThresholdTint = colorScheme.onError
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(vertical = 2.dp, horizontal = 4.dp)
-                .graphicsLayer {
-                    val dragFraction = if (cardWidthPx > 0f) {
-                        (-dragOffsetX.value / (cardWidthPx * 0.35f)).coerceIn(0f, 1f)
-                    } else {
-                        0f
-                    }
-                    val reveal = maxOf(dragFraction, exitProgress.value)
-                    alpha = (reveal * 1.15f).coerceIn(0f, 1f) * (1f - exitProgress.value * 0.4f)
+            .testTag("check_item_card_${item.id}")
+            .onGloballyPositioned { coords ->
+                rowLayoutCoords = coords
+                val hCoords = handleLayoutCoords
+                if (!isCompressedStackCard && hCoords != null && coords.isAttached && hCoords.isAttached) {
+                    onDragCoordsUpdated?.invoke(coords, hCoords)
                 }
-                .clip(RoundedCornerShape(24.dp))
-                .drawBehind {
-                    val thresholdReached = cardWidthPx > 0f && -dragOffsetX.value >= cardWidthPx * 0.35f
-                    drawRect(if (thresholdReached || exitProgress.value > 0f) trashThresholdErrorBg else trashRevealErrorBg)
-                }
-                .padding(horizontal = 20.dp),
-            contentAlignment = Alignment.CenterEnd
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.graphicsLayer {
-                    val thresholdReached = cardWidthPx > 0f && -dragOffsetX.value >= cardWidthPx * 0.35f
-                    val targetScale = if (thresholdReached || exitProgress.value > 0f) 1.08f else 0.92f
-                    scaleX = targetScale
-                    scaleY = targetScale
-                }
-            ) {
-                val thresholdReached = cardWidthPx > 0f && -dragOffsetX.value >= cardWidthPx * 0.35f
-                val tintColor = if (thresholdReached || exitProgress.value > 0f) trashThresholdTint else trashRevealTint
-                Text(
-                    text = "刪除",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = tintColor
-                )
-                Icon(
-                    imageVector = Icons.Rounded.DeleteOutline,
-                    contentDescription = null,
-                    tint = tintColor,
-                    modifier = Modifier.size(20.dp)
-                )
             }
-        }
-
-        // 前景項目膠囊卡片：所有縮放、位移、旋轉、淡出與底色/邊框重繪全面下沉至 graphicsLayer & drawBehind
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer {
-                    val progress = exitProgress.value
-                    val width = if (cardWidthPx > 0f) cardWidthPx else 1000f
-                    val tx = if (progress > 0f) {
-                        lerp(exitStartX, -width * 1.1f, progress)
-                    } else {
-                        dragOffsetX.value
-                    }
-                    val ty = (progress * progress) * curveDropPx
-                    val totalScale = pressScale.value * wavePulseScale.value * lerp(1f, 0.78f, progress)
-                    translationX = tx
-                    translationY = ty
+                    val exit = deleteExitProgress.value
+                    val totalScale = pressScale.value * wavePulseScale.value * lerp(1f, 0.88f, exit)
                     scaleX = totalScale
                     scaleY = totalScale
-                    rotationZ = lerp(0f, -7f, progress)
-                    alpha = lerp(1f, 0f, progress)
+                    alpha = lerp(1f, 0f, exit)
+                    shadowElevation = if (isFloatingDragged) 14.dp.toPx() else 0f
                 }
+                .then(
+                    if (isFloatingDragged) {
+                        Modifier.shadow(elevation = 10.dp, shape = RoundedCornerShape(24.dp), clip = false)
+                    } else {
+                        Modifier
+                    }
+                )
                 .clip(RoundedCornerShape(24.dp))
                 .drawBehind {
                     val t = checkedProgress.value.coerceIn(0f, 1f)
+                    val ringProgress = holdRingProgress.value.coerceIn(0f, 1f)
                     val corner = CornerRadius(cornerRadiusPx, cornerRadiusPx)
                     drawRoundRect(
                         color = lerpColor(uncheckedContainerColor, checkedContainerColor, t),
                         cornerRadius = corner
                     )
-                    val strokePx = lerp(1.5f, 1f, t).dp.toPx()
+                    // 貼合外框之平常未填充進度環（底環）與長按填滿進度弧（頂環）
+                    val baseBorderStrokePx = if (isFloatingDragged) {
+                        2.dp.toPx()
+                    } else {
+                        lerp(1.5f, 1f, t).dp.toPx()
+                    }
+                    val baseBorderColor = if (ringProgress > 0.001f) {
+                        ringTrackBorderColor
+                    } else {
+                        lerpColor(uncheckedBorderColor, checkedBorderColor, t)
+                    }
                     drawRoundRect(
-                        color = lerpColor(uncheckedBorderColor, checkedBorderColor, t),
+                        color = baseBorderColor,
                         cornerRadius = corner,
-                        style = Stroke(width = strokePx)
+                        style = Stroke(width = baseBorderStrokePx)
                     )
+                    if (ringProgress > 0.001f && size.width > 0f && size.height > 0f) {
+                        if (cachedRingSize != size) {
+                            cachedRingSize = size
+                            buildClockwisePerimeterPath(
+                                width = size.width,
+                                height = size.height,
+                                cornerRadius = cornerRadiusPx,
+                                strokeWidth = ringStrokePx,
+                                outPath = perimeterPath
+                            )
+                            pathMeasure.setPath(perimeterPath, false)
+                        }
+                        val totalLen = pathMeasure.length
+                        if (totalLen > 0f) {
+                            progressSegmentPath.reset()
+                            pathMeasure.getSegment(
+                                startDistance = 0f,
+                                stopDistance = totalLen * ringProgress,
+                                destination = progressSegmentPath,
+                                startWithMoveTo = true
+                            )
+                            drawPath(
+                                path = progressSegmentPath,
+                                color = ringFillColor,
+                                style = Stroke(
+                                    width = ringStrokePx,
+                                    cap = StrokeCap.Round
+                                )
+                            )
+                        }
+                    }
                 }
-                .pointerInput(isEditing, isDeleting, isReducedMotion) {
+                .drawWithContent {
+                    drawContent()
+                    val depth = stackDepthProvider().coerceIn(0f, 4f)
+                    if (depth > 0.01f && !isFloatingDragged) {
+                        val maxDim = if (isDarkSurface) 0.42f else 0.22f
+                        val stepDim = if (isDarkSurface) 0.11f else 0.055f
+                        val dimAlpha = (depth * stepDim).coerceIn(0f, maxDim)
+                        val corner = CornerRadius(cornerRadiusPx, cornerRadiusPx)
+                        drawRoundRect(
+                            color = Color.Black.copy(alpha = dimAlpha),
+                            cornerRadius = corner
+                        )
+                    }
+                }
+                .pointerInput(isEditing, isDeleting, isReducedMotion, isCompressedStackCard) {
                     if (isEditing || isDeleting) return@pointerInput
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var totalDx = 0f
-                        var totalDy = 0f
+                        val down = awaitFirstDown(requireUnconsumed = true)
+                        if (isCompressedStackCard) {
+                            val touchSlop = viewConfiguration.touchSlop
+                            while (true) {
+                                val event = awaitPointerEvent(pass = PointerEventPass.Final)
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                if (change == null || change.isConsumed) break
+                                if (!change.pressed) {
+                                    val movedDist = hypot(
+                                        change.position.x - down.position.x,
+                                        change.position.y - down.position.y
+                                    )
+                                    if (movedDist <= touchSlop) {
+                                        onCompressedClick?.invoke()
+                                    }
+                                    break
+                                }
+                            }
+                            return@awaitEachGesture
+                        }
+                        isPressed = true
+                        var holdEngaged = false
+                        var cancelledOrLeft = false
                         val touchSlop = viewConfiguration.touchSlop
-                        var draggingLeft = false
+
+                        holdAnimJob?.cancel()
+                        val currentHoldJob = scope.launch {
+                            delay(150L)
+                            if (cancelledOrLeft || isDeleting) return@launch
+                            holdEngaged = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val startVal = holdRingProgress.value.coerceIn(0f, 1f)
+                            val fillDurationMs = ((1f - startVal) * 1000f).roundToInt().coerceAtLeast(1)
+                            holdRingProgress.animateTo(
+                                targetValue = 1f,
+                                animationSpec = tween(durationMillis = fillDurationMs, easing = LinearEasing)
+                            )
+                            if (!cancelledOrLeft && !isDeleting && holdRingProgress.value >= 0.999f) {
+                                triggerHoldDelete()
+                            }
+                        }
+                        holdAnimJob = currentHoldJob
 
                         while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) {
-                                if (draggingLeft) {
-                                    val thresholdPx = cardWidthPx * 0.35f
-                                    if (cardWidthPx > 0f && -dragOffsetX.value >= thresholdPx) {
-                                        triggerCurvedDelete()
-                                    } else {
-                                        scope.launch {
-                                            dragOffsetX.animateTo(
-                                                targetValue = 0f,
-                                                animationSpec = spring(dampingRatio = 0.78f, stiffness = 380f)
-                                            )
-                                        }
+                            val event = awaitPointerEvent(pass = PointerEventPass.Final)
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || change.isConsumed) {
+                                cancelledOrLeft = true
+                                isPressed = false
+                                startRewindRing()
+                                break
+                            }
+
+                            val pos = change.position
+                            val isInsideBounds = pos.x in 0f..size.width.toFloat() &&
+                                pos.y in 0f..size.height.toFloat()
+
+                            if (!isInsideBounds) {
+                                cancelledOrLeft = true
+                                isPressed = false
+                                startRewindRing()
+                                break
+                            }
+
+                            if (!change.pressed) {
+                                isPressed = false
+                                if (holdEngaged) {
+                                    if (!isDeleting) {
+                                        cancelledOrLeft = true
+                                        startRewindRing()
+                                    }
+                                } else {
+                                    currentHoldJob.cancel()
+                                    val movedDist = hypot(pos.x - down.position.x, pos.y - down.position.y)
+                                    if (movedDist <= touchSlop) {
+                                        onToggle()
                                     }
                                 }
                                 break
-                            }
-                            if (change.isConsumed) {
-                                if (draggingLeft) {
-                                    scope.launch {
-                                        dragOffsetX.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(dampingRatio = 0.78f, stiffness = 380f)
-                                        )
-                                    }
-                                }
-                                break
-                            }
-                            val delta = change.positionChange()
-                            if (!draggingLeft) {
-                                totalDx += delta.x
-                                totalDy += delta.y
-                                if (abs(totalDy) > touchSlop && abs(totalDy) > abs(totalDx)) {
-                                    break
-                                }
-                                if (totalDx > touchSlop && abs(totalDx) > abs(totalDy)) {
-                                    break
-                                }
-                                if (totalDx < -touchSlop && abs(totalDx) > abs(totalDy)) {
-                                    draggingLeft = true
-                                    change.consume()
-                                    val clamped = totalDx.coerceAtMost(0f)
-                                    scope.launch { dragOffsetX.snapTo(clamped) }
-                                }
-                            } else {
-                                change.consume()
-                                val nextX = (dragOffsetX.value + delta.x).coerceAtMost(0f)
-                                scope.launch { dragOffsetX.snapTo(nextX) }
                             }
                         }
                     }
                 }
-                .then(
-                    if (isEditing || isDeleting) {
-                        Modifier
-                    } else {
-                        Modifier.combinedClickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                            onClick = onToggle,
-                            onLongClick = onStartEdit
-                        )
-                    }
-                )
         ) {
             Row(
                 modifier = Modifier
@@ -735,8 +865,16 @@ fun CapsuleCheckItemRow(
                         )
                     }
                     IconButton(
-                        onClick = onStartEdit,
-                        modifier = Modifier.size(34.dp)
+                        onClick = {
+                            if (isCompressedStackCard) {
+                                onCompressedClick?.invoke()
+                            } else {
+                                onStartEdit()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("edit_item_button_${item.id}")
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Edit,
@@ -745,14 +883,79 @@ fun CapsuleCheckItemRow(
                             modifier = Modifier.size(17.dp)
                         )
                     }
-                    IconButton(
-                        onClick = triggerCurvedDelete,
-                        modifier = Modifier.size(34.dp)
+
+                    // 六點拖曳手把（位於最右側 34.dp 槽位，支援即時觸控拖曳、鍵盤上下移動及無障礙自訂操作）
+                    var isHandleFocused by remember(item.id) { mutableStateOf(false) }
+                    val focusRingColor = colorScheme.primary
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("drag_handle_${item.id}")
+                            .onGloballyPositioned { coords ->
+                                handleLayoutCoords = coords
+                                val rCoords = rowLayoutCoords
+                                if (!isCompressedStackCard && rCoords != null && rCoords.isAttached && coords.isAttached) {
+                                    onDragCoordsUpdated?.invoke(rCoords, coords)
+                                }
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .drawBehind {
+                                if (isHandleFocused) {
+                                    val r = 10.dp.toPx()
+                                    drawRoundRect(
+                                        color = focusRingColor,
+                                        cornerRadius = CornerRadius(r, r),
+                                        style = Stroke(width = 2.dp.toPx())
+                                    )
+                                }
+                            }
+                            .onFocusChanged { isHandleFocused = it.isFocused }
+                            .focusable()
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown) {
+                                    when (event.key) {
+                                        Key.DirectionUp -> {
+                                            if (canMoveUp && onMoveUp != null) {
+                                                onMoveUp()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        Key.DirectionDown -> {
+                                            if (canMoveDown && onMoveDown != null) {
+                                                onMoveDown()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        else -> false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            .semantics {
+                                contentDescription = "拖曳排序「${item.label}」"
+                                val actions = buildList {
+                                    if (canMoveUp && onMoveUp != null) {
+                                        add(CustomAccessibilityAction("上移一格") { onMoveUp(); true })
+                                    }
+                                    if (canMoveDown && onMoveDown != null) {
+                                        add(CustomAccessibilityAction("下移一格") { onMoveDown(); true })
+                                    }
+                                }
+                                if (actions.isNotEmpty()) {
+                                    customActions = actions
+                                }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.DeleteOutline,
-                            contentDescription = "刪除項目",
-                            tint = colorScheme.onSurfaceVariant,
+                            imageVector = Icons.Rounded.DragIndicator,
+                            contentDescription = null,
+                            tint = if (isFloatingDragged) colorScheme.primary else colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -760,4 +963,60 @@ fun CapsuleCheckItemRow(
             }
         }
     }
+}
+
+private fun buildClockwisePerimeterPath(
+    width: Float,
+    height: Float,
+    cornerRadius: Float,
+    strokeWidth: Float,
+    outPath: Path
+) {
+    outPath.reset()
+    val halfStroke = strokeWidth / 2f
+    val left = halfStroke
+    val top = halfStroke
+    val right = (width - halfStroke).coerceAtLeast(left + 1f)
+    val bottom = (height - halfStroke).coerceAtLeast(top + 1f)
+    val r = cornerRadius.coerceIn(0f, minOf((right - left) / 2f, (bottom - top) / 2f))
+    val midX = (left + right) / 2f
+
+    outPath.moveTo(midX, top)
+    outPath.lineTo(right - r, top)
+    if (r > 0f) {
+        outPath.arcTo(
+            rect = Rect(right - 2 * r, top, right, top + 2 * r),
+            startAngleDegrees = -90f,
+            sweepAngleDegrees = 90f,
+            forceMoveTo = false
+        )
+    }
+    outPath.lineTo(right, bottom - r)
+    if (r > 0f) {
+        outPath.arcTo(
+            rect = Rect(right - 2 * r, bottom - 2 * r, right, bottom),
+            startAngleDegrees = 0f,
+            sweepAngleDegrees = 90f,
+            forceMoveTo = false
+        )
+    }
+    outPath.lineTo(left + r, bottom)
+    if (r > 0f) {
+        outPath.arcTo(
+            rect = Rect(left, bottom - 2 * r, left + 2 * r, bottom),
+            startAngleDegrees = 90f,
+            sweepAngleDegrees = 90f,
+            forceMoveTo = false
+        )
+    }
+    outPath.lineTo(left, top + r)
+    if (r > 0f) {
+        outPath.arcTo(
+            rect = Rect(left, top, left + 2 * r, top + 2 * r),
+            startAngleDegrees = 180f,
+            sweepAngleDegrees = 90f,
+            forceMoveTo = false
+        )
+    }
+    outPath.close()
 }
