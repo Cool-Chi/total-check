@@ -58,16 +58,17 @@
 total-check/
 ├── app/
 │   ├── src/main/
-│   │   ├── java/com/example/totalcheck/
+│   │   ├── kotlin/com/example/totalcheck/
 │   │   │   ├── MainActivity.kt
-│   │   │   ├── ui/           # Composable 畫面
-│   │   │   ├── data/         # Room DB、Repository
-│   │   │   └── widget/       # Jetpack Glance Widget
+│   │   │   ├── ui/           # Composable 畫面、StackedCardScrollLayout、SkeletonShimmer 與主題轉場
+│   │   │   └── data/         # Room DB、Repository、DataStore 與 WidgetSyncManager
 │   │   └── res/
 │   └── build.gradle.kts
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── .gitignore
+├── AGENT.md
+├── Milestone.md
 ├── README.md
 ├── SPEC.md
 └── WORKFLOW.md  ← 本文件
