@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.ksp)
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+  if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { load(it) }
+  }
 }
 
 android {
@@ -15,10 +25,25 @@ android {
     versionName = "1.0"
   }
 
+  signingConfigs {
+    if (keystorePropertiesFile.exists()) {
+      create("release") {
+        val storeFilePath = keystoreProperties.getProperty("storeFile")
+        if (!storeFilePath.isNullOrBlank()) {
+          storeFile = file(storeFilePath)
+        }
+        storePassword = keystoreProperties.getProperty("storePassword")
+        keyAlias = keystoreProperties.getProperty("keyAlias")
+        keyPassword = keystoreProperties.getProperty("keyPassword")
+      }
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      signingConfig = signingConfigs.findByName("release")
     }
   }
   compileOptions {
@@ -77,6 +102,12 @@ dependencies {
   androidTestImplementation(libs.androidx.test.ext.junit)
   androidTestImplementation(libs.androidx.test.runner)
   androidTestImplementation(libs.androidx.test.espresso.core)
+
+  // Persistence (Room + DataStore)
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  ksp(libs.androidx.room.compiler)
+  implementation(libs.androidx.datastore.preferences)
 
   // Navigation
   implementation(libs.androidx.navigation3.ui)
