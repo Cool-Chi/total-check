@@ -13,17 +13,25 @@ private val Context.userPreferencesDataStore: DataStore<Preferences> by preferen
     name = "user_preferences"
 )
 
+data class ThemeConfig(
+    val isDarkMode: Boolean,
+    val useDynamicColor: Boolean
+)
+
 class UserPreferencesRepository(context: Context) {
 
     private val dataStore = context.applicationContext.userPreferencesDataStore
 
-    val isDarkMode: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_IS_DARK_MODE] ?: true
+    val themeConfig: Flow<ThemeConfig> = dataStore.data.map { prefs ->
+        ThemeConfig(
+            isDarkMode = prefs[KEY_IS_DARK_MODE] ?: true,
+            useDynamicColor = prefs[KEY_USE_DYNAMIC_COLOR] ?: false
+        )
     }
 
-    val useDynamicColor: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_USE_DYNAMIC_COLOR] ?: false
-    }
+    val isDarkMode: Flow<Boolean> = themeConfig.map { it.isDarkMode }
+
+    val useDynamicColor: Flow<Boolean> = themeConfig.map { it.useDynamicColor }
 
     suspend fun setDarkMode(enabled: Boolean) {
         dataStore.edit { prefs ->

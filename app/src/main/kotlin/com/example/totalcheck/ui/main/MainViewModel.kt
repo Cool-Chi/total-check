@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.totalcheck.data.local.AppDatabase
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.repository.ChecklistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,14 +42,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedChecklistId = MutableStateFlow<Long?>(null)
     val selectedChecklistId: StateFlow<Long?> = _selectedChecklistId.asStateFlow()
 
-    val isDarkMode: StateFlow<Boolean> = preferencesRepository.isDarkMode
+    private val _pendingScrollToChecklistId = MutableStateFlow<Long?>(null)
+    val pendingScrollToChecklistId: StateFlow<Long?> = _pendingScrollToChecklistId.asStateFlow()
+
+    val themeConfig: StateFlow<ThemeConfig?> = preferencesRepository.themeConfig
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null
+        )
+
+    val isDarkMode: StateFlow<Boolean> = themeConfig
+        .map { it?.isDarkMode ?: true }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = true
         )
 
-    val useDynamicColor: StateFlow<Boolean> = preferencesRepository.useDynamicColor
+    val useDynamicColor: StateFlow<Boolean> = themeConfig
+        .map { it?.useDynamicColor ?: false }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -68,13 +81,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedChecklistId.value = checklistId
     }
 
-    fun createChecklist(name: String, onCreated: (Long) -> Unit = {}) {
+    fun createChecklist(name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
             val newId = repository.addChecklist(trimmed)
-            onCreated(newId)
+            _pendingScrollToChecklistId.value = newId
         }
+    }
+
+    fun clearPendingScroll() {
+        _pendingScrollToChecklistId.value = null
     }
 
     fun renameChecklist(id: Long, newName: String) {
@@ -93,14 +110,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleDarkMode() {
+        val current = themeConfig.value?.isDarkMode ?: return
         viewModelScope.launch {
-            preferencesRepository.setDarkMode(!isDarkMode.value)
+            preferencesRepository.setDarkMode(!current)
         }
     }
 
     fun toggleDynamicColor() {
+        val current = themeConfig.value?.useDynamicColor ?: return
         viewModelScope.launch {
-            preferencesRepository.setUseDynamicColor(!useDynamicColor.value)
+            preferencesRepository.setUseDynamicColor(!current)
         }
     }
 

@@ -18,23 +18,20 @@ import com.example.totalcheck.ui.theme.TotalCheckTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
-        )
+        enableEdgeToEdge()
         setContent {
             val mainViewModel: MainViewModel = viewModel()
-            val isDarkMode by mainViewModel.isDarkMode.collectAsStateWithLifecycle()
-            val useDynamicColor by mainViewModel.useDynamicColor.collectAsStateWithLifecycle()
+            val themeConfig by mainViewModel.themeConfig.collectAsStateWithLifecycle()
+            val currentTheme = themeConfig ?: return@setContent
 
-            DisposableEffect(isDarkMode) {
+            DisposableEffect(currentTheme.isDarkMode) {
                 enableEdgeToEdge(
-                    statusBarStyle = if (isDarkMode) {
+                    statusBarStyle = if (currentTheme.isDarkMode) {
                         SystemBarStyle.dark(Color.TRANSPARENT)
                     } else {
                         SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
                     },
-                    navigationBarStyle = if (isDarkMode) {
+                    navigationBarStyle = if (currentTheme.isDarkMode) {
                         SystemBarStyle.dark(Color.TRANSPARENT)
                     } else {
                         SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
@@ -44,8 +41,8 @@ class MainActivity : ComponentActivity() {
             }
 
             TotalCheckTheme(
-                darkTheme = isDarkMode,
-                dynamicColor = useDynamicColor
+                darkTheme = currentTheme.isDarkMode,
+                dynamicColor = currentTheme.useDynamicColor
             ) {
                 RadialThemeTransitionContainer(
                     onToggleTheme = { mainViewModel.toggleDarkMode() }

@@ -103,6 +103,7 @@ fun TotalCheckScreen(
 
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
+    val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
     val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val useDynamicColor by viewModel.useDynamicColor.collectAsStateWithLifecycle()
     val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
@@ -110,7 +111,6 @@ fun TotalCheckScreen(
     var inputText by remember { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var actionTargetChecklist by remember { mutableStateOf<ChecklistEntity?>(null) }
-    var pendingSelectChecklistId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -152,13 +152,13 @@ fun TotalCheckScreen(
                     tabListState.animateScrollToItem(safePage)
                 }
 
-                // 新建清單後自動切換至該分頁
-                LaunchedEffect(checklists, pendingSelectChecklistId) {
-                    val targetId = pendingSelectChecklistId ?: return@LaunchedEffect
-                    val idx = checklists.indexOfFirst { it.id == targetId }
-                    if (idx >= 0) {
-                        pendingSelectChecklistId = null
-                        pagerState.animateScrollToPage(idx)
+                // 新建清單後自動切換至該分頁（等待 Room 發射新列表且 pageCount 同步後再滾動）
+                LaunchedEffect(checklists, pendingScrollToChecklistId) {
+                    val targetId = pendingScrollToChecklistId ?: return@LaunchedEffect
+                    val targetIndex = checklists.indexOfFirst { it.id == targetId }
+                    if (targetIndex >= 0) {
+                        pagerState.animateScrollToPage(targetIndex)
+                        viewModel.clearPendingScroll()
                     }
                 }
 
@@ -262,9 +262,7 @@ fun TotalCheckScreen(
             onDismiss = { showCreateDialog = false },
             onConfirm = { name ->
                 showCreateDialog = false
-                viewModel.createChecklist(name) { newId ->
-                    pendingSelectChecklistId = newId
-                }
+                viewModel.createChecklist(name)
             }
         )
     }
