@@ -41,9 +41,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -75,10 +72,10 @@ fun ShellPrototypeScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    var selectedStyle by remember { mutableStateOf(VisualStyle.StyleA) }
     val checklists = remember { createInitialMockChecklists() }
     var nextId by remember { mutableLongStateOf(1000L) }
     var inputText by remember { mutableStateOf("") }
+    var showUncheckedOnly by remember { mutableStateOf(false) }
 
     val pagerState = rememberPagerState(pageCount = { checklists.size })
 
@@ -100,10 +97,8 @@ fun ShellPrototypeScreen(
         color = colorScheme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1. 頂部臨時控制列（風格切換 + 亮/暗色切換）
-            TopPrototypeControlBar(
-                selectedStyle = selectedStyle,
-                onSelectStyle = { selectedStyle = it },
+            // 1. 頂部標題列 + 亮/暗色切換鈕
+            TopAppHeaderBar(
                 isDarkTheme = isDarkTheme,
                 onToggleTheme = onToggleTheme
             )
@@ -137,7 +132,7 @@ fun ShellPrototypeScreen(
                 }
             }
 
-            // 3. HorizontalPager 內容區
+            // 3. HorizontalPager 內容區（風格 C：觸感膠囊模組 + 原地狀態轉場）
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier
@@ -153,16 +148,21 @@ fun ShellPrototypeScreen(
                     animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
                     label = "checklistProgress"
                 )
-                val sortedItems = remember(checklist.items.toList()) {
-                    checklist.items.sortedBy { it.isChecked }
+                val visibleItems = remember(checklist.items.toList(), showUncheckedOnly) {
+                    if (showUncheckedOnly) {
+                        checklist.items.filter { !it.isChecked }
+                    } else {
+                        checklist.items.toList()
+                    }
                 }
 
                 Column(modifier = Modifier.fillMaxSize()) {
-                    ProgressSection(
-                        style = selectedStyle,
+                    CapsuleProgressModule(
                         uncheckedCount = uncheckedCount,
                         totalCount = totalCount,
                         animatedProgress = animatedProgress,
+                        showUncheckedOnly = showUncheckedOnly,
+                        onToggleUncheckedOnly = { showUncheckedOnly = !showUncheckedOnly },
                         onReset = {
                             for (i in checklist.items.indices) {
                                 if (checklist.items[i].isChecked) {
@@ -177,20 +177,11 @@ fun ShellPrototypeScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        contentPadding = when (selectedStyle) {
-                            VisualStyle.StyleA -> PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                            VisualStyle.StyleB -> PaddingValues(vertical = 4.dp)
-                            VisualStyle.StyleC -> PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        },
-                        verticalArrangement = when (selectedStyle) {
-                            VisualStyle.StyleA -> Arrangement.spacedBy(8.dp)
-                            VisualStyle.StyleB -> Arrangement.spacedBy(0.dp)
-                            VisualStyle.StyleC -> Arrangement.spacedBy(10.dp)
-                        }
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(items = sortedItems, key = { it.id }) { item ->
-                            CheckItemRow(
-                                style = selectedStyle,
+                        items(items = visibleItems, key = { it.id }) { item ->
+                            CapsuleCheckItemRow(
                                 item = item,
                                 onToggle = {
                                     val idx = checklist.items.indexOfFirst { it.id == item.id }
@@ -219,9 +210,7 @@ fun ShellPrototypeScreen(
 }
 
 @Composable
-private fun TopPrototypeControlBar(
-    selectedStyle: VisualStyle,
-    onSelectStyle: (VisualStyle) -> Unit,
+private fun TopAppHeaderBar(
     isDarkTheme: Boolean,
     onToggleTheme: () -> Unit
 ) {
@@ -230,32 +219,16 @@ private fun TopPrototypeControlBar(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        SingleChoiceSegmentedButtonRow(
-            modifier = Modifier.weight(1f)
-        ) {
-            VisualStyle.entries.forEachIndexed { index, style ->
-                SegmentedButton(
-                    selected = selectedStyle == style,
-                    onClick = { onSelectStyle(style) },
-                    shape = SegmentedButtonDefaults.itemShape(
-                        index = index,
-                        count = VisualStyle.entries.size
-                    ),
-                    icon = {}
-                ) {
-                    Text(
-                        text = style.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = "TotalCheck",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.ExtraBold,
+            color = colorScheme.onBackground
+        )
         FilledTonalIconButton(
             onClick = onToggleTheme,
             colors = IconButtonDefaults.filledTonalIconButtonColors(

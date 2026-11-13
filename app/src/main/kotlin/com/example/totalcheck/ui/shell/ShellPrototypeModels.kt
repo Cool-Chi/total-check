@@ -3,12 +3,6 @@ package com.example.totalcheck.ui.shell
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
 
-enum class VisualStyle(val label: String) {
-    StyleA("風格 A"),
-    StyleB("風格 B"),
-    StyleC("風格 C")
-}
-
 data class MockCheckItem(
     val id: Long,
     val label: String,
