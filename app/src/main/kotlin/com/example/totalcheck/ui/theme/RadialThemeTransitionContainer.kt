@@ -6,7 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -19,7 +19,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -35,7 +37,9 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -78,6 +82,7 @@ fun rememberReducedMotion(): Boolean {
 
 @Composable
 fun RadialThemeTransitionContainer(
+    isDarkMode: Boolean,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (triggerTransition: (originInRoot: Offset) -> Unit, isTransitioning: Boolean) -> Unit
@@ -85,6 +90,7 @@ fun RadialThemeTransitionContainer(
     val scope = rememberCoroutineScope()
     val graphicsLayer = rememberGraphicsLayer()
     val isReducedMotion = rememberReducedMotion()
+    val currentDarkMode by rememberUpdatedState(isDarkMode)
 
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var snapshotBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -101,7 +107,8 @@ fun RadialThemeTransitionContainer(
                 isTransitioning = true
                 scope.launch {
                     try {
-                        // Step 1: 擷取舊主題快照並初始化遮罩狀態
+                        // Step 1: 記錄切換前狀態、擷取離屏快照並初始化遮罩
+                        val previousDarkMode = currentDarkMode
                         val captured = graphicsLayer.toImageBitmap()
                         val w = containerSize.width.toFloat()
                         val h = containerSize.height.toFloat()
@@ -116,21 +123,27 @@ fun RadialThemeTransitionContainer(
                         revealRadius.snapTo(0f)
                         snapshotBitmap = captured
 
-                        // Step 2: 等待舊主題快照遮罩層穩定上屏一幀
+                        // Step 2: 確保快照覆蓋層已繪製上屏遮蔽全畫面
                         withFrameNanos { }
 
-                        // Step 3: 在快照完全遮蔽下切換底層新主題
+                        // Step 3: 觸發 DataStore 異步主題切換
                         onToggleTheme()
 
-                        // Step 4: 吸收新主題首幀重組與 Layout 耗時
+                        // Step 4: 等待 DataStore 發射新主題狀態至 Compose
+                        withTimeoutOrNull(300L) {
+                            snapshotFlow { currentDarkMode }.first { it != previousDarkMode }
+                        }
+
+                        // Step 5: 連續等待兩幀，完成新主題全樹重組/Layout 與 GPU 首幀合成
+                        withFrameNanos { }
                         withFrameNanos { }
 
-                        // Step 5: 啟動滿幀圓形擴散動畫
+                        // Step 6: 啟動 620ms 柔和圓形擴散動畫
                         revealRadius.animateTo(
                             targetValue = maxRadius,
                             animationSpec = tween(
-                                durationMillis = 420,
-                                easing = FastOutSlowInEasing
+                                durationMillis = 620,
+                                easing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
                             )
                         )
                     } finally {

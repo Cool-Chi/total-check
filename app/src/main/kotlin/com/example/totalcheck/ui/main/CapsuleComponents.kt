@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -178,6 +179,7 @@ fun CapsuleProgressModule(
             Spacer(modifier = Modifier.height(10.dp))
 
             val trackColor = colorScheme.surfaceContainerHighest
+            val dividerColor = colorScheme.surfaceContainerHigh
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -201,6 +203,17 @@ fun CapsuleProgressModule(
                     size = Size(fillWidth, size.height),
                     cornerRadius = corner
                 )
+                if (totalCount in 2..20) {
+                    val dividerWidth = 2.5.dp.toPx()
+                    for (i in 1 until totalCount) {
+                        val x = size.width * (i.toFloat() / totalCount) - dividerWidth / 2f
+                        drawRect(
+                            color = dividerColor,
+                            topLeft = Offset(x, 0f),
+                            size = Size(dividerWidth, size.height)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -420,15 +433,20 @@ fun CapsuleCheckItemRow(
                 Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = badgeBgColor
+                    color = badgeBgColor,
+                    modifier = Modifier.width(76.dp)
                 ) {
                     AnimatedContent(
                         targetState = item.isChecked,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        contentAlignment = Alignment.Center,
                         label = "capsuleBadgeState"
                     ) { checked ->
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp),
+                            horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (checked) {

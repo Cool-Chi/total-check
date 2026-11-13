@@ -245,7 +245,11 @@ fun TotalCheckScreen(
                         LaunchedEffect(visibleItems.size, visibleItems.firstOrNull()?.id) {
                             val currentFirstId = visibleItems.firstOrNull()?.id
                             if (visibleItems.size > previousSize && currentFirstId != previousFirstId) {
-                                listState.animateScrollToItem(0)
+                                if (isReducedMotion) {
+                                    listState.scrollToItem(0)
+                                } else {
+                                    listState.animateScrollToItem(0)
+                                }
                             }
                             previousSize = visibleItems.size
                             previousFirstId = currentFirstId

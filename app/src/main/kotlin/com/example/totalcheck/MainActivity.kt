@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
                 dynamicColor = currentTheme.useDynamicColor
             ) {
                 RadialThemeTransitionContainer(
+                    isDarkMode = currentTheme.isDarkMode,
                     onToggleTheme = { mainViewModel.toggleDarkMode() }
                 ) { triggerTransition, isTransitioning ->
                     TotalCheckScreen(
