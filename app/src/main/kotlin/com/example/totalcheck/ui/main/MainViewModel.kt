@@ -141,9 +141,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun resetChecklist(checklistId: Long) {
+    fun renameItem(itemId: Long, newLabel: String) {
+        val trimmed = newLabel.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
-            repository.resetChecklistItems(checklistId)
+            repository.updateItemLabel(itemId = itemId, newLabel = trimmed)
+        }
+    }
+
+    fun deleteItem(item: CheckItemEntity, onDeleted: (CheckItemEntity) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteItem(item)
+            onDeleted(item)
+        }
+    }
+
+    fun restoreItem(item: CheckItemEntity) {
+        viewModelScope.launch {
+            repository.restoreItem(item)
+        }
+    }
+
+    fun resetChecklist(checklistId: Long, onReset: (List<Long>) -> Unit = {}) {
+        viewModelScope.launch {
+            val checkedSnapshot = repository.resetChecklistItems(checklistId)
+            onReset(checkedSnapshot)
+        }
+    }
+
+    fun restoreCheckedStates(itemIds: List<Long>) {
+        if (itemIds.isEmpty()) return
+        viewModelScope.launch {
+            repository.restoreCheckedStates(itemIds)
         }
     }
 }

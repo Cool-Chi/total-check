@@ -55,11 +55,17 @@ interface ChecklistDao {
     @Update
     suspend fun updateItem(item: CheckItemEntity)
 
+    @Query("UPDATE check_items SET label = :newLabel WHERE id = :itemId")
+    suspend fun updateItemLabel(itemId: Long, newLabel: String)
+
     @Delete
     suspend fun deleteItem(item: CheckItemEntity)
 
     @Query("UPDATE check_items SET isChecked = :isChecked WHERE id = :itemId")
     suspend fun updateItemChecked(itemId: Long, isChecked: Boolean)
+
+    @Query("SELECT id FROM check_items WHERE checklistId = :checklistId AND isChecked = 1")
+    suspend fun getCheckedItemIds(checklistId: Long): List<Long>
 
     @Query("UPDATE check_items SET isChecked = 0 WHERE checklistId = :checklistId")
     suspend fun resetChecklistItems(checklistId: Long)

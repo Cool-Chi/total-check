@@ -66,6 +66,16 @@ class ChecklistRepository(
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
+    suspend fun updateItemLabel(itemId: Long, newLabel: String) {
+        dao.updateItemLabel(itemId = itemId, newLabel = newLabel)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    suspend fun restoreItem(item: CheckItemEntity) {
+        dao.insertItem(item)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
     suspend fun deleteItem(item: CheckItemEntity) {
         dao.deleteItem(item)
         WidgetSyncManager.notifyDataChanged(appContext)
@@ -76,9 +86,11 @@ class ChecklistRepository(
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
-    suspend fun resetChecklistItems(checklistId: Long) {
+    suspend fun resetChecklistItems(checklistId: Long): List<Long> {
+        val checkedSnapshot = dao.getCheckedItemIds(checklistId)
         dao.resetChecklistItems(checklistId)
         WidgetSyncManager.notifyDataChanged(appContext)
+        return checkedSnapshot
     }
 
     suspend fun restoreCheckedStates(itemIds: List<Long>) {
