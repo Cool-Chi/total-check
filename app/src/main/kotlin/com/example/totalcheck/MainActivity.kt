@@ -12,6 +12,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.totalcheck.ui.main.MainViewModel
 import com.example.totalcheck.ui.main.TotalCheckScreen
+import com.example.totalcheck.ui.theme.RadialThemeTransitionContainer
 import com.example.totalcheck.ui.theme.TotalCheckTheme
 
 class MainActivity : ComponentActivity() {
@@ -46,7 +47,15 @@ class MainActivity : ComponentActivity() {
                 darkTheme = isDarkMode,
                 dynamicColor = useDynamicColor
             ) {
-                TotalCheckScreen(viewModel = mainViewModel)
+                RadialThemeTransitionContainer(
+                    onToggleTheme = { mainViewModel.toggleDarkMode() }
+                ) { triggerTransition, isTransitioning ->
+                    TotalCheckScreen(
+                        viewModel = mainViewModel,
+                        onToggleTheme = triggerTransition,
+                        isThemeTransitioning = isTransitioning
+                    )
+                }
             }
         }
     }

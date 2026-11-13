@@ -3,6 +3,9 @@ package com.example.totalcheck.ui.main
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +60,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -70,6 +79,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun TotalCheckScreen(
     viewModel: MainViewModel,
+    onToggleTheme: (originInRoot: Offset) -> Unit,
+    isThemeTransitioning: Boolean,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -98,7 +109,8 @@ fun TotalCheckScreen(
             TopAppHeaderBar(
                 isDarkTheme = isDarkMode,
                 useDynamicColor = useDynamicColor,
-                onToggleTheme = { viewModel.toggleDarkMode() },
+                isThemeTransitioning = isThemeTransitioning,
+                onToggleTheme = onToggleTheme,
                 onToggleDynamicColor = { viewModel.toggleDynamicColor() }
             )
 
@@ -225,10 +237,14 @@ fun TotalCheckScreen(
 private fun TopAppHeaderBar(
     isDarkTheme: Boolean,
     useDynamicColor: Boolean,
-    onToggleTheme: () -> Unit,
+    isThemeTransitioning: Boolean,
+    onToggleTheme: (originInRoot: Offset) -> Unit,
     onToggleDynamicColor: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    var themeButtonCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var lastTouchRootOffset by remember { mutableStateOf<Offset?>(null) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -277,12 +293,41 @@ private fun TopAppHeaderBar(
                 border = BorderStroke(1.dp, colorScheme.outlineVariant)
             ) {
                 FilledTonalIconButton(
-                    onClick = onToggleTheme,
-                    modifier = Modifier.size(42.dp),
+                    onClick = {
+                        if (!isThemeTransitioning) {
+                            val origin = lastTouchRootOffset
+                                ?: themeButtonCoords?.takeIf { it.isAttached }?.boundsInRoot()?.center
+                                ?: Offset.Zero
+                            lastTouchRootOffset = null
+                            onToggleTheme(origin)
+                        }
+                    },
+                    enabled = !isThemeTransitioning,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .onGloballyPositioned { themeButtonCoords = it }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(
+                                    requireUnconsumed = false,
+                                    pass = PointerEventPass.Initial
+                                )
+                                val coords = themeButtonCoords
+                                if (coords != null && coords.isAttached) {
+                                    lastTouchRootOffset = coords.localToRoot(down.position)
+                                }
+                                val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                                if (up != null && coords != null && coords.isAttached) {
+                                    lastTouchRootOffset = coords.localToRoot(up.position)
+                                }
+                            }
+                        },
                     shape = RoundedCornerShape(16.dp),
                     colors = IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = colorScheme.surfaceContainerHigh,
-                        contentColor = colorScheme.primary
+                        contentColor = colorScheme.primary,
+                        disabledContainerColor = colorScheme.surfaceContainerHigh,
+                        disabledContentColor = colorScheme.primary
                     )
                 ) {
                     Icon(
