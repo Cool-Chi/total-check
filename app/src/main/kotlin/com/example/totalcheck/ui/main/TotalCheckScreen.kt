@@ -69,6 +69,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -117,7 +118,6 @@ fun TotalCheckScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var actionTargetChecklist by remember { mutableStateOf<ChecklistEntity?>(null) }
     var editingItemId by remember { mutableStateOf<Long?>(null) }
-    var pendingScrollTopChecklistId by remember { mutableStateOf<Long?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
@@ -174,7 +174,6 @@ fun TotalCheckScreen(
                     val trimmed = inputText.trim()
                     if (trimmed.isNotEmpty() && pagerState.currentPage in checklists.indices) {
                         val currentChecklistId = checklists[pagerState.currentPage].id
-                        pendingScrollTopChecklistId = currentChecklistId
                         viewModel.addItem(currentChecklistId, trimmed)
                         inputText = ""
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -226,11 +225,16 @@ fun TotalCheckScreen(
                             }
                         }
 
-                        LaunchedEffect(items.firstOrNull()?.id, pendingScrollTopChecklistId) {
-                            if (pendingScrollTopChecklistId == checklist.id && visibleItems.isNotEmpty()) {
+                        var previousSize by remember(checklist.id) { mutableIntStateOf(visibleItems.size) }
+                        var previousFirstId by remember(checklist.id) { mutableStateOf(visibleItems.firstOrNull()?.id) }
+
+                        LaunchedEffect(visibleItems.size, visibleItems.firstOrNull()?.id) {
+                            val currentFirstId = visibleItems.firstOrNull()?.id
+                            if (visibleItems.size > previousSize && currentFirstId != previousFirstId) {
                                 listState.animateScrollToItem(0)
-                                pendingScrollTopChecklistId = null
                             }
+                            previousSize = visibleItems.size
+                            previousFirstId = currentFirstId
                         }
 
                         Column(modifier = Modifier.fillMaxSize()) {
