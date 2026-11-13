@@ -44,3 +44,6 @@ captures/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Google AI Studio workspace artifact
+metadata.json
