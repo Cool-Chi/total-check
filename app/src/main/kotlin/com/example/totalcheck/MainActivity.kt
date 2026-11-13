@@ -6,7 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
             val themeConfig by mainViewModel.themeConfig.collectAsStateWithLifecycle()
             val currentTheme = themeConfig ?: return@setContent
 
-            DisposableEffect(currentTheme.isDarkMode) {
+            LaunchedEffect(currentTheme.isDarkMode) {
                 enableEdgeToEdge(
                     statusBarStyle = if (currentTheme.isDarkMode) {
                         SystemBarStyle.dark(Color.TRANSPARENT)
@@ -37,7 +37,6 @@ class MainActivity : ComponentActivity() {
                         SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
                     }
                 )
-                onDispose {}
             }
 
             TotalCheckTheme(

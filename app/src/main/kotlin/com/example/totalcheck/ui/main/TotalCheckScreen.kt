@@ -1,7 +1,9 @@
 package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -80,6 +82,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -94,6 +97,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.ui.theme.LocalReducedMotion
+import com.example.totalcheck.ui.theme.LocalThemeTransitioning
 import kotlinx.coroutines.launch
 
 @Composable
@@ -211,10 +216,19 @@ fun TotalCheckScreen(
                         val listState = rememberLazyListState()
                         val totalCount = items.size
                         val uncheckedCount = items.count { !it.isChecked }
+                        val isReducedMotion = LocalReducedMotion.current
                         val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
                         val animatedProgress by animateFloatAsState(
                             targetValue = targetProgress,
-                            animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
+                            animationSpec = if (isReducedMotion) {
+                                snap()
+                            } else {
+                                spring(
+                                    dampingRatio = 0.62f,
+                                    stiffness = 320f,
+                                    visibilityThreshold = 0.001f
+                                )
+                            },
                             label = "checklistProgress"
                         )
                         val visibleItems = remember(items, showUncheckedOnly) {
@@ -397,19 +411,25 @@ private fun CapsuleChecklistTabBar(
             itemsIndexed(items = checklists, key = { _, item -> item.id }) { index, checklist ->
                 val isSelected = currentPage == index
                 val unchecked = itemsByChecklist[checklist.id].orEmpty().count { !it.isChecked }
+                val freezeColorTransition = LocalThemeTransitioning.current || LocalReducedMotion.current
+                val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
+                    snap()
+                } else {
+                    spring(dampingRatio = 0.8f, stiffness = 380f)
+                }
                 val containerColor by animateColorAsState(
                     targetValue = if (isSelected) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    animationSpec = colorSpec,
                     label = "tabContainer"
                 )
                 val borderColor by animateColorAsState(
                     targetValue = if (isSelected) colorScheme.primary else colorScheme.outlineVariant,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    animationSpec = colorSpec,
                     label = "tabBorder"
                 )
                 val labelColor by animateColorAsState(
                     targetValue = if (isSelected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    animationSpec = colorSpec,
                     label = "tabText"
                 )
 

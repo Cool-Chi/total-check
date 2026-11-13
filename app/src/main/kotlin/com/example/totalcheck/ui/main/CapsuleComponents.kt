@@ -2,12 +2,16 @@ package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -48,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,7 +62,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +76,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.totalcheck.data.local.CheckItemEntity
+import com.example.totalcheck.ui.theme.LocalReducedMotion
+import com.example.totalcheck.ui.theme.LocalThemeTransitioning
 
 @Composable
 fun CapsuleProgressModule(
@@ -79,11 +90,33 @@ fun CapsuleProgressModule(
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val isReducedMotion = LocalReducedMotion.current
+    val freezeColorTransition = LocalThemeTransitioning.current || isReducedMotion
+    val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
+        snap()
+    } else {
+        spring(dampingRatio = 0.8f, stiffness = 380f)
+    }
+
     val accentColor by animateColorAsState(
         targetValue = if (uncheckedCount == 0 && totalCount > 0) colorScheme.primary else colorScheme.tertiary,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+        animationSpec = colorSpec,
         label = "progressAccent"
     )
+
+    val completedCount = (totalCount - uncheckedCount).coerceAtLeast(0)
+    var previousCompletedCount by remember { mutableIntStateOf(completedCount) }
+    val badgePulse = remember { Animatable(1f) }
+    LaunchedEffect(completedCount, totalCount) {
+        if (!isReducedMotion && totalCount > 0 && completedCount > previousCompletedCount) {
+            badgePulse.snapTo(1.12f)
+            badgePulse.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(dampingRatio = 0.55f, stiffness = 420f)
+            )
+        }
+        previousCompletedCount = completedCount
+    }
 
     Surface(
         modifier = modifier
@@ -104,7 +137,12 @@ fun CapsuleProgressModule(
                         text = if (uncheckedCount == 0 && totalCount > 0) "已備齊" else "尚缺 $uncheckedCount",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = accentColor
+                        color = accentColor,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = badgePulse.value
+                            scaleY = badgePulse.value
+                            transformOrigin = TransformOrigin(0f, 0.7f)
+                        }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -139,19 +177,29 @@ fun CapsuleProgressModule(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Box(
+            val trackColor = colorScheme.surfaceContainerHighest
+            Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(14.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(colorScheme.surfaceContainerHighest)
+                    .graphicsLayer {
+                        val overshootPastFull = (animatedProgress - 1f).coerceAtLeast(0f)
+                        scaleX = 1f + overshootPastFull * 0.25f
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(animatedProgress.coerceIn(0.02f, 1f))
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(50))
-                        .background(accentColor)
+                val radius = size.height / 2f
+                val corner = CornerRadius(radius, radius)
+                drawRoundRect(
+                    color = trackColor,
+                    cornerRadius = corner
+                )
+                val fillWidth = (size.width * animatedProgress.coerceAtLeast(0.02f))
+                    .coerceIn(size.height, size.width)
+                drawRoundRect(
+                    color = accentColor,
+                    size = Size(fillWidth, size.height),
+                    cornerRadius = corner
                 )
             }
 
@@ -211,6 +259,12 @@ fun CapsuleCheckItemRow(
     val colorScheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val freezeColorTransition = LocalThemeTransitioning.current || LocalReducedMotion.current
+    val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
+        snap()
+    } else {
+        spring(dampingRatio = 0.8f, stiffness = 380f)
+    }
 
     val pressScale by animateFloatAsState(
         targetValue = if (isPressed && !isEditing) 0.97f else 1f,
@@ -219,7 +273,7 @@ fun CapsuleCheckItemRow(
     )
     val containerColor by animateColorAsState(
         targetValue = if (item.isChecked && !isEditing) colorScheme.surfaceContainerLow else colorScheme.surfaceContainerHigh,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+        animationSpec = colorSpec,
         label = "capsuleContainerColor"
     )
     val borderColor by animateColorAsState(
@@ -228,7 +282,7 @@ fun CapsuleCheckItemRow(
             item.isChecked -> colorScheme.outlineVariant.copy(alpha = 0.4f)
             else -> colorScheme.tertiary.copy(alpha = 0.55f)
         },
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+        animationSpec = colorSpec,
         label = "capsuleBorderColor"
     )
     val indicatorColor by animateColorAsState(
@@ -237,12 +291,12 @@ fun CapsuleCheckItemRow(
             item.isChecked -> colorScheme.outline
             else -> colorScheme.tertiary
         },
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+        animationSpec = colorSpec,
         label = "capsuleIndicatorColor"
     )
     val badgeBgColor by animateColorAsState(
         targetValue = if (item.isChecked) colorScheme.surfaceContainerHighest else colorScheme.tertiaryContainer,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+        animationSpec = colorSpec,
         label = "capsuleBadgeBg"
     )
     val contentAlpha by animateFloatAsState(
