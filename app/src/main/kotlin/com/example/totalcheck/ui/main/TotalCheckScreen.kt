@@ -1,8 +1,8 @@
 package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -71,6 +71,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -218,19 +219,35 @@ fun TotalCheckScreen(
                         val uncheckedCount = items.count { !it.isChecked }
                         val isReducedMotion = LocalReducedMotion.current
                         val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
-                        val animatedProgress by animateFloatAsState(
-                            targetValue = targetProgress,
-                            animationSpec = if (isReducedMotion) {
-                                snap()
-                            } else {
-                                spring(
-                                    dampingRatio = 0.62f,
-                                    stiffness = 320f,
-                                    visibilityThreshold = 0.001f
+                        val progressAnimatable = remember(checklist.id) { Animatable(targetProgress) }
+                        var previousTargetProgress by remember(checklist.id) { mutableFloatStateOf(targetProgress) }
+
+                        LaunchedEffect(targetProgress, isReducedMotion) {
+                            if (isReducedMotion) {
+                                progressAnimatable.snapTo(targetProgress)
+                            } else if (targetProgress > previousTargetProgress) {
+                                progressAnimatable.animateTo(
+                                    targetValue = targetProgress,
+                                    initialVelocity = 1.6f,
+                                    animationSpec = spring(
+                                        dampingRatio = 0.38f,
+                                        stiffness = 240f,
+                                        visibilityThreshold = 0.0005f
+                                    )
                                 )
-                            },
-                            label = "checklistProgress"
-                        )
+                            } else if (targetProgress < previousTargetProgress) {
+                                progressAnimatable.animateTo(
+                                    targetValue = targetProgress,
+                                    animationSpec = spring(
+                                        dampingRatio = 0.45f,
+                                        stiffness = 260f,
+                                        visibilityThreshold = 0.0005f
+                                    )
+                                )
+                            }
+                            previousTargetProgress = targetProgress
+                        }
+                        val animatedProgress = progressAnimatable.value
                         val visibleItems = remember(items, showUncheckedOnly) {
                             if (showUncheckedOnly) {
                                 items.filter { !it.isChecked }

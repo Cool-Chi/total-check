@@ -109,11 +109,11 @@ fun CapsuleProgressModule(
     var previousCompletedCount by remember { mutableIntStateOf(completedCount) }
     val badgePulse = remember { Animatable(1f) }
     LaunchedEffect(completedCount, totalCount) {
-        if (!isReducedMotion && totalCount > 0 && completedCount > previousCompletedCount) {
-            badgePulse.snapTo(1.12f)
+        if (!isReducedMotion && totalCount > 0 && completedCount != previousCompletedCount) {
+            badgePulse.snapTo(if (completedCount > previousCompletedCount) 1.18f else 0.90f)
             badgePulse.animateTo(
                 targetValue = 1f,
-                animationSpec = spring(dampingRatio = 0.55f, stiffness = 420f)
+                animationSpec = spring(dampingRatio = 0.4f, stiffness = 420f)
             )
         }
         previousCompletedCount = completedCount
@@ -185,9 +185,10 @@ fun CapsuleProgressModule(
                     .fillMaxWidth()
                     .height(14.dp)
                     .graphicsLayer {
-                        val overshootPastFull = (animatedProgress - 1f).coerceAtLeast(0f)
-                        scaleX = 1f + overshootPastFull * 0.25f
-                        transformOrigin = TransformOrigin(0f, 0.5f)
+                        val over = (animatedProgress - 1f).coerceAtLeast(0f)
+                        scaleX = 1f + over * 0.08f
+                        scaleY = 1f + over * 0.45f
+                        transformOrigin = TransformOrigin(0.5f, 0.5f)
                     }
             ) {
                 val radius = size.height / 2f
