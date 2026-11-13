@@ -70,6 +70,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,10 +81,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -162,12 +166,16 @@ fun TotalCheckScreen(
             } else {
                 val pagerState = rememberPagerState(pageCount = { checklists.size })
                 val tabListState = rememberLazyListState()
+                val activeTabPage by remember(checklists.size) {
+                    derivedStateOf {
+                        pagerState.targetPage.coerceIn(0, (checklists.size - 1).coerceAtLeast(0))
+                    }
+                }
 
-                // 雙向同步：Pager 滑動時同步選中 ID 並捲動頂部膠囊 Tab 列
-                LaunchedEffect(pagerState.currentPage, checklists) {
-                    val safePage = pagerState.currentPage.coerceIn(0, checklists.lastIndex)
-                    viewModel.selectChecklist(checklists[safePage].id)
-                    tabListState.animateScrollToItem(safePage)
+                // 雙向同步：僅在跨過目標分頁閾值時更新選中 ID 並捲動頂部膠囊 Tab 列，避免滑動幀全樹重組
+                LaunchedEffect(activeTabPage, checklists) {
+                    viewModel.selectChecklist(checklists[activeTabPage].id)
+                    tabListState.animateScrollToItem(activeTabPage)
                 }
 
                 // 新建清單後自動切換至該分頁（等待 Room 發射新列表且 pageCount 同步後再滾動）
@@ -193,7 +201,7 @@ fun TotalCheckScreen(
                 CapsuleChecklistTabBar(
                     checklists = checklists,
                     itemsByChecklist = itemsByChecklist,
-                    currentPage = pagerState.currentPage.coerceIn(0, checklists.lastIndex),
+                    currentPage = activeTabPage,
                     tabListState = tabListState,
                     onSelectPage = { index ->
                         editingItemId = null
@@ -213,7 +221,8 @@ fun TotalCheckScreen(
                 ) {
                     HorizontalPager(
                         state = pagerState,
-                        key = { page -> checklists[page].id },
+                        key = { page -> checklists.getOrNull(page)?.id ?: page },
+                        beyondViewportPageCount = 1,
                         modifier = Modifier.fillMaxSize()
                     ) { pageIndex ->
                         val checklist = checklists[pageIndex]
@@ -225,6 +234,8 @@ fun TotalCheckScreen(
                         val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
                         val progressAnimatable = remember(checklist.id) { Animatable(targetProgress) }
                         var previousTargetProgress by remember(checklist.id) { mutableFloatStateOf(targetProgress) }
+                        var staggeredResetDelays by remember(checklist.id) { mutableStateOf<Map<Long, Int>>(emptyMap()) }
+                        var resetWaveKey by remember(checklist.id) { mutableIntStateOf(0) }
 
                         LaunchedEffect(targetProgress, isReducedMotion) {
                             if (isReducedMotion) {
@@ -286,6 +297,15 @@ fun TotalCheckScreen(
                                 onReset = {
                                     editingItemId = null
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    if (!isReducedMotion) {
+                                        val checkedInOrder = visibleItems.filter { it.isChecked }.map { it.id }
+                                        staggeredResetDelays = checkedInOrder.mapIndexed { idx, id ->
+                                            id to (idx * 30).coerceAtMost(360)
+                                        }.toMap()
+                                        resetWaveKey++
+                                    } else {
+                                        staggeredResetDelays = emptyMap()
+                                    }
                                     viewModel.resetChecklist(checklist.id) { checkedSnapshot ->
                                         scope.launch {
                                             snackbarHostState.currentSnackbarData?.dismiss()
@@ -310,7 +330,11 @@ fun TotalCheckScreen(
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                items(items = visibleItems, key = { it.id }) { item ->
+                                items(
+                                    items = visibleItems,
+                                    key = { it.id },
+                                    contentType = { "check_item" }
+                                ) { item ->
                                     CapsuleCheckItemRow(
                                         item = item,
                                         onToggle = {
@@ -318,6 +342,8 @@ fun TotalCheckScreen(
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         },
                                         isEditing = editingItemId == item.id,
+                                        resetWaveKey = resetWaveKey,
+                                        resetDelayMs = staggeredResetDelays[item.id],
                                         onStartEdit = {
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             editingItemId = item.id
@@ -333,7 +359,6 @@ fun TotalCheckScreen(
                                             if (editingItemId == item.id) {
                                                 editingItemId = null
                                             }
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             viewModel.deleteItem(item) { deletedItem ->
                                                 scope.launch {
                                                     snackbarHostState.currentSnackbarData?.dismiss()
@@ -442,12 +467,12 @@ private fun CapsuleChecklistTabBar(
                 } else {
                     spring(dampingRatio = 0.8f, stiffness = 380f)
                 }
-                val containerColor by animateColorAsState(
+                val containerColor = animateColorAsState(
                     targetValue = if (isSelected) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
                     animationSpec = colorSpec,
                     label = "tabContainer"
                 )
-                val borderColor by animateColorAsState(
+                val borderColor = animateColorAsState(
                     targetValue = if (isSelected) colorScheme.primary else colorScheme.outlineVariant,
                     animationSpec = colorSpec,
                     label = "tabBorder"
@@ -458,16 +483,26 @@ private fun CapsuleChecklistTabBar(
                     label = "tabText"
                 )
 
-                Surface(
+                Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
+                        .drawBehind {
+                            val radius = size.height / 2f
+                            val corner = CornerRadius(radius, radius)
+                            drawRoundRect(
+                                color = containerColor.value,
+                                cornerRadius = corner
+                            )
+                            drawRoundRect(
+                                color = borderColor.value,
+                                cornerRadius = corner,
+                                style = Stroke(width = 1.dp.toPx())
+                            )
+                        }
                         .combinedClickable(
                             onClick = { onSelectPage(index) },
                             onLongClick = { onLongPressTab(checklist) }
-                        ),
-                    shape = RoundedCornerShape(50),
-                    color = containerColor,
-                    border = BorderStroke(1.dp, borderColor)
+                        )
                 ) {
                     Text(
                         text = if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name,
