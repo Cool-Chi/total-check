@@ -6,12 +6,11 @@
 - **必讀基準**：每次執行任務前，必須優先對齊 `SPEC.md`（功能與動效規格）與 `WORKFLOW.md`（環境與工具鏈）。若存在互動動效需求，必須查閱 `docs/advanced_interaction_design.md`。
 - **模型協作原則**：日常 UI 元件、CRUD 邏輯與編譯驗證由主力模型快速推進；涉及複雜手勢軌跡、自訂 `clipPath` 遮罩或跨進程同步時，需嚴格遵守物理數學邊界，不允許使用簡陋的固定時間線性動畫敷衍。
 
-## 2. 開發環境與閉環驗證流程 (Windows 11 + Pixel 7)
+## 2. 開發環境與部署驗證邊界 (Windows 11 + Pixel 7)
 - **終端機環境**：Windows 11 PowerShell，所有 Gradle 指令必須使用 `.\gradlew` 格式。
-- **編譯與安裝標準流程**：每次修改程式碼後，必須依序執行：
+- **最高優先級約束 — 部署與驗證邊界**：每次修改程式碼後，Agent 僅執行以下兩項指令將應用部署至實機並結束任務，**嚴禁自行呼叫 `android screen`、`android layout` 或任何 UI 自動化點擊/輸入測試**，統一交由使用者在側邊欄鏡像螢幕手動驗證：
   1. `.\gradlew :app:installDebug` 編譯並安裝至實機。
-  2. 透過 `adb shell am start -n com.example.totalcheck/.MainActivity` 啟動應用。
-  3. **強制 UI 自檢**：呼叫 `android layout` 或 `android screen` 工具檢查畫面層級與截圖，確認無元件重疊、文字截斷或狀態列遮擋後，才向使用者回報完成。
+  2. `adb shell am start -n com.example.totalcheck/.MainActivity` 啟動應用。
 
 ## 3. 技術棧與開發紅線 (Hard Constraints)
 1. **純離線架構**：`AndroidManifest.xml` **嚴禁**宣告 `android.permission.INTERNET` 或引入任何網路請求套件。
@@ -23,4 +22,4 @@
 
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。
-- **提交與標籤**：完成功能修改並通過實機鏡像驗證後，**必須**呼叫 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交（Atomic Commit）與版本標記；之後每次完成修改皆須依該規範進行 `git commit`。
+- **最高優先級約束 — Git 版控紀律**：所有任務指令結束後，僅在確定通過使用者或實機驗證時，依指示呼叫本地 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交與版本標記；**嚴禁**未經授權手動執行 `git commit` 或 `git tag`。

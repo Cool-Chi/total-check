@@ -17,24 +17,26 @@
 | `v0.2.0` | **M1（資料持久化基底）** | 串接 Room（`checklists` / `check_items`）、DataStore、首次啟動種子資料與 `WidgetSyncManager` 解耦空殼 |
 | `v0.3.0` | **M2-A（Edge-to-Edge 與雙軌色彩）** | `SystemBarStyle` 動態反轉、`Scaffold` insets 對齊、精調雙色盤（Dark `#0E1116` / Light `#F8FAFC` / Tertiary Amber）與 Dynamic Color 切換鈕 |
 | `v0.4.0` | **M2-B（Radial Theme Transition）** | `RadialThemeTransitionContainer`（單一活體樹 + `GraphicsLayer` 離屏快照 + `ClipOp.Difference` 反向圓形挖空）、真實觸控座標擷取與 `rememberReducedMotion()` 無障礙降級 |
+| `v0.5.0` ~ `v0.5.1` | **M3-A（多清單分頁與清單 CRUD）** | `HorizontalPager` 1:1 跟手分頁、頂部風格 C 膠囊 Tab 列、清單建立/改名/刪除（含最後一份保護）、修正新建清單跳頁競態與 `ThemeConfig?` 亮色冷啟動零閃爍 |
+| `v0.6.0` ~ `v0.6.1` | **M3-B（項目行內 CRUD 與重置 Undo）** | 底部常駐連續輸入列（`adjustResize` + `imePadding`、保持鍵盤開啟、新項目自動上滑至頂部）、項目行內改名/刪除、一鍵重置與 `Snackbar` 復原閉環 |
 
 ## 3. 當前關鍵檔案結構
 ```text
 app/src/main/kotlin/com/example/totalcheck/
-├── MainActivity.kt                        # enableEdgeToEdge(SystemBarStyle) + RadialThemeTransitionContainer
+├── MainActivity.kt                        # ThemeConfig? 延遲首幀 + SystemBarStyle 動態反轉 + RadialThemeTransitionContainer
 ├── data/
 │   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ChecklistDao
-│   ├── preferences/UserPreferencesRepository.kt  # DataStore (isDarkMode, useDynamicColor)
-│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + seedInitialDataIfNeeded + WidgetSyncManager 通知
+│   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig: isDarkMode, useDynamicColor)
+│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
 │   └── widget/WidgetSyncManager.kt        # 未來對接 Jetpack Glance updateAll() 的解耦鉤子
 └── ui/
     ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
 ```
 
-## 4. 後續待實作項目（M3+）
-- **M3（進階 CRUD 與互動動效）**：
-  - 項目滑動刪除（`Curved Card Deletion`）、行內編輯名稱。
-  - 清單建立 / 重新命名 / 刪除（長按 Tab）。
-  - 一鍵重置搭配錯峰消退（`Staggered Bulk Selection`）與底部 Snackbar `復原 (Undo)`（呼叫 `restoreCheckedStates`）。
-- **M4（桌面小工具）**：實作 `widget/` 模組（Jetpack Glance）並對接 `WidgetSyncManager.notifyDataChanged()`。
+## 4. 後續待實作項目（M4+）
+- **M4（高階物理動效打磨與效能根治）**：
+  - **首要任務：根治 `RadialThemeTransitionContainer` 主題切換掉幀問題**（優化離屏快照擷取與轉場渲染管線，消除切換瞬間卡頓）。
+  - 項目左滑曲線刪除（`Curved Card Deletion`）搭配既有的 `Snackbar` 復原閉環。
+  - 一鍵重置錯峰波浪消退（`Staggered Bulk Selection`）。
+- **M5（桌面小工具）**：實作 `widget/` 模組（Jetpack Glance）並對接 `WidgetSyncManager.notifyDataChanged()`。
