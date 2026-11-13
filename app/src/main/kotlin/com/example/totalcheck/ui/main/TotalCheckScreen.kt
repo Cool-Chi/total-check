@@ -1,8 +1,11 @@
 package com.example.totalcheck.ui.main
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -26,7 +29,10 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,11 +40,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -47,12 +57,12 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +70,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -73,9 +86,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.totalcheck.data.local.CheckItemEntity
+import com.example.totalcheck.data.local.ChecklistEntity
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TotalCheckScreen(
     viewModel: MainViewModel,
@@ -87,12 +101,16 @@ fun TotalCheckScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    val checklistsWithItems by viewModel.checklistsWithItems.collectAsStateWithLifecycle()
+    val checklists by viewModel.checklists.collectAsStateWithLifecycle()
+    val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
     val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val useDynamicColor by viewModel.useDynamicColor.collectAsStateWithLifecycle()
     val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var actionTargetChecklist by remember { mutableStateOf<ChecklistEntity?>(null) }
+    var pendingSelectChecklistId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -114,7 +132,7 @@ fun TotalCheckScreen(
                 onToggleDynamicColor = { viewModel.toggleDynamicColor() }
             )
 
-            if (checklistsWithItems.isEmpty()) {
+            if (checklists.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -124,66 +142,73 @@ fun TotalCheckScreen(
                     CircularProgressIndicator(color = colorScheme.primary)
                 }
             } else {
-                val pagerState = rememberPagerState(pageCount = { checklistsWithItems.size })
+                val pagerState = rememberPagerState(pageCount = { checklists.size })
+                val tabListState = rememberLazyListState()
+
+                // 雙向同步：Pager 滑動時同步選中 ID 並捲動頂部膠囊 Tab 列
+                LaunchedEffect(pagerState.currentPage, checklists) {
+                    val safePage = pagerState.currentPage.coerceIn(0, checklists.lastIndex)
+                    viewModel.selectChecklist(checklists[safePage].id)
+                    tabListState.animateScrollToItem(safePage)
+                }
+
+                // 新建清單後自動切換至該分頁
+                LaunchedEffect(checklists, pendingSelectChecklistId) {
+                    val targetId = pendingSelectChecklistId ?: return@LaunchedEffect
+                    val idx = checklists.indexOfFirst { it.id == targetId }
+                    if (idx >= 0) {
+                        pendingSelectChecklistId = null
+                        pagerState.animateScrollToPage(idx)
+                    }
+                }
 
                 val submitNewItem: () -> Unit = {
                     val trimmed = inputText.trim()
-                    if (trimmed.isNotEmpty() && pagerState.currentPage in checklistsWithItems.indices) {
-                        val currentChecklistId = checklistsWithItems[pagerState.currentPage].checklist.id
+                    if (trimmed.isNotEmpty() && pagerState.currentPage in checklists.indices) {
+                        val currentChecklistId = checklists[pagerState.currentPage].id
                         viewModel.addItem(currentChecklistId, trimmed)
                         inputText = ""
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                 }
 
-                PrimaryScrollableTabRow(
-                    selectedTabIndex = pagerState.currentPage.coerceIn(0, checklistsWithItems.lastIndex),
-                    containerColor = colorScheme.surface,
-                    contentColor = colorScheme.primary,
-                    edgePadding = 16.dp,
-                    divider = {
-                        HorizontalDivider(thickness = 0.5.dp, color = colorScheme.outlineVariant)
-                    }
-                ) {
-                    checklistsWithItems.forEachIndexed { index, group ->
-                        val unchecked = group.items.count { !it.isChecked }
-                        Tab(
-                            selected = pagerState.currentPage == index,
-                            onClick = {
-                                scope.launch { pagerState.animateScrollToPage(index) }
-                            },
-                            text = {
-                                Text(
-                                    text = if (unchecked > 0) "${group.checklist.name} ($unchecked)" else group.checklist.name,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Medium
-                                )
-                            }
-                        )
-                    }
-                }
+                CapsuleChecklistTabBar(
+                    checklists = checklists,
+                    itemsByChecklist = itemsByChecklist,
+                    currentPage = pagerState.currentPage.coerceIn(0, checklists.lastIndex),
+                    tabListState = tabListState,
+                    onSelectPage = { index ->
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    },
+                    onLongPressTab = { checklist ->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        actionTargetChecklist = checklist
+                    },
+                    onAddChecklist = { showCreateDialog = true }
+                )
 
                 HorizontalPager(
                     state = pagerState,
+                    key = { page -> checklists[page].id },
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                 ) { pageIndex ->
-                    val group = checklistsWithItems[pageIndex]
-                    val totalCount = group.items.size
-                    val uncheckedCount = group.items.count { !it.isChecked }
+                    val checklist = checklists[pageIndex]
+                    val items = itemsByChecklist[checklist.id].orEmpty()
+                    val totalCount = items.size
+                    val uncheckedCount = items.count { !it.isChecked }
                     val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
                     val animatedProgress by animateFloatAsState(
                         targetValue = targetProgress,
                         animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
                         label = "checklistProgress"
                     )
-                    val visibleItems = remember(group.items, showUncheckedOnly) {
+                    val visibleItems = remember(items, showUncheckedOnly) {
                         if (showUncheckedOnly) {
-                            group.items.filter { !it.isChecked }
+                            items.filter { !it.isChecked }
                         } else {
-                            group.items
+                            items
                         }
                     }
 
@@ -195,7 +220,7 @@ fun TotalCheckScreen(
                             showUncheckedOnly = showUncheckedOnly,
                             onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
                             onReset = {
-                                viewModel.resetChecklist(group.checklist.id)
+                                viewModel.resetChecklist(checklist.id)
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                         )
@@ -231,6 +256,247 @@ fun TotalCheckScreen(
             }
         }
     }
+
+    if (showCreateDialog) {
+        CreateChecklistDialog(
+            onDismiss = { showCreateDialog = false },
+            onConfirm = { name ->
+                showCreateDialog = false
+                viewModel.createChecklist(name) { newId ->
+                    pendingSelectChecklistId = newId
+                }
+            }
+        )
+    }
+
+    actionTargetChecklist?.let { target ->
+        ChecklistActionsDialog(
+            checklist = target,
+            canDelete = checklists.size > 1,
+            onDismiss = { actionTargetChecklist = null },
+            onRename = { newName ->
+                viewModel.renameChecklist(target.id, newName)
+                actionTargetChecklist = null
+            },
+            onDelete = {
+                viewModel.deleteChecklist(target.id)
+                actionTargetChecklist = null
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CapsuleChecklistTabBar(
+    checklists: List<ChecklistEntity>,
+    itemsByChecklist: Map<Long, List<CheckItemEntity>>,
+    currentPage: Int,
+    tabListState: androidx.compose.foundation.lazy.LazyListState,
+    onSelectPage: (Int) -> Unit,
+    onLongPressTab: (ChecklistEntity) -> Unit,
+    onAddChecklist: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LazyRow(
+            state = tabListState,
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            itemsIndexed(items = checklists, key = { _, item -> item.id }) { index, checklist ->
+                val isSelected = currentPage == index
+                val unchecked = itemsByChecklist[checklist.id].orEmpty().count { !it.isChecked }
+                val containerColor by animateColorAsState(
+                    targetValue = if (isSelected) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    label = "tabContainer"
+                )
+                val borderColor by animateColorAsState(
+                    targetValue = if (isSelected) colorScheme.primary else colorScheme.outlineVariant,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    label = "tabBorder"
+                )
+                val labelColor by animateColorAsState(
+                    targetValue = if (isSelected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                    label = "tabText"
+                )
+
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .combinedClickable(
+                            onClick = { onSelectPage(index) },
+                            onLongClick = { onLongPressTab(checklist) }
+                        ),
+                    shape = RoundedCornerShape(50),
+                    color = containerColor,
+                    border = BorderStroke(1.dp, borderColor)
+                ) {
+                    Text(
+                        text = if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = labelColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, colorScheme.outlineVariant)
+        ) {
+            FilledTonalIconButton(
+                onClick = onAddChecklist,
+                modifier = Modifier.size(42.dp),
+                shape = RoundedCornerShape(50),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = colorScheme.surfaceContainerHigh,
+                    contentColor = colorScheme.primary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Add,
+                    contentDescription = "新增清單",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateChecklistDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        title = { Text(text = "新增清點清單", fontWeight = FontWeight.Bold) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
+                placeholder = { Text("例如：露營裝備") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (name.isNotBlank()) onConfirm(name)
+                    }
+                )
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank(),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text("建立")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ChecklistActionsDialog(
+    checklist: ChecklistEntity,
+    canDelete: Boolean,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var nameInput by remember(checklist.id) { mutableStateOf(checklist.name) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        title = { Text(text = "管理清單", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { nameInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("清單名稱") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (nameInput.isNotBlank()) onRename(nameInput)
+                        }
+                    )
+                )
+                TextButton(
+                    onClick = onDelete,
+                    enabled = canDelete,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = colorScheme.error,
+                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f)
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (canDelete) "刪除此清單" else "至少須保留一個清單",
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onRename(nameInput) },
+                enabled = nameInput.isNotBlank(),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text("儲存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable
