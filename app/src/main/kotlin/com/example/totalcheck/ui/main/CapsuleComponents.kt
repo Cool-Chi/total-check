@@ -1,6 +1,5 @@
 package com.example.totalcheck.ui.main
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -9,9 +8,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -90,6 +86,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
@@ -117,11 +114,13 @@ fun CapsuleProgressModule(
         spring(dampingRatio = 0.8f, stiffness = 380f)
     }
 
-    val accentColor by animateColorAsState(
-        targetValue = if (uncheckedCount == 0 && totalCount > 0) colorScheme.primary else colorScheme.tertiary,
+    val targetAccentColor = if (uncheckedCount == 0 && totalCount > 0) colorScheme.primary else colorScheme.tertiary
+    val animatedAccentColor by animateColorAsState(
+        targetValue = targetAccentColor,
         animationSpec = colorSpec,
         label = "progressAccent"
     )
+    val accentColor = if (freezeColorTransition) targetAccentColor else animatedAccentColor
 
     val completedCount = (totalCount - uncheckedCount).coerceAtLeast(0)
     var previousCompletedCount by remember { mutableIntStateOf(completedCount) }
@@ -284,6 +283,7 @@ fun CapsuleCheckItemRow(
     isEditing: Boolean = false,
     resetWaveKey: Int = 0,
     resetDelayMs: Int? = null,
+    resetTriggeredAtMillis: Long = 0L,
     onStartEdit: () -> Unit = {},
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
@@ -297,39 +297,85 @@ fun CapsuleCheckItemRow(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val isReducedMotion = LocalReducedMotion.current
-    val freezeColorTransition = LocalThemeTransitioning.current || isReducedMotion
-    val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
-        snap()
-    } else {
-        spring(dampingRatio = 0.8f, stiffness = 380f)
-    }
 
     // Staggered Bulk Selection (一鍵重置錯峰波浪)
-    var visualChecked by remember(item.id) { mutableStateOf(item.isChecked) }
-    var lastConsumedWaveKey by remember(item.id) { mutableIntStateOf(resetWaveKey) }
-    val wavePulseScale = remember(item.id) { Animatable(1f) }
+    val isInActiveWave = !isReducedMotion &&
+        resetWaveKey > 0 &&
+        resetDelayMs != null &&
+        resetTriggeredAtMillis > 0L &&
+        (android.os.SystemClock.uptimeMillis() - resetTriggeredAtMillis) < (resetDelayMs + 450L)
 
-    LaunchedEffect(item.isChecked, resetWaveKey) {
+    var visualChecked by remember(item.id) {
+        mutableStateOf(if (isInActiveWave) true else item.isChecked)
+    }
+    var lastConsumedWaveKey by remember(item.id) { mutableIntStateOf(0) }
+    var isWaveWaitingOrAnimating by remember(item.id) { mutableStateOf(false) }
+    var previousIsChecked by remember(item.id) { mutableStateOf(item.isChecked) }
+    val wavePulseScale = remember(item.id) { Animatable(1f) }
+    val checkedProgress = remember(item.id) {
+        Animatable(if (visualChecked && !isEditing) 1f else 0f)
+    }
+
+    if (resetWaveKey > 0) {
+        LaunchedEffect(resetWaveKey) {
+            val delayMs = resetDelayMs
+            if (resetWaveKey != lastConsumedWaveKey && delayMs != null && !isReducedMotion) {
+                val elapsed = (android.os.SystemClock.uptimeMillis() - resetTriggeredAtMillis).coerceAtLeast(0L)
+                if (elapsed < delayMs + 450L) {
+                    lastConsumedWaveKey = resetWaveKey
+                    isWaveWaitingOrAnimating = true
+                    visualChecked = true
+                    wavePulseScale.snapTo(1f)
+                    val remainingDelay = (delayMs.toLong() - elapsed).coerceAtLeast(0L)
+                    if (remainingDelay > 0L) {
+                        delay(remainingDelay)
+                    }
+                    if (!isWaveWaitingOrAnimating) return@LaunchedEffect
+                    visualChecked = false
+                    isWaveWaitingOrAnimating = false
+                    wavePulseScale.animateTo(
+                        targetValue = 1.045f,
+                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 900f)
+                    )
+                    wavePulseScale.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(dampingRatio = 0.45f, stiffness = 360f)
+                    )
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(item.isChecked) {
+        val wasChecked = previousIsChecked
+        previousIsChecked = item.isChecked
         if (item.isChecked) {
-            visualChecked = true
-            lastConsumedWaveKey = resetWaveKey
-        } else if (visualChecked) {
-            val isStaggeredWave = resetWaveKey != lastConsumedWaveKey && resetDelayMs != null
-            lastConsumedWaveKey = resetWaveKey
-            if (isStaggeredWave && !isReducedMotion) {
-                val delayDuration = resetDelayMs ?: 0
-                if (delayDuration > 0) delay(delayDuration.toLong())
+            if (!wasChecked || !isWaveWaitingOrAnimating) {
+                isWaveWaitingOrAnimating = false
+                visualChecked = true
+                wavePulseScale.snapTo(1f)
+            }
+        } else {
+            val expectingWave = !isReducedMotion &&
+                resetWaveKey > 0 &&
+                resetDelayMs != null &&
+                (resetWaveKey != lastConsumedWaveKey || isWaveWaitingOrAnimating)
+            if (!expectingWave) {
                 visualChecked = false
-                wavePulseScale.animateTo(
-                    targetValue = 1.045f,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f)
-                )
-                wavePulseScale.animateTo(
-                    targetValue = 1f,
-                    animationSpec = spring(dampingRatio = 0.55f, stiffness = 400f)
-                )
+            }
+        }
+    }
+
+    val targetCheckedProgress = if (visualChecked && !isEditing) 1f else 0f
+    if (checkedProgress.targetValue != targetCheckedProgress || checkedProgress.value != targetCheckedProgress) {
+        LaunchedEffect(targetCheckedProgress, isReducedMotion) {
+            if (isReducedMotion) {
+                checkedProgress.snapTo(targetCheckedProgress)
             } else {
-                visualChecked = false
+                checkedProgress.animateTo(
+                    targetValue = targetCheckedProgress,
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
+                )
             }
         }
     }
@@ -367,39 +413,14 @@ fun CapsuleCheckItemRow(
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsulePressScale"
     )
-    val containerColor = animateColorAsState(
-        targetValue = if (visualChecked && !isEditing) colorScheme.surfaceContainerLow else colorScheme.surfaceContainerHigh,
-        animationSpec = colorSpec,
-        label = "capsuleContainerColor"
-    )
-    val borderColor = animateColorAsState(
-        targetValue = when {
-            isEditing -> colorScheme.primary
-            visualChecked -> colorScheme.outlineVariant.copy(alpha = 0.4f)
-            else -> colorScheme.tertiary.copy(alpha = 0.55f)
-        },
-        animationSpec = colorSpec,
-        label = "capsuleBorderColor"
-    )
-    val indicatorColor = animateColorAsState(
-        targetValue = when {
-            isEditing -> colorScheme.primary
-            visualChecked -> colorScheme.outline
-            else -> colorScheme.tertiary
-        },
-        animationSpec = colorSpec,
-        label = "capsuleIndicatorColor"
-    )
-    val badgeBgColor = animateColorAsState(
-        targetValue = if (visualChecked) colorScheme.surfaceContainerHighest else colorScheme.tertiaryContainer,
-        animationSpec = colorSpec,
-        label = "capsuleBadgeBg"
-    )
-    val contentAlpha = animateFloatAsState(
-        targetValue = if (visualChecked && !isEditing) 0.45f else 1f,
-        animationSpec = if (isReducedMotion) snap() else spring(dampingRatio = 0.8f, stiffness = 380f),
-        label = "capsuleContentAlpha"
-    )
+    val uncheckedContainerColor = colorScheme.surfaceContainerHigh
+    val checkedContainerColor = colorScheme.surfaceContainerLow
+    val uncheckedBorderColor = if (isEditing) colorScheme.primary else colorScheme.tertiary.copy(alpha = 0.55f)
+    val checkedBorderColor = if (isEditing) colorScheme.primary else colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val uncheckedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.tertiary
+    val checkedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.outline
+    val uncheckedBadgeBgColor = colorScheme.tertiaryContainer
+    val checkedBadgeBgColor = colorScheme.surfaceContainerHighest
 
     Box(
         modifier = modifier
@@ -482,14 +503,15 @@ fun CapsuleCheckItemRow(
                 }
                 .clip(RoundedCornerShape(24.dp))
                 .drawBehind {
+                    val t = checkedProgress.value.coerceIn(0f, 1f)
                     val corner = CornerRadius(cornerRadiusPx, cornerRadiusPx)
                     drawRoundRect(
-                        color = containerColor.value,
+                        color = lerpColor(uncheckedContainerColor, checkedContainerColor, t),
                         cornerRadius = corner
                     )
-                    val strokePx = (if (visualChecked && !isEditing) 1.dp else 1.5.dp).toPx()
+                    val strokePx = lerp(1.5f, 1f, t).dp.toPx()
                     drawRoundRect(
-                        color = borderColor.value,
+                        color = lerpColor(uncheckedBorderColor, checkedBorderColor, t),
                         cornerRadius = corner,
                         style = Stroke(width = strokePx)
                     )
@@ -574,16 +596,21 @@ fun CapsuleCheckItemRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)
-                    .graphicsLayer { alpha = contentAlpha.value },
+                    .graphicsLayer { alpha = lerp(1f, 0.45f, checkedProgress.value.coerceIn(0f, 1f)) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
                         .width(6.dp)
                         .height(24.dp)
+                        .graphicsLayer {
+                            val extra = (wavePulseScale.value - 1f) * 2.2f
+                            scaleX = 1f + extra * 0.5f
+                            scaleY = 1f + extra
+                        }
                         .clip(RoundedCornerShape(50))
                         .drawBehind {
-                            drawRect(indicatorColor.value)
+                            drawRect(lerpColor(uncheckedIndicatorColor, checkedIndicatorColor, checkedProgress.value.coerceIn(0f, 1f)))
                         }
                 )
                 Spacer(modifier = Modifier.width(12.dp))
@@ -664,46 +691,48 @@ fun CapsuleCheckItemRow(
                     Box(
                         modifier = Modifier
                             .width(76.dp)
-                            .clip(RoundedCornerShape(50))
-                            .drawBehind { drawRect(badgeBgColor.value) }
-                    ) {
-                        AnimatedContent(
-                            targetState = visualChecked,
-                            transitionSpec = { fadeIn() togetherWith fadeOut() },
-                            contentAlignment = Alignment.Center,
-                            label = "capsuleBadgeState"
-                        ) { checked ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 5.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (checked) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = null,
-                                        tint = colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "已備",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colorScheme.onSurfaceVariant
-                                    )
-                                } else {
-                                    Text(
-                                        text = "待備",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colorScheme.onTertiaryContainer
-                                    )
-                                }
+                            .height(28.dp)
+                            .graphicsLayer {
+                                val badgeScale = 1f + (wavePulseScale.value - 1f) * 1.8f
+                                scaleX = badgeScale
+                                scaleY = badgeScale
                             }
+                            .clip(RoundedCornerShape(50))
+                            .drawBehind {
+                                drawRect(lerpColor(uncheckedBadgeBgColor, checkedBadgeBgColor, checkedProgress.value.coerceIn(0f, 1f)))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = checkedProgress.value.coerceIn(0f, 1f) },
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = null,
+                                tint = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "已備",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = colorScheme.onSurfaceVariant
+                            )
                         }
+                        Text(
+                            text = "待備",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onTertiaryContainer,
+                            modifier = Modifier.graphicsLayer {
+                                alpha = (1f - checkedProgress.value).coerceIn(0f, 1f)
+                            }
+                        )
                     }
                     IconButton(
                         onClick = onStartEdit,
