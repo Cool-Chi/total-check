@@ -537,7 +537,8 @@ fun TotalCheckSkeletonShimmer(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(18.dp)
+                                    .width(12.dp)
+                                    .height(18.dp)
                                     .shimmerBlock(
                                         blockIndex = blockIndex,
                                         blockColor = blockColor,
@@ -546,7 +547,7 @@ fun TotalCheckSkeletonShimmer(
                                         elapsedMillisProvider = elapsedProvider,
                                         durationMillis = durationMillis,
                                         staggerMillis = staggerMillis,
-                                        shape = CircleShape
+                                        shape = RoundedCornerShape(4.dp)
                                     )
                             )
                         }
