@@ -15,11 +15,18 @@ interface ChecklistDao {
     fun observeAllChecklists(): Flow<List<ChecklistEntity>>
 
     // Keep original item order when toggling checked state so cards stay in place.
+    @Query("SELECT * FROM check_items ORDER BY sortOrder ASC, id DESC")
+    fun observeAllItems(): Flow<List<CheckItemEntity>>
+
+    // Keep original item order when toggling checked state so cards stay in place.
     @Query("SELECT * FROM check_items WHERE checklistId = :checklistId ORDER BY sortOrder ASC, id DESC")
     fun observeItemsByChecklist(checklistId: Long): Flow<List<CheckItemEntity>>
 
     @Query("SELECT COUNT(*) FROM checklists")
     suspend fun getChecklistCount(): Int
+
+    @Query("SELECT MAX(sortOrder) FROM checklists")
+    suspend fun getMaxChecklistSortOrder(): Int?
 
     @Query("SELECT MIN(sortOrder) FROM check_items WHERE checklistId = :checklistId")
     suspend fun getMinItemSortOrder(checklistId: Long): Int?
@@ -27,8 +34,14 @@ interface ChecklistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChecklist(checklist: ChecklistEntity): Long
 
+    @Query("UPDATE checklists SET name = :newName WHERE id = :id")
+    suspend fun updateChecklistName(id: Long, newName: String)
+
     @Update
     suspend fun updateChecklist(checklist: ChecklistEntity)
+
+    @Query("DELETE FROM checklists WHERE id = :id")
+    suspend fun deleteChecklist(id: Long)
 
     @Delete
     suspend fun deleteChecklist(checklist: ChecklistEntity)

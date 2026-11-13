@@ -8,49 +8,38 @@ import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.repository.ChecklistRepository
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class ChecklistWithItems(
-    val checklist: ChecklistEntity,
-    val items: List<CheckItemEntity>
-)
-
-@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getInstance(application)
     private val repository = ChecklistRepository(application, database.checklistDao())
     private val preferencesRepository = UserPreferencesRepository(application)
 
-    val checklistsWithItems: StateFlow<List<ChecklistWithItems>> =
-        repository.observeAllChecklists()
-            .flatMapLatest { checklists ->
-                if (checklists.isEmpty()) {
-                    flowOf(emptyList())
-                } else {
-                    combine(
-                        checklists.map { checklist ->
-                            repository.observeItemsByChecklist(checklist.id)
-                                .map { items -> ChecklistWithItems(checklist, items) }
-                        }
-                    ) { array -> array.toList() }
-                }
-            }
+    val checklists: StateFlow<List<ChecklistEntity>> = repository.observeAllChecklists()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+    val itemsByChecklist: StateFlow<Map<Long, List<CheckItemEntity>>> =
+        repository.observeAllItems()
+            .map { items -> items.groupBy { it.checklistId } }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = emptyList()
+                initialValue = emptyMap()
             )
+
+    private val _selectedChecklistId = MutableStateFlow<Long?>(null)
+    val selectedChecklistId: StateFlow<Long?> = _selectedChecklistId.asStateFlow()
 
     val isDarkMode: StateFlow<Boolean> = preferencesRepository.isDarkMode
         .stateIn(
@@ -72,6 +61,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             repository.seedInitialDataIfNeeded()
+        }
+    }
+
+    fun selectChecklist(checklistId: Long) {
+        _selectedChecklistId.value = checklistId
+    }
+
+    fun createChecklist(name: String, onCreated: (Long) -> Unit = {}) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            val newId = repository.addChecklist(trimmed)
+            onCreated(newId)
+        }
+    }
+
+    fun renameChecklist(id: Long, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            repository.renameChecklist(id = id, newName = trimmed)
+        }
+    }
+
+    fun deleteChecklist(id: Long) {
+        if (checklists.value.size <= 1) return
+        viewModelScope.launch {
+            repository.deleteChecklist(id)
         }
     }
 

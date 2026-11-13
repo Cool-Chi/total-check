@@ -15,17 +15,30 @@ class ChecklistRepository(
 
     fun observeAllChecklists(): Flow<List<ChecklistEntity>> = dao.observeAllChecklists()
 
+    fun observeAllItems(): Flow<List<CheckItemEntity>> = dao.observeAllItems()
+
     fun observeItemsByChecklist(checklistId: Long): Flow<List<CheckItemEntity>> =
         dao.observeItemsByChecklist(checklistId)
 
-    suspend fun addChecklist(name: String, sortOrder: Int = 0): Long {
-        val id = dao.insertChecklist(ChecklistEntity(name = name, sortOrder = sortOrder))
+    suspend fun addChecklist(name: String): Long {
+        val nextSortOrder = (dao.getMaxChecklistSortOrder() ?: -1) + 1
+        val id = dao.insertChecklist(ChecklistEntity(name = name, sortOrder = nextSortOrder))
         WidgetSyncManager.notifyDataChanged(appContext)
         return id
     }
 
+    suspend fun renameChecklist(id: Long, newName: String) {
+        dao.updateChecklistName(id = id, newName = newName)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
     suspend fun updateChecklist(checklist: ChecklistEntity) {
         dao.updateChecklist(checklist)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    suspend fun deleteChecklist(id: Long) {
+        dao.deleteChecklist(id)
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
