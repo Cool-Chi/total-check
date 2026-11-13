@@ -1,4 +1,4 @@
-package com.example.totalcheck.ui.shell
+package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.totalcheck.data.local.CheckItemEntity
 
 @Composable
 fun CapsuleProgressModule(
@@ -176,7 +177,7 @@ fun CapsuleProgressModule(
 
 @Composable
 fun CapsuleCheckItemRow(
-    item: MockCheckItem,
+    item: CheckItemEntity,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {

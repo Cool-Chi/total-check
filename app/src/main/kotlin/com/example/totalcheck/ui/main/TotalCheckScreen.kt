@@ -1,8 +1,9 @@
-package com.example.totalcheck.ui.shell
+package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -46,7 +48,6 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,152 +60,150 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ShellPrototypeScreen(
-    isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit,
+fun TotalCheckScreen(
+    viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    val checklists = remember { createInitialMockChecklists() }
-    var nextId by remember { mutableLongStateOf(1000L) }
+    val checklistsWithItems by viewModel.checklistsWithItems.collectAsStateWithLifecycle()
+    val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
+    val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
+
     var inputText by remember { mutableStateOf("") }
-    var showUncheckedOnly by remember { mutableStateOf(false) }
-
-    val pagerState = rememberPagerState(pageCount = { checklists.size })
-
-    val addItemToCurrentList: () -> Unit = {
-        val trimmed = inputText.trim()
-        if (trimmed.isNotEmpty()) {
-            val currentList = checklists[pagerState.currentPage]
-            currentList.items.add(
-                index = 0,
-                element = MockCheckItem(id = nextId++, label = trimmed, isChecked = false)
-            )
-            inputText = ""
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        }
-    }
 
     Surface(
         modifier = modifier.fillMaxSize(),
         color = colorScheme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1. 頂部標題列 + 亮/暗色切換鈕
             TopAppHeaderBar(
-                isDarkTheme = isDarkTheme,
-                onToggleTheme = onToggleTheme
+                isDarkTheme = isDarkMode,
+                onToggleTheme = { viewModel.toggleDarkMode() }
             )
 
-            // 2. 多清單跟手分頁 TabRow
-            PrimaryScrollableTabRow(
-                selectedTabIndex = pagerState.currentPage,
-                containerColor = colorScheme.background,
-                contentColor = colorScheme.primary,
-                edgePadding = 16.dp,
-                divider = {
-                    HorizontalDivider(thickness = 0.5.dp, color = colorScheme.outlineVariant)
+            if (checklistsWithItems.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = colorScheme.primary)
                 }
-            ) {
-                checklists.forEachIndexed { index, checklist ->
-                    val unchecked = checklist.items.count { !it.isChecked }
-                    Tab(
-                        selected = pagerState.currentPage == index,
-                        onClick = {
-                            scope.launch { pagerState.animateScrollToPage(index) }
-                        },
-                        text = {
-                            Text(
-                                text = if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Medium
-                            )
-                        }
-                    )
-                }
-            }
+            } else {
+                val pagerState = rememberPagerState(pageCount = { checklistsWithItems.size })
 
-            // 3. HorizontalPager 內容區（風格 C：觸感膠囊模組 + 原地狀態轉場）
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) { pageIndex ->
-                val checklist = checklists[pageIndex]
-                val totalCount = checklist.items.size
-                val uncheckedCount = checklist.items.count { !it.isChecked }
-                val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
-                val animatedProgress by animateFloatAsState(
-                    targetValue = targetProgress,
-                    animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
-                    label = "checklistProgress"
-                )
-                val visibleItems = remember(checklist.items.toList(), showUncheckedOnly) {
-                    if (showUncheckedOnly) {
-                        checklist.items.filter { !it.isChecked }
-                    } else {
-                        checklist.items.toList()
+                val submitNewItem: () -> Unit = {
+                    val trimmed = inputText.trim()
+                    if (trimmed.isNotEmpty() && pagerState.currentPage in checklistsWithItems.indices) {
+                        val currentChecklistId = checklistsWithItems[pagerState.currentPage].checklist.id
+                        viewModel.addItem(currentChecklistId, trimmed)
+                        inputText = ""
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                 }
 
-                Column(modifier = Modifier.fillMaxSize()) {
-                    CapsuleProgressModule(
-                        uncheckedCount = uncheckedCount,
-                        totalCount = totalCount,
-                        animatedProgress = animatedProgress,
-                        showUncheckedOnly = showUncheckedOnly,
-                        onToggleUncheckedOnly = { showUncheckedOnly = !showUncheckedOnly },
-                        onReset = {
-                            for (i in checklist.items.indices) {
-                                if (checklist.items[i].isChecked) {
-                                    checklist.items[i] = checklist.items[i].copy(isChecked = false)
-                                }
-                            }
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
-                    )
-
-                    LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(items = visibleItems, key = { it.id }) { item ->
-                            CapsuleCheckItemRow(
-                                item = item,
-                                onToggle = {
-                                    val idx = checklist.items.indexOfFirst { it.id == item.id }
-                                    if (idx >= 0) {
-                                        checklist.items[idx] = checklist.items[idx].copy(isChecked = !item.isChecked)
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    }
-                                },
-                                modifier = Modifier.animateItem(
-                                    placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
+                PrimaryScrollableTabRow(
+                    selectedTabIndex = pagerState.currentPage.coerceIn(0, checklistsWithItems.lastIndex),
+                    containerColor = colorScheme.background,
+                    contentColor = colorScheme.primary,
+                    edgePadding = 16.dp,
+                    divider = {
+                        HorizontalDivider(thickness = 0.5.dp, color = colorScheme.outlineVariant)
+                    }
+                ) {
+                    checklistsWithItems.forEachIndexed { index, group ->
+                        val unchecked = group.items.count { !it.isChecked }
+                        Tab(
+                            selected = pagerState.currentPage == index,
+                            onClick = {
+                                scope.launch { pagerState.animateScrollToPage(index) }
+                            },
+                            text = {
+                                Text(
+                                    text = if (unchecked > 0) "${group.checklist.name} ($unchecked)" else group.checklist.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Medium
                                 )
-                            )
+                            }
+                        )
+                    }
+                }
+
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) { pageIndex ->
+                    val group = checklistsWithItems[pageIndex]
+                    val totalCount = group.items.size
+                    val uncheckedCount = group.items.count { !it.isChecked }
+                    val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = targetProgress,
+                        animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
+                        label = "checklistProgress"
+                    )
+                    val visibleItems = remember(group.items, showUncheckedOnly) {
+                        if (showUncheckedOnly) {
+                            group.items.filter { !it.isChecked }
+                        } else {
+                            group.items
+                        }
+                    }
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        CapsuleProgressModule(
+                            uncheckedCount = uncheckedCount,
+                            totalCount = totalCount,
+                            animatedProgress = animatedProgress,
+                            showUncheckedOnly = showUncheckedOnly,
+                            onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
+                            onReset = {
+                                viewModel.resetChecklist(group.checklist.id)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        )
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(items = visibleItems, key = { it.id }) { item ->
+                                CapsuleCheckItemRow(
+                                    item = item,
+                                    onToggle = {
+                                        viewModel.toggleItemChecked(item)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    },
+                                    modifier = Modifier.animateItem(
+                                        placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
+                                    )
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // 4. 底部常駐極速輸入列（含 navigationBars + imeInsets 防遮擋）
-            QuickInputBar(
-                value = inputText,
-                onValueChange = { inputText = it },
-                onSubmit = addItemToCurrentList
-            )
+                QuickInputBar(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    onSubmit = submitNewItem
+                )
+            }
         }
     }
 }

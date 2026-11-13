@@ -5,15 +5,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
-import com.example.totalcheck.ui.shell.ShellPrototypeScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.totalcheck.ui.main.MainViewModel
+import com.example.totalcheck.ui.main.TotalCheckScreen
 import com.example.totalcheck.ui.theme.TotalCheckTheme
 
 class MainActivity : ComponentActivity() {
@@ -21,24 +20,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val systemDark = isSystemInDarkTheme()
-            var isDarkTheme by rememberSaveable { mutableStateOf(systemDark) }
+            val mainViewModel: MainViewModel = viewModel()
+            val isDarkMode by mainViewModel.isDarkMode.collectAsStateWithLifecycle()
+            val useDynamicColor by mainViewModel.useDynamicColor.collectAsStateWithLifecycle()
 
             val view = LocalView.current
             if (!view.isInEditMode) {
                 SideEffect {
                     val window = (view.context as Activity).window
                     val insetsController = WindowCompat.getInsetsController(window, view)
-                    insetsController.isAppearanceLightStatusBars = !isDarkTheme
-                    insetsController.isAppearanceLightNavigationBars = !isDarkTheme
+                    insetsController.isAppearanceLightStatusBars = !isDarkMode
+                    insetsController.isAppearanceLightNavigationBars = !isDarkMode
                 }
             }
 
-            TotalCheckTheme(darkTheme = isDarkTheme) {
-                ShellPrototypeScreen(
-                    isDarkTheme = isDarkTheme,
-                    onToggleTheme = { isDarkTheme = !isDarkTheme }
-                )
+            TotalCheckTheme(
+                darkTheme = isDarkMode,
+                dynamicColor = useDynamicColor
+            ) {
+                TotalCheckScreen(viewModel = mainViewModel)
             }
         }
     }
