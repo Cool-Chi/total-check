@@ -8,8 +8,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -25,8 +26,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.ButtonDefaults
@@ -34,18 +41,28 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,12 +114,16 @@ fun CapsuleProgressModule(
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
+                val hasCheckedItems = totalCount > uncheckedCount
                 FilledTonalButton(
                     onClick = onReset,
+                    enabled = hasCheckedItems,
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = colorScheme.surfaceContainerHighest,
-                        contentColor = colorScheme.onSurface
+                        contentColor = colorScheme.onSurface,
+                        disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f)
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
@@ -175,10 +196,16 @@ fun CapsuleProgressModule(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CapsuleCheckItemRow(
     item: CheckItemEntity,
     onToggle: () -> Unit,
+    isEditing: Boolean = false,
+    onStartEdit: () -> Unit = {},
+    onConfirmEdit: (String) -> Unit = {},
+    onCancelEdit: () -> Unit = {},
+    onDelete: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -186,26 +213,30 @@ fun CapsuleCheckItemRow(
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
+        targetValue = if (isPressed && !isEditing) 0.97f else 1f,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsulePressScale"
     )
     val containerColor by animateColorAsState(
-        targetValue = if (item.isChecked) colorScheme.surfaceContainerLow else colorScheme.surfaceContainerHigh,
+        targetValue = if (item.isChecked && !isEditing) colorScheme.surfaceContainerLow else colorScheme.surfaceContainerHigh,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleContainerColor"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (item.isChecked) {
-            colorScheme.outlineVariant.copy(alpha = 0.4f)
-        } else {
-            colorScheme.tertiary.copy(alpha = 0.55f)
+        targetValue = when {
+            isEditing -> colorScheme.primary
+            item.isChecked -> colorScheme.outlineVariant.copy(alpha = 0.4f)
+            else -> colorScheme.tertiary.copy(alpha = 0.55f)
         },
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleBorderColor"
     )
     val indicatorColor by animateColorAsState(
-        targetValue = if (item.isChecked) colorScheme.outline else colorScheme.tertiary,
+        targetValue = when {
+            isEditing -> colorScheme.primary
+            item.isChecked -> colorScheme.outline
+            else -> colorScheme.tertiary
+        },
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleIndicatorColor"
     )
@@ -215,7 +246,7 @@ fun CapsuleCheckItemRow(
         label = "capsuleBadgeBg"
     )
     val contentAlpha by animateFloatAsState(
-        targetValue = if (item.isChecked) 0.45f else 1f,
+        targetValue = if (item.isChecked && !isEditing) 0.45f else 1f,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleContentAlpha"
     )
@@ -228,19 +259,26 @@ fun CapsuleCheckItemRow(
                 scaleY = pressScale
             }
             .clip(RoundedCornerShape(24.dp))
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onToggle
+            .then(
+                if (isEditing) {
+                    Modifier
+                } else {
+                    Modifier.combinedClickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onToggle,
+                        onLongClick = onStartEdit
+                    )
+                }
             ),
         shape = RoundedCornerShape(24.dp),
         color = containerColor,
-        border = BorderStroke(if (item.isChecked) 1.dp else 1.5.dp, borderColor)
+        border = BorderStroke(if (item.isChecked && !isEditing) 1.dp else 1.5.dp, borderColor)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)
                 .alpha(contentAlpha),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -252,53 +290,139 @@ fun CapsuleCheckItemRow(
                     .background(indicatorColor)
             )
             Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = item.label,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (item.isChecked) FontWeight.Normal else FontWeight.SemiBold,
-                color = colorScheme.onSurface,
-                textDecoration = if (item.isChecked) TextDecoration.LineThrough else TextDecoration.None,
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = badgeBgColor
-            ) {
-                AnimatedContent(
-                    targetState = item.isChecked,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "capsuleBadgeState"
-                ) { checked ->
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (checked) {
-                            Icon(
-                                imageVector = Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "已備",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Text(
-                                text = "待備",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.onTertiaryContainer
-                            )
+
+            if (isEditing) {
+                var editValue by remember(item.id, isEditing) {
+                    mutableStateOf(
+                        TextFieldValue(
+                            text = item.label,
+                            selection = TextRange(item.label.length)
+                        )
+                    )
+                }
+                val focusRequester = remember { FocusRequester() }
+                LaunchedEffect(isEditing) {
+                    focusRequester.requestFocus()
+                }
+
+                BasicTextField(
+                    value = editValue,
+                    onValueChange = { editValue = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(focusRequester)
+                        .padding(vertical = 4.dp),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (editValue.text.isNotBlank()) {
+                                onConfirmEdit(editValue.text)
+                            }
+                        }
+                    )
+                )
+                IconButton(
+                    onClick = { onConfirmEdit(editValue.text) },
+                    enabled = editValue.text.isNotBlank(),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = "儲存名稱",
+                        tint = colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onCancelEdit,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "取消編輯",
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            } else {
+                Text(
+                    text = item.label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (item.isChecked) FontWeight.Normal else FontWeight.SemiBold,
+                    color = colorScheme.onSurface,
+                    textDecoration = if (item.isChecked) TextDecoration.LineThrough else TextDecoration.None,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = badgeBgColor
+                ) {
+                    AnimatedContent(
+                        targetState = item.isChecked,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "capsuleBadgeState"
+                    ) { checked ->
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (checked) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "已備",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                Text(
+                                    text = "待備",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colorScheme.onTertiaryContainer
+                                )
+                            }
                         }
                     }
+                }
+                IconButton(
+                    onClick = onStartEdit,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = "編輯項目名稱",
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteOutline,
+                        contentDescription = "刪除項目",
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }

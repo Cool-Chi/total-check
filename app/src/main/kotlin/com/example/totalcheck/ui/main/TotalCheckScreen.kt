@@ -58,6 +58,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -111,6 +116,9 @@ fun TotalCheckScreen(
     var inputText by remember { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var actionTargetChecklist by remember { mutableStateOf<ChecklistEntity?>(null) }
+    var editingItemId by remember { mutableStateOf<Long?>(null) }
+    var pendingScrollTopChecklistId by remember { mutableStateOf<Long?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -166,6 +174,7 @@ fun TotalCheckScreen(
                     val trimmed = inputText.trim()
                     if (trimmed.isNotEmpty() && pagerState.currentPage in checklists.indices) {
                         val currentChecklistId = checklists[pagerState.currentPage].id
+                        pendingScrollTopChecklistId = currentChecklistId
                         viewModel.addItem(currentChecklistId, trimmed)
                         inputText = ""
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -178,6 +187,7 @@ fun TotalCheckScreen(
                     currentPage = pagerState.currentPage.coerceIn(0, checklists.lastIndex),
                     tabListState = tabListState,
                     onSelectPage = { index ->
+                        editingItemId = null
                         scope.launch { pagerState.animateScrollToPage(index) }
                     },
                     onLongPressTab = { checklist ->
@@ -187,64 +197,136 @@ fun TotalCheckScreen(
                     onAddChecklist = { showCreateDialog = true }
                 )
 
-                HorizontalPager(
-                    state = pagerState,
-                    key = { page -> checklists[page].id },
+                Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                ) { pageIndex ->
-                    val checklist = checklists[pageIndex]
-                    val items = itemsByChecklist[checklist.id].orEmpty()
-                    val totalCount = items.size
-                    val uncheckedCount = items.count { !it.isChecked }
-                    val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
-                    val animatedProgress by animateFloatAsState(
-                        targetValue = targetProgress,
-                        animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
-                        label = "checklistProgress"
-                    )
-                    val visibleItems = remember(items, showUncheckedOnly) {
-                        if (showUncheckedOnly) {
-                            items.filter { !it.isChecked }
-                        } else {
-                            items
+                ) {
+                    HorizontalPager(
+                        state = pagerState,
+                        key = { page -> checklists[page].id },
+                        modifier = Modifier.fillMaxSize()
+                    ) { pageIndex ->
+                        val checklist = checklists[pageIndex]
+                        val items = itemsByChecklist[checklist.id].orEmpty()
+                        val listState = rememberLazyListState()
+                        val totalCount = items.size
+                        val uncheckedCount = items.count { !it.isChecked }
+                        val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
+                        val animatedProgress by animateFloatAsState(
+                            targetValue = targetProgress,
+                            animationSpec = spring(dampingRatio = 0.65f, stiffness = 380f),
+                            label = "checklistProgress"
+                        )
+                        val visibleItems = remember(items, showUncheckedOnly) {
+                            if (showUncheckedOnly) {
+                                items.filter { !it.isChecked }
+                            } else {
+                                items
+                            }
+                        }
+
+                        LaunchedEffect(items.firstOrNull()?.id, pendingScrollTopChecklistId) {
+                            if (pendingScrollTopChecklistId == checklist.id && visibleItems.isNotEmpty()) {
+                                listState.animateScrollToItem(0)
+                                pendingScrollTopChecklistId = null
+                            }
+                        }
+
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            CapsuleProgressModule(
+                                uncheckedCount = uncheckedCount,
+                                totalCount = totalCount,
+                                animatedProgress = animatedProgress,
+                                showUncheckedOnly = showUncheckedOnly,
+                                onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
+                                onReset = {
+                                    editingItemId = null
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.resetChecklist(checklist.id) { checkedSnapshot ->
+                                        scope.launch {
+                                            snackbarHostState.currentSnackbarData?.dismiss()
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "已重置「${checklist.name}」所有項目",
+                                                actionLabel = "復原",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                viewModel.restoreCheckedStates(checkedSnapshot)
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(items = visibleItems, key = { it.id }) { item ->
+                                    CapsuleCheckItemRow(
+                                        item = item,
+                                        onToggle = {
+                                            viewModel.toggleItemChecked(item)
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        },
+                                        isEditing = editingItemId == item.id,
+                                        onStartEdit = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            editingItemId = item.id
+                                        },
+                                        onConfirmEdit = { newLabel ->
+                                            viewModel.renameItem(item.id, newLabel)
+                                            editingItemId = null
+                                        },
+                                        onCancelEdit = {
+                                            editingItemId = null
+                                        },
+                                        onDelete = {
+                                            if (editingItemId == item.id) {
+                                                editingItemId = null
+                                            }
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            viewModel.deleteItem(item) { deletedItem ->
+                                                scope.launch {
+                                                    snackbarHostState.currentSnackbarData?.dismiss()
+                                                    val result = snackbarHostState.showSnackbar(
+                                                        message = "已刪除「${deletedItem.label}」",
+                                                        actionLabel = "復原",
+                                                        duration = SnackbarDuration.Short
+                                                    )
+                                                    if (result == SnackbarResult.ActionPerformed) {
+                                                        viewModel.restoreItem(deletedItem)
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.animateItem(
+                                            placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        CapsuleProgressModule(
-                            uncheckedCount = uncheckedCount,
-                            totalCount = totalCount,
-                            animatedProgress = animatedProgress,
-                            showUncheckedOnly = showUncheckedOnly,
-                            onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
-                            onReset = {
-                                viewModel.resetChecklist(checklist.id)
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) { data ->
+                        Snackbar(
+                            snackbarData = data,
+                            shape = RoundedCornerShape(20.dp),
+                            containerColor = colorScheme.inverseSurface,
+                            contentColor = colorScheme.inverseOnSurface,
+                            actionColor = colorScheme.inversePrimary
                         )
-
-                        LazyColumn(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(items = visibleItems, key = { it.id }) { item ->
-                                CapsuleCheckItemRow(
-                                    item = item,
-                                    onToggle = {
-                                        viewModel.toggleItemChecked(item)
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    },
-                                    modifier = Modifier.animateItem(
-                                        placementSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
-                                    )
-                                )
-                            }
-                        }
                     }
                 }
 
