@@ -24,29 +24,29 @@ class MainActivity : ComponentActivity() {
             val themeConfig by mainViewModel.themeConfig.collectAsStateWithLifecycle()
             val currentTheme = themeConfig ?: return@setContent
 
-            LaunchedEffect(currentTheme.isDarkMode) {
-                enableEdgeToEdge(
-                    statusBarStyle = if (currentTheme.isDarkMode) {
-                        SystemBarStyle.dark(Color.TRANSPARENT)
-                    } else {
-                        SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-                    },
-                    navigationBarStyle = if (currentTheme.isDarkMode) {
-                        SystemBarStyle.dark(Color.TRANSPARENT)
-                    } else {
-                        SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-                    }
-                )
-            }
-
             TotalCheckTheme(
                 darkTheme = currentTheme.isDarkMode,
                 dynamicColor = currentTheme.useDynamicColor
             ) {
                 RadialThemeTransitionContainer(
-                    isDarkMode = currentTheme.isDarkMode,
                     onToggleTheme = { mainViewModel.toggleDarkMode() }
                 ) { triggerTransition, isTransitioning ->
+                    LaunchedEffect(currentTheme.isDarkMode, isTransitioning) {
+                        if (!isTransitioning) {
+                            enableEdgeToEdge(
+                                statusBarStyle = if (currentTheme.isDarkMode) {
+                                    SystemBarStyle.dark(Color.TRANSPARENT)
+                                } else {
+                                    SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                                },
+                                navigationBarStyle = if (currentTheme.isDarkMode) {
+                                    SystemBarStyle.dark(Color.TRANSPARENT)
+                                } else {
+                                    SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                                }
+                            )
+                        }
+                    }
                     TotalCheckScreen(
                         viewModel = mainViewModel,
                         onToggleTheme = triggerTransition,

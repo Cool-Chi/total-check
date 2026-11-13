@@ -45,12 +45,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingScrollToChecklistId = MutableStateFlow<Long?>(null)
     val pendingScrollToChecklistId: StateFlow<Long?> = _pendingScrollToChecklistId.asStateFlow()
 
-    val themeConfig: StateFlow<ThemeConfig?> = preferencesRepository.themeConfig
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = null
-        )
+    private val _themeConfig = MutableStateFlow<ThemeConfig?>(null)
+    val themeConfig: StateFlow<ThemeConfig?> = _themeConfig.asStateFlow()
 
     val isDarkMode: StateFlow<Boolean> = themeConfig
         .map { it?.isDarkMode ?: true }
@@ -72,6 +68,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val showUncheckedOnly: StateFlow<Boolean> = _showUncheckedOnly.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            preferencesRepository.themeConfig.collect { config ->
+                _themeConfig.value = config
+            }
+        }
         viewModelScope.launch {
             repository.seedInitialDataIfNeeded()
         }
@@ -110,16 +111,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleDarkMode() {
-        val current = themeConfig.value?.isDarkMode ?: return
+        val current = _themeConfig.value ?: return
+        val next = !current.isDarkMode
+        _themeConfig.value = current.copy(isDarkMode = next)
         viewModelScope.launch {
-            preferencesRepository.setDarkMode(!current)
+            preferencesRepository.setDarkMode(next)
         }
     }
 
     fun toggleDynamicColor() {
-        val current = themeConfig.value?.useDynamicColor ?: return
+        val current = _themeConfig.value ?: return
+        val next = !current.useDynamicColor
+        _themeConfig.value = current.copy(useDynamicColor = next)
         viewModelScope.launch {
-            preferencesRepository.setUseDynamicColor(!current)
+            preferencesRepository.setUseDynamicColor(next)
         }
     }
 

@@ -19,17 +19,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ClipOp
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -37,11 +33,8 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 
 val LocalThemeTransitioning = compositionLocalOf { false }
 val LocalReducedMotion = compositionLocalOf { false }
@@ -82,18 +75,18 @@ fun rememberReducedMotion(): Boolean {
 
 @Composable
 fun RadialThemeTransitionContainer(
-    isDarkMode: Boolean,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (triggerTransition: (originInRoot: Offset) -> Unit, isTransitioning: Boolean) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val graphicsLayer = rememberGraphicsLayer()
+    val contentLayer = rememberGraphicsLayer()
+    val snapshotLayer = rememberGraphicsLayer()
     val isReducedMotion = rememberReducedMotion()
-    val currentDarkMode by rememberUpdatedState(isDarkMode)
 
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
-    var snapshotBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var showSnapshotOverlay by remember { mutableStateOf(false) }
+    var freezeSnapshot by remember { mutableStateOf(false) }
     var revealOrigin by remember { mutableStateOf(Offset.Zero) }
     var isTransitioning by remember { mutableStateOf(false) }
     val revealRadius = remember { Animatable(0f) }
@@ -104,51 +97,39 @@ fun RadialThemeTransitionContainer(
             if (isReducedMotion || containerSize.width == 0 || containerSize.height == 0) {
                 onToggleTheme()
             } else {
+                // Step 1: 0ms 凍結 GPU snapshotLayer 並顯示覆蓋層
+                freezeSnapshot = true
                 isTransitioning = true
+                showSnapshotOverlay = true
+                revealOrigin = origin
+
+                val w = containerSize.width.toFloat()
+                val h = containerSize.height.toFloat()
+                val maxRadius = maxOf(
+                    hypot(origin.x, origin.y),
+                    hypot(w - origin.x, origin.y),
+                    hypot(origin.x, h - origin.y),
+                    hypot(w - origin.x, h - origin.y)
+                )
+
+                // Step 2: 同毫秒立即觸發 0ms 樂觀主題切換
+                onToggleTheme()
+
+                // Step 3: 立即啟動 560ms 高初速度圓形擴散動畫
                 scope.launch {
                     try {
-                        // Step 1: 記錄切換前狀態、擷取離屏快照並初始化遮罩
-                        val previousDarkMode = currentDarkMode
-                        val captured = graphicsLayer.toImageBitmap()
-                        val w = containerSize.width.toFloat()
-                        val h = containerSize.height.toFloat()
-                        val maxRadius = maxOf(
-                            hypot(origin.x, origin.y),
-                            hypot(w - origin.x, origin.y),
-                            hypot(origin.x, h - origin.y),
-                            hypot(w - origin.x, h - origin.y)
-                        )
-
-                        revealOrigin = origin
                         revealRadius.snapTo(0f)
-                        snapshotBitmap = captured
-
-                        // Step 2: 確保快照覆蓋層已繪製上屏遮蔽全畫面
-                        withFrameNanos { }
-
-                        // Step 3: 觸發 DataStore 異步主題切換
-                        onToggleTheme()
-
-                        // Step 4: 等待 DataStore 發射新主題狀態至 Compose
-                        withTimeoutOrNull(300L) {
-                            snapshotFlow { currentDarkMode }.first { it != previousDarkMode }
-                        }
-
-                        // Step 5: 連續等待兩幀，完成新主題全樹重組/Layout 與 GPU 首幀合成
-                        withFrameNanos { }
-                        withFrameNanos { }
-
-                        // Step 6: 啟動 620ms 柔和圓形擴散動畫
                         revealRadius.animateTo(
                             targetValue = maxRadius,
                             animationSpec = tween(
-                                durationMillis = 620,
-                                easing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
+                                durationMillis = 560,
+                                easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
                             )
                         )
                     } finally {
-                        snapshotBitmap = null
+                        showSnapshotOverlay = false
                         isTransitioning = false
+                        freezeSnapshot = false
                     }
                 }
             }
@@ -160,7 +141,7 @@ fun RadialThemeTransitionContainer(
             .fillMaxSize()
             .onSizeChanged { containerSize = it }
     ) {
-        // 單一活體內容層：錄製每幀畫面供切換瞬間擷取離屏快照，並在轉場期間凍結內部色彩漸變
+        // 單一活體內容層：持續錄製至 contentLayer，非轉場時零拷貝鏡像至 snapshotLayer
         CompositionLocalProvider(
             LocalThemeTransitioning provides isTransitioning,
             LocalReducedMotion provides isReducedMotion
@@ -169,18 +150,23 @@ fun RadialThemeTransitionContainer(
                 modifier = Modifier
                     .fillMaxSize()
                     .drawWithContent {
-                        graphicsLayer.record {
+                        contentLayer.record {
                             this@drawWithContent.drawContent()
                         }
-                        drawLayer(graphicsLayer)
+                        if (!isTransitioning && !freezeSnapshot) {
+                            snapshotLayer.record {
+                                drawLayer(contentLayer)
+                            }
+                        }
+                        drawLayer(contentLayer)
                     }
             ) {
                 content(triggerTransition, isTransitioning)
             }
         }
 
-        // 舊主題快照覆蓋層：於 Draw 階段讀取 revealRadius 並複用單一 Path，避免每幀 GC 與重組
-        snapshotBitmap?.let { bitmap ->
+        // 舊主題 GPU 快照覆蓋層：於 Draw 階段直接 drawLayer(snapshotLayer) 並以 ClipOp.Difference 挖空
+        if (showSnapshotOverlay) {
             Spacer(
                 modifier = Modifier
                     .fillMaxSize()
@@ -190,10 +176,7 @@ fun RadialThemeTransitionContainer(
                             Rect(center = revealOrigin, radius = revealRadius.value)
                         )
                         clipPath(path = clipPath, clipOp = ClipOp.Difference) {
-                            drawImage(
-                                image = bitmap,
-                                dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
-                            )
+                            drawLayer(snapshotLayer)
                         }
                     }
             )
