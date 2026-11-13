@@ -202,4 +202,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.restoreCheckedStates(itemIds)
         }
     }
+
+    fun reorderChecklistItems(
+        checklistId: Long,
+        reorderedVisibleIds: List<Long>,
+        showUncheckedOnly: Boolean
+    ) {
+        val currentFullItems = itemsByChecklist.value[checklistId].orEmpty()
+        if (currentFullItems.isEmpty() || reorderedVisibleIds.isEmpty()) return
+
+        val reorderedSet = reorderedVisibleIds.toHashSet()
+        val fullOrderedIds = if (!showUncheckedOnly) {
+            val remaining = currentFullItems.filter { it.id !in reorderedSet }.map { it.id }
+            reorderedVisibleIds + remaining
+        } else {
+            val iterator = reorderedVisibleIds.iterator()
+            val mapped = currentFullItems.map { item ->
+                if (item.id in reorderedSet && iterator.hasNext()) {
+                    iterator.next()
+                } else {
+                    item.id
+                }
+            }.toMutableList()
+            while (iterator.hasNext()) {
+                mapped.add(iterator.next())
+            }
+            mapped
+        }
+
+        viewModelScope.launch {
+            repository.reorderChecklistItems(
+                fullOrderedIds = fullOrderedIds,
+                currentItems = currentFullItems
+            )
+        }
+    }
+
+    fun moveItemByStep(
+        checklistId: Long,
+        itemId: Long,
+        delta: Int,
+        showUncheckedOnly: Boolean
+    ) {
+        val currentFullItems = itemsByChecklist.value[checklistId].orEmpty()
+        val visibleItems = if (showUncheckedOnly) {
+            currentFullItems.filter { !it.isChecked }
+        } else {
+            currentFullItems
+        }
+        val fromIdx = visibleItems.indexOfFirst { it.id == itemId }
+        if (fromIdx < 0) return
+        val toIdx = (fromIdx + delta).coerceIn(0, visibleItems.lastIndex)
+        if (toIdx == fromIdx) return
+        val mutableIds = visibleItems.map { it.id }.toMutableList()
+        val moved = mutableIds.removeAt(fromIdx)
+        mutableIds.add(toIdx, moved)
+        reorderChecklistItems(
+            checklistId = checklistId,
+            reorderedVisibleIds = mutableIds,
+            showUncheckedOnly = showUncheckedOnly
+        )
+    }
 }

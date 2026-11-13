@@ -99,6 +99,22 @@ class ChecklistRepository(
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
+    suspend fun reorderChecklistItems(
+        fullOrderedIds: List<Long>,
+        currentItems: List<CheckItemEntity>
+    ) {
+        if (fullOrderedIds.isEmpty() || currentItems.isEmpty()) return
+        val byId = currentItems.associateBy { it.id }
+        val updated = fullOrderedIds.mapIndexedNotNull { index, id ->
+            val entity = byId[id] ?: return@mapIndexedNotNull null
+            if (entity.sortOrder != index) entity.copy(sortOrder = index) else null
+        }
+        if (updated.isNotEmpty()) {
+            dao.updateItems(updated)
+            WidgetSyncManager.notifyDataChanged(appContext)
+        }
+    }
+
     suspend fun seedInitialDataIfNeeded() {
         if (dao.getChecklistCount() > 0) return
 

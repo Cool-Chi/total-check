@@ -55,6 +55,9 @@ interface ChecklistDao {
     @Update
     suspend fun updateItem(item: CheckItemEntity)
 
+    @Update
+    suspend fun updateItems(items: List<CheckItemEntity>)
+
     @Query("UPDATE check_items SET label = :newLabel WHERE id = :itemId")
     suspend fun updateItemLabel(itemId: Long, newLabel: String)
 
