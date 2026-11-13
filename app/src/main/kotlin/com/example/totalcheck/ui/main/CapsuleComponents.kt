@@ -54,6 +54,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -356,6 +357,9 @@ fun CapsuleCheckItemRow(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val isReducedMotion = LocalReducedMotion.current
+    val currentOnToggle by rememberUpdatedState(onToggle)
+    val currentOnCompressedClick by rememberUpdatedState(onCompressedClick)
+    val currentOnDelete by rememberUpdatedState(onDelete)
 
     // Staggered Bulk Selection (一鍵重置錯峰波浪)
     val isInActiveWave = !isReducedMotion &&
@@ -479,14 +483,14 @@ fun CapsuleCheckItemRow(
             isPressed = false
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             if (isReducedMotion) {
-                onDelete()
+                currentOnDelete()
             } else {
                 scope.launch {
                     deleteExitProgress.animateTo(
                         targetValue = 1f,
                         animationSpec = tween(durationMillis = 160, easing = LinearEasing)
                     )
-                    onDelete()
+                    currentOnDelete()
                 }
             }
         }
@@ -635,7 +639,7 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 }
-                .pointerInput(isEditing, isDeleting, isReducedMotion, isCompressedStackCard) {
+                .pointerInput(item.id, isEditing, isDeleting, isReducedMotion, isCompressedStackCard) {
                     if (isEditing || isDeleting) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = true)
@@ -651,7 +655,7 @@ fun CapsuleCheckItemRow(
                                         change.position.y - down.position.y
                                     )
                                     if (movedDist <= touchSlop) {
-                                        onCompressedClick?.invoke()
+                                        currentOnCompressedClick?.invoke()
                                     }
                                     break
                                 }
@@ -713,7 +717,7 @@ fun CapsuleCheckItemRow(
                                     currentHoldJob.cancel()
                                     val movedDist = hypot(pos.x - down.position.x, pos.y - down.position.y)
                                     if (movedDist <= touchSlop) {
-                                        onToggle()
+                                        currentOnToggle()
                                     }
                                 }
                                 break
