@@ -1,16 +1,16 @@
 package com.example.totalcheck.ui.main
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,8 +36,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -50,7 +52,6 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -70,14 +71,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,8 +89,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -95,6 +98,8 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,8 +108,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
-import com.example.totalcheck.ui.theme.LocalThemeTransitioning
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @Composable
 fun TotalCheckScreen(
@@ -122,15 +129,22 @@ fun TotalCheckScreen(
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
-    val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
-    val useDynamicColor by viewModel.useDynamicColor.collectAsStateWithLifecycle()
+    val themeConfig by viewModel.themeConfig.collectAsStateWithLifecycle()
+    val isDarkMode = themeConfig?.isDarkMode ?: true
+    val useDynamicColor = themeConfig?.useDynamicColor ?: false
     val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
+    val isStartupLoading by viewModel.isStartupLoading.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var actionTargetChecklist by remember { mutableStateOf<ChecklistEntity?>(null) }
     var editingItemId by remember { mutableStateOf<Long?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val submitHolder = remember {
+        object {
+            var onSubmit: (() -> Unit)? = null
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -154,37 +168,117 @@ fun TotalCheckScreen(
                 onToggleDynamicColor = { viewModel.toggleDynamicColor() }
             )
 
-            if (checklists.isEmpty()) {
-                Box(
+            if (isStartupLoading || checklists.isEmpty()) {
+                TotalCheckSkeletonShimmer(
+                    isDarkTheme = isDarkMode,
+                    checklists = checklists,
+                    itemsByChecklist = itemsByChecklist,
+                    showUncheckedOnly = showUncheckedOnly,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = colorScheme.primary)
-                }
+                        .fillMaxWidth()
+                )
             } else {
                 val pagerState = rememberPagerState(pageCount = { checklists.size })
                 val tabListState = rememberLazyListState()
-                val activeTabPage by remember(checklists.size) {
-                    derivedStateOf {
-                        pagerState.targetPage.coerceIn(0, (checklists.size - 1).coerceAtLeast(0))
+                val isReducedMotion = LocalReducedMotion.current
+                var distantTabTransition by remember { mutableStateOf<DistantTabTransition?>(null) }
+                var activeTabScrollJob by remember { mutableStateOf<Job?>(null) }
+
+                // 使用者手動拖曳 Pager 時立即取消遠距導航接管，保持 1:1 跟手控制
+                LaunchedEffect(pagerState) {
+                    pagerState.interactionSource.interactions.collect { interaction ->
+                        if (interaction is DragInteraction.Start) {
+                            activeTabScrollJob?.cancel()
+                            activeTabScrollJob = null
+                            distantTabTransition = null
+                        }
                     }
                 }
 
-                // 雙向同步：僅在跨過目標分頁閾值時更新選中 ID 並捲動頂部膠囊 Tab 列，避免滑動幀全樹重組
-                LaunchedEffect(activeTabPage, checklists) {
-                    viewModel.selectChecklist(checklists[activeTabPage].id)
-                    tabListState.animateScrollToItem(activeTabPage)
+                val navigateToPage: (Int) -> Unit = { rawIndex ->
+                    val targetIndex = rawIndex.coerceIn(0, (checklists.size - 1).coerceAtLeast(0))
+                    editingItemId = null
+                    activeTabScrollJob?.cancel()
+                    val job = scope.launch {
+                        try {
+                            val currentPage = pagerState.currentPage
+                            if (targetIndex == currentPage && abs(pagerState.currentPageOffsetFraction) < 0.01f) {
+                                distantTabTransition = null
+                                return@launch
+                            }
+                            if (isReducedMotion) {
+                                distantTabTransition = null
+                                pagerState.scrollToPage(targetIndex)
+                                return@launch
+                            }
+                            val pageDistance = abs(targetIndex - currentPage)
+                            val spec = tween<Float>(durationMillis = 320, easing = FastOutSlowInEasing)
+                            if (pageDistance <= 1) {
+                                distantTabTransition = null
+                                pagerState.animateScrollToPage(
+                                    page = targetIndex,
+                                    animationSpec = spec
+                                )
+                            } else {
+                                val transition = DistantTabTransition(
+                                    fromPage = currentPage,
+                                    toPage = targetIndex
+                                )
+                                distantTabTransition = transition
+                                val stagingPage = if (targetIndex > currentPage) targetIndex - 1 else targetIndex + 1
+                                pagerState.scrollToPage(stagingPage)
+                                // 等待 1 幀完成 stagingPage 與 targetIndex 預熱排版，再啟動完整 320ms 滑動
+                                withFrameNanos { }
+                                val tabAnimJob = launch {
+                                    transition.progress.animateTo(targetValue = 1f, animationSpec = spec)
+                                }
+                                pagerState.animateScrollToPage(
+                                    page = targetIndex,
+                                    animationSpec = spec
+                                )
+                                tabAnimJob.join()
+                            }
+                        } finally {
+                            if (activeTabScrollJob == coroutineContext[Job]) {
+                                distantTabTransition = null
+                                activeTabScrollJob = null
+                            }
+                        }
+                    }
+                    activeTabScrollJob = job
                 }
 
-                // 新建清單後自動切換至該分頁（等待 Room 發射新列表且 pageCount 同步後再滾動）
+                // 雙向同步：在 snapshotFlow 中觀察頁面切換，避免滑動期間觸發 TotalCheckScreen 重組
+                LaunchedEffect(pagerState, checklists) {
+                    snapshotFlow {
+                        val overrideTarget = distantTabTransition?.toPage
+                        (overrideTarget ?: pagerState.targetPage)
+                            .coerceIn(0, (checklists.size - 1).coerceAtLeast(0))
+                    }
+                    .distinctUntilChanged()
+                    .collect { targetIndex ->
+                        if (targetIndex in checklists.indices) {
+                            viewModel.selectChecklist(checklists[targetIndex].id)
+                            val layoutInfo = tabListState.layoutInfo
+                            val targetItemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+                            val isFullyVisible = targetItemInfo != null &&
+                                targetItemInfo.offset >= layoutInfo.viewportStartOffset &&
+                                (targetItemInfo.offset + targetItemInfo.size) <= layoutInfo.viewportEndOffset
+                            if (!isFullyVisible) {
+                                tabListState.animateScrollToItem(targetIndex)
+                            }
+                        }
+                    }
+                }
+
+                // 新建清單後自動切換至該分頁（等待 Room 發射新列表且 pageCount 同步後再執行）
                 LaunchedEffect(checklists, pendingScrollToChecklistId) {
                     val targetId = pendingScrollToChecklistId ?: return@LaunchedEffect
                     val targetIndex = checklists.indexOfFirst { it.id == targetId }
                     if (targetIndex >= 0) {
-                        pagerState.animateScrollToPage(targetIndex)
                         viewModel.clearPendingScroll()
+                        navigateToPage(targetIndex)
                     }
                 }
 
@@ -197,16 +291,15 @@ fun TotalCheckScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                 }
+                submitHolder.onSubmit = submitNewItem
 
                 CapsuleChecklistTabBar(
                     checklists = checklists,
                     itemsByChecklist = itemsByChecklist,
-                    currentPage = activeTabPage,
+                    pagerState = pagerState,
+                    distantTabTransition = distantTabTransition,
                     tabListState = tabListState,
-                    onSelectPage = { index ->
-                        editingItemId = null
-                        scope.launch { pagerState.animateScrollToPage(index) }
-                    },
+                    onSelectPage = navigateToPage,
                     onLongPressTab = { checklist ->
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         actionTargetChecklist = checklist
@@ -225,7 +318,7 @@ fun TotalCheckScreen(
                         beyondViewportPageCount = 1,
                         modifier = Modifier.fillMaxSize()
                     ) { pageIndex ->
-                        val checklist = checklists[pageIndex]
+                        val checklist = checklists.getOrNull(pageIndex) ?: return@HorizontalPager
                         val items = itemsByChecklist[checklist.id].orEmpty()
                         val listState = rememberLazyListState()
                         val totalCount = items.size
@@ -234,8 +327,7 @@ fun TotalCheckScreen(
                         val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
                         val progressAnimatable = remember(checklist.id) { Animatable(targetProgress) }
                         var previousTargetProgress by remember(checklist.id) { mutableFloatStateOf(targetProgress) }
-                        var staggeredResetDelays by remember(checklist.id) { mutableStateOf<Map<Long, Int>>(emptyMap()) }
-                        var resetWaveKey by remember(checklist.id) { mutableIntStateOf(0) }
+                        var resetWave by remember(checklist.id) { mutableStateOf(ResetWaveState()) }
 
                         LaunchedEffect(targetProgress, isReducedMotion) {
                             if (isReducedMotion) {
@@ -297,14 +389,18 @@ fun TotalCheckScreen(
                                 onReset = {
                                     editingItemId = null
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    if (!isReducedMotion) {
-                                        val checkedInOrder = visibleItems.filter { it.isChecked }.map { it.id }
-                                        staggeredResetDelays = checkedInOrder.mapIndexed { idx, id ->
-                                            id to (idx * 30).coerceAtMost(360)
+                                    val checkedInOrder = items.filter { it.isChecked }.map { it.id }
+                                    if (!isReducedMotion && checkedInOrder.isNotEmpty()) {
+                                        val delays = checkedInOrder.mapIndexed { idx, id ->
+                                            id to (20 + idx * 35).coerceAtMost(560)
                                         }.toMap()
-                                        resetWaveKey++
+                                        resetWave = ResetWaveState(
+                                            waveKey = resetWave.waveKey + 1,
+                                            delaysByItemId = delays,
+                                            triggeredAtUptimeMs = android.os.SystemClock.uptimeMillis()
+                                        )
                                     } else {
-                                        staggeredResetDelays = emptyMap()
+                                        resetWave = ResetWaveState(waveKey = resetWave.waveKey + 1)
                                     }
                                     viewModel.resetChecklist(checklist.id) { checkedSnapshot ->
                                         scope.launch {
@@ -342,8 +438,9 @@ fun TotalCheckScreen(
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         },
                                         isEditing = editingItemId == item.id,
-                                        resetWaveKey = resetWaveKey,
-                                        resetDelayMs = staggeredResetDelays[item.id],
+                                        resetWaveKey = resetWave.waveKey,
+                                        resetDelayMs = resetWave.delaysByItemId[item.id],
+                                        resetTriggeredAtMillis = resetWave.triggeredAtUptimeMs,
                                         onStartEdit = {
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             editingItemId = item.id
@@ -397,13 +494,19 @@ fun TotalCheckScreen(
                         )
                     }
                 }
-
-                QuickInputBar(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    onSubmit = submitNewItem
-                )
             }
+
+            val isReadyForInput = !isStartupLoading && checklists.isNotEmpty()
+            QuickInputBar(
+                value = inputText,
+                onValueChange = { inputText = it },
+                canSubmit = isReadyForInput,
+                onSubmit = {
+                    if (isReadyForInput) {
+                        submitHolder.onSubmit?.invoke()
+                    }
+                }
+            )
         }
     }
 
@@ -439,13 +542,17 @@ fun TotalCheckScreen(
 private fun CapsuleChecklistTabBar(
     checklists: List<ChecklistEntity>,
     itemsByChecklist: Map<Long, List<CheckItemEntity>>,
-    currentPage: Int,
+    pagerState: PagerState,
+    distantTabTransition: DistantTabTransition?,
     tabListState: androidx.compose.foundation.lazy.LazyListState,
     onSelectPage: (Int) -> Unit,
     onLongPressTab: (ChecklistEntity) -> Unit,
     onAddChecklist: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val currentDistant by rememberUpdatedState(distantTabTransition)
+    val labelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -459,56 +566,65 @@ private fun CapsuleChecklistTabBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             itemsIndexed(items = checklists, key = { _, item -> item.id }) { index, checklist ->
-                val isSelected = currentPage == index
+                val currentIndex by rememberUpdatedState(index)
                 val unchecked = itemsByChecklist[checklist.id].orEmpty().count { !it.isChecked }
-                val freezeColorTransition = LocalThemeTransitioning.current || LocalReducedMotion.current
-                val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
-                    snap()
-                } else {
-                    spring(dampingRatio = 0.8f, stiffness = 380f)
+                val unselectedContainerColor = colorScheme.surfaceContainerHigh
+                val selectedContainerColor = colorScheme.primaryContainer
+                val unselectedBorderColor = colorScheme.outlineVariant
+                val selectedBorderColor = colorScheme.primary
+                val unselectedLabelColor = colorScheme.onSurfaceVariant
+                val selectedLabelColor = colorScheme.onPrimaryContainer
+
+                val selectionFraction: () -> Float = {
+                    val distant = currentDistant
+                    if (distant != null) {
+                        val p = distant.progress.value.coerceIn(0f, 1f)
+                        when (currentIndex) {
+                            distant.toPage -> p
+                            distant.fromPage -> 1f - p
+                            else -> 0f
+                        }
+                    } else {
+                        val pagePos = pagerState.currentPage + pagerState.currentPageOffsetFraction
+                        (1f - abs(pagePos - currentIndex)).coerceIn(0f, 1f)
+                    }
                 }
-                val containerColor = animateColorAsState(
-                    targetValue = if (isSelected) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
-                    animationSpec = colorSpec,
-                    label = "tabContainer"
-                )
-                val borderColor = animateColorAsState(
-                    targetValue = if (isSelected) colorScheme.primary else colorScheme.outlineVariant,
-                    animationSpec = colorSpec,
-                    label = "tabBorder"
-                )
-                val labelColor by animateColorAsState(
-                    targetValue = if (isSelected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant,
-                    animationSpec = colorSpec,
-                    label = "tabText"
-                )
 
                 Box(
                     modifier = Modifier
+                        .semantics {
+                            selected = (currentDistant?.toPage ?: pagerState.currentPage) == currentIndex
+                        }
                         .clip(RoundedCornerShape(50))
                         .drawBehind {
+                            val t = selectionFraction()
                             val radius = size.height / 2f
                             val corner = CornerRadius(radius, radius)
                             drawRoundRect(
-                                color = containerColor.value,
+                                color = lerpColor(unselectedContainerColor, selectedContainerColor, t),
                                 cornerRadius = corner
                             )
                             drawRoundRect(
-                                color = borderColor.value,
+                                color = lerpColor(unselectedBorderColor, selectedBorderColor, t),
                                 cornerRadius = corner,
                                 style = Stroke(width = 1.dp.toPx())
                             )
                         }
                         .combinedClickable(
-                            onClick = { onSelectPage(index) },
+                            onClick = { onSelectPage(currentIndex) },
                             onLongClick = { onLongPressTab(checklist) }
                         )
                 ) {
-                    Text(
+                    BasicText(
                         text = if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = labelColor,
+                        style = labelStyle,
+                        color = {
+                            lerpColor(
+                                unselectedLabelColor,
+                                selectedLabelColor,
+                                selectionFraction()
+                            )
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
@@ -726,15 +842,12 @@ private fun TopAppHeaderBar(
             ) {
                 FilledTonalIconButton(
                     onClick = {
-                        if (!isThemeTransitioning) {
-                            val origin = lastTouchRootOffset
-                                ?: themeButtonCoords?.takeIf { it.isAttached }?.boundsInRoot()?.center
-                                ?: Offset.Zero
-                            lastTouchRootOffset = null
-                            onToggleTheme(origin)
-                        }
+                        val origin = lastTouchRootOffset
+                            ?: themeButtonCoords?.takeIf { it.isAttached }?.boundsInRoot()?.center
+                            ?: Offset.Unspecified
+                        lastTouchRootOffset = null
+                        onToggleTheme(origin)
                     },
-                    enabled = !isThemeTransitioning,
                     modifier = Modifier
                         .size(42.dp)
                         .onGloballyPositioned { themeButtonCoords = it }
@@ -749,9 +862,25 @@ private fun TopAppHeaderBar(
                                 if (coords != null && coords.isAttached) {
                                     lastTouchRootOffset = coords.localToRoot(down.position)
                                 }
-                                val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
-                                if (up != null && coords != null && coords.isAttached) {
-                                    lastTouchRootOffset = coords.localToRoot(up.position)
+                                var lastPos = down.position
+                                var releasedInside = false
+                                while (true) {
+                                    val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id }
+                                    if (change == null) {
+                                        releasedInside = true
+                                        break
+                                    }
+                                    lastPos = change.position
+                                    if (!change.pressed) {
+                                        val touchSlop = viewConfiguration.touchSlop
+                                        releasedInside = change.position.x in -touchSlop..(size.width + touchSlop) &&
+                                            change.position.y in -touchSlop..(size.height + touchSlop)
+                                        break
+                                    }
+                                }
+                                if (releasedInside && coords != null && coords.isAttached) {
+                                    lastTouchRootOffset = coords.localToRoot(lastPos)
                                 } else {
                                     lastTouchRootOffset = null
                                     onCancelPreCaptureTheme()
@@ -781,6 +910,7 @@ private fun TopAppHeaderBar(
 private fun QuickInputBar(
     value: String,
     onValueChange: (String) -> Unit,
+    canSubmit: Boolean,
     onSubmit: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -817,12 +947,14 @@ private fun QuickInputBar(
                         unfocusedBorderColor = colorScheme.outlineVariant
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { onSubmit() })
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (canSubmit) onSubmit()
+                    })
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 FilledIconButton(
                     onClick = onSubmit,
-                    enabled = value.isNotBlank(),
+                    enabled = canSubmit && value.isNotBlank(),
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
@@ -834,3 +966,16 @@ private fun QuickInputBar(
         }
     }
 }
+
+private data class ResetWaveState(
+    val waveKey: Int = 0,
+    val delaysByItemId: Map<Long, Int> = emptyMap(),
+    val triggeredAtUptimeMs: Long = 0L
+)
+
+private class DistantTabTransition(
+    val fromPage: Int,
+    val toPage: Int,
+    val progress: Animatable<Float, AnimationVector1D> = Animatable(0f)
+)
+

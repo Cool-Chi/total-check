@@ -1,6 +1,7 @@
 package com.example.totalcheck.ui.main
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.totalcheck.data.local.AppDatabase
@@ -9,10 +10,15 @@ import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.repository.ChecklistRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -67,7 +73,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _showUncheckedOnly = MutableStateFlow(false)
     val showUncheckedOnly: StateFlow<Boolean> = _showUncheckedOnly.asStateFlow()
 
+    private val _isStartupLoading = MutableStateFlow(true)
+    val isStartupLoading: StateFlow<Boolean> = _isStartupLoading.asStateFlow()
+
     init {
+        val startupBeginMs = SystemClock.uptimeMillis()
         viewModelScope.launch {
             preferencesRepository.themeConfig.collect { config ->
                 _themeConfig.value = config
@@ -75,6 +85,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             repository.seedInitialDataIfNeeded()
+        }
+        viewModelScope.launch {
+            combine(
+                _themeConfig.filterNotNull(),
+                checklists.filter { it.isNotEmpty() }
+            ) { _, _ -> Unit }.first()
+            val elapsed = SystemClock.uptimeMillis() - startupBeginMs
+            val remainingHoldMs = (700L - elapsed).coerceAtLeast(0L)
+            if (remainingHoldMs > 0L) {
+                delay(remainingHoldMs)
+            }
+            _isStartupLoading.value = false
         }
     }
 
