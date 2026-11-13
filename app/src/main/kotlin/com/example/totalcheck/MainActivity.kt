@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 RadialThemeTransitionContainer(
                     onToggleTheme = { mainViewModel.toggleDarkMode() }
-                ) { triggerTransition, isTransitioning ->
+                ) { triggerTransition, onPreCapture, onCancelPreCapture, isTransitioning ->
                     LaunchedEffect(currentTheme.isDarkMode, isTransitioning) {
                         if (!isTransitioning) {
                             enableEdgeToEdge(
@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
                     TotalCheckScreen(
                         viewModel = mainViewModel,
                         onToggleTheme = triggerTransition,
+                        onPreCaptureTheme = onPreCapture,
+                        onCancelPreCaptureTheme = onCancelPreCapture,
                         isThemeTransitioning = isTransitioning
                     )
                 }

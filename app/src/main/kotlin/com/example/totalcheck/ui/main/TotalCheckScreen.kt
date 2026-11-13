@@ -106,6 +106,8 @@ import kotlinx.coroutines.launch
 fun TotalCheckScreen(
     viewModel: MainViewModel,
     onToggleTheme: (originInRoot: Offset) -> Unit,
+    onPreCaptureTheme: () -> Unit,
+    onCancelPreCaptureTheme: () -> Unit,
     isThemeTransitioning: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -143,6 +145,8 @@ fun TotalCheckScreen(
                 useDynamicColor = useDynamicColor,
                 isThemeTransitioning = isThemeTransitioning,
                 onToggleTheme = onToggleTheme,
+                onPreCaptureTheme = onPreCaptureTheme,
+                onCancelPreCaptureTheme = onCancelPreCaptureTheme,
                 onToggleDynamicColor = { viewModel.toggleDynamicColor() }
             )
 
@@ -630,6 +634,8 @@ private fun TopAppHeaderBar(
     useDynamicColor: Boolean,
     isThemeTransitioning: Boolean,
     onToggleTheme: (originInRoot: Offset) -> Unit,
+    onPreCaptureTheme: () -> Unit,
+    onCancelPreCaptureTheme: () -> Unit,
     onToggleDynamicColor: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -703,6 +709,7 @@ private fun TopAppHeaderBar(
                                     requireUnconsumed = false,
                                     pass = PointerEventPass.Initial
                                 )
+                                onPreCaptureTheme()
                                 val coords = themeButtonCoords
                                 if (coords != null && coords.isAttached) {
                                     lastTouchRootOffset = coords.localToRoot(down.position)
@@ -710,6 +717,9 @@ private fun TopAppHeaderBar(
                                 val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
                                 if (up != null && coords != null && coords.isAttached) {
                                     lastTouchRootOffset = coords.localToRoot(up.position)
+                                } else {
+                                    lastTouchRootOffset = null
+                                    onCancelPreCaptureTheme()
                                 }
                             }
                         },
