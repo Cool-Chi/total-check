@@ -1,0 +1,44 @@
+package com.example.totalcheck.data.preferences
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.userPreferencesDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "user_preferences"
+)
+
+class UserPreferencesRepository(context: Context) {
+
+    private val dataStore = context.applicationContext.userPreferencesDataStore
+
+    val isDarkMode: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_IS_DARK_MODE] ?: true
+    }
+
+    val useDynamicColor: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_USE_DYNAMIC_COLOR] ?: false
+    }
+
+    suspend fun setDarkMode(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[KEY_IS_DARK_MODE] = enabled
+        }
+    }
+
+    suspend fun setUseDynamicColor(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[KEY_USE_DYNAMIC_COLOR] = enabled
+        }
+    }
+
+    private companion object {
+        val KEY_IS_DARK_MODE = booleanPreferencesKey("is_dark_mode")
+        val KEY_USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
+    }
+}
