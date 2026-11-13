@@ -13,7 +13,7 @@
 - [ ] **多清單管理**：建立、重新命名、刪除清單，支援水平滑動（`HorizontalPager`）與頂部 Tab 點擊快速切換。
 - [ ] **項目極速 CRUD**：底部常駐輸入列連續新增項目、整列點擊切換勾選、行內編輯名稱、滑動刪除。
 - [ ] **一鍵重置（Reset All）**：將當前清單所有項目歸零，搭配錯峰消退動效與底部 Snackbar `復原 (Undo)` 機制（無二次確認彈窗）。
-- [ ] **狀態持久化**：Room Database 本地儲存，未勾選項目自動置頂、已勾選項目自動沉底。
+- [ ] **狀態持久化**：Room Database 本地儲存，維持項目原始順序（點擊勾選原地狀態轉場），並提供「只看未帶」過濾切換。
 - [ ] **雙軌色彩與主題引擎**：內建專為 HyperOS / 非標準 Monet 系統調校的高對比亮/暗色盤，並提供原生 Material 3 Dynamic Color 切換開關。
 - [ ] **桌面 Widget（UI/UX 待定稿，架構先行解耦）**：預留 `WidgetUpdater` 觸發介面與 `DataStore` 狀態欄位，待小工具視覺與佈局定案後獨立實作 `widget/` 模組。
 
@@ -62,11 +62,11 @@ data class CheckItemEntity(
 
 ```
 
-### 3.2 預設查詢排序邏輯 (DAO)
+### 3.2 預設查詢排序與過濾邏輯 (DAO)
 
-* 查詢特定清單項目時，強制使用 `ORDER BY isChecked ASC, sortOrder ASC, id DESC`：
-* **未勾選 (`isChecked = false`)** 永遠置頂並保持高視覺權重。
-* **已勾選 (`isChecked = true`)** 自動平滑沉底並降低視覺干擾。
+* 查詢特定清單項目時，強制使用 `ORDER BY sortOrder ASC, id DESC`：
+* **維持原始順序**：點擊勾選時卡片保持原位不動，僅進行原地狀態轉場（背景色、透明度 `0.45f`、刪除線與「待備 / 已備」膠囊標籤過渡），避免連點清點時項目跳動造成誤觸。
+* **只看未帶過濾**：進度列旁提供「只看未帶」過濾切換（FilterChip），開啟時平滑隱藏 `isChecked = true` 的項目，讓未帶項目集中顯示。
 
 
 
@@ -117,9 +117,9 @@ data class CheckItemEntity(
 | **3. 清點進度條推進** | **Spring Stepper Progress**<br>
 
 <br>(步驟條過衝回彈) | 位於 Tab 下方的進度條（顯示 `尚缺 X 項 / 共 Y 項`）。當勾選項目使進度增加時，進度條先微幅過衝（Overshoot，`dampingRatio = 0.65f`）再回彈穩定至目標比例。 |
-| **4. 單項勾選與沉底** | **Press Scale + Animated Layout Reflow**<br>
+| **4. 單項勾選與原地轉場** | **Press Scale + In-Place State Transition**<br>
 
-<br>(按壓回饋與重排讓位) | 點擊整列任意處即可勾選。按壓瞬間卡片縮放至 `0.97f`，放開回彈 `1.0f` 並觸發系統震動（`HapticFeedbackType.TextHandleMove`）；勾選後透過 `Modifier.animateItem()` 平滑下沉至已備齊區，未勾選項目自動向上遞補讓位。 |
+<br>(按壓回饋與原地狀態轉場) | 點擊整列任意處即可勾選。按壓瞬間卡片縮放至 `0.97f`，放開回彈 `1.0f` 並觸發系統震動（`HapticFeedbackType.TextHandleMove`）；勾選後卡片**保持原位不動**，僅針對卡片背景色、文字透明度（`0.45f`）、刪除線以及「待備 / 已備」膠囊標籤進行平滑色彩與狀態過渡；進度列旁提供「只看未帶」FilterChip，開啟時透過 `Modifier.animateItem()` 平滑隱藏已勾選項目。 |
 | **5. 一鍵重置清單** | **Staggered Bulk Selection**<br>
 
 <br>(錯峰批量狀態更新) | 點擊「重置」按鈕時，DB 狀態立即歸零，但列表項目的取消勾選視覺與卡片亮起效果由第一項往下依序錯峰（每項延遲 `25ms~35ms`）帶微幅彈性放大執行，同時底部彈出 Snackbar 提供 `Undo` 復原。 |

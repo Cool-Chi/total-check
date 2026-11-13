@@ -23,4 +23,4 @@
 
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。
-- **提交與標籤**：完成功能修改並通過實機鏡像驗證後，直接調用專案配置的 Git Commit / Tag 專用 Skill 執行原子化提交（Atomic Commit）與版本標記。
+- **提交與標籤**：完成功能修改並通過實機鏡像驗證後，**必須**呼叫 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交（Atomic Commit）與版本標記；之後每次完成修改皆須依該規範進行 `git commit`。
