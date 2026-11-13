@@ -81,6 +81,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleDynamicColor() {
+        viewModelScope.launch {
+            preferencesRepository.setUseDynamicColor(!useDynamicColor.value)
+        }
+    }
+
     fun toggleShowUncheckedOnly() {
         _showUncheckedOnly.value = !_showUncheckedOnly.value
     }

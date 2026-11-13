@@ -63,7 +63,7 @@ fun CapsuleProgressModule(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val accentColor by animateColorAsState(
-        targetValue = if (uncheckedCount == 0 && totalCount > 0) colorScheme.primary else colorScheme.secondary,
+        targetValue = if (uncheckedCount == 0 && totalCount > 0) colorScheme.primary else colorScheme.tertiary,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "progressAccent"
     )
@@ -160,9 +160,9 @@ fun CapsuleProgressModule(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = colorScheme.secondaryContainer,
-                        selectedLabelColor = colorScheme.onSecondaryContainer,
-                        selectedLeadingIconColor = colorScheme.onSecondaryContainer
+                        selectedContainerColor = colorScheme.tertiaryContainer,
+                        selectedLabelColor = colorScheme.onTertiaryContainer,
+                        selectedLeadingIconColor = colorScheme.onTertiaryContainer
                     )
                 )
                 Text(
@@ -199,18 +199,18 @@ fun CapsuleCheckItemRow(
         targetValue = if (item.isChecked) {
             colorScheme.outlineVariant.copy(alpha = 0.4f)
         } else {
-            colorScheme.secondary.copy(alpha = 0.55f)
+            colorScheme.tertiary.copy(alpha = 0.55f)
         },
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleBorderColor"
     )
     val indicatorColor by animateColorAsState(
-        targetValue = if (item.isChecked) colorScheme.outline else colorScheme.secondary,
+        targetValue = if (item.isChecked) colorScheme.outline else colorScheme.tertiary,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleIndicatorColor"
     )
     val badgeBgColor by animateColorAsState(
-        targetValue = if (item.isChecked) colorScheme.surfaceContainerHighest else colorScheme.secondaryContainer,
+        targetValue = if (item.isChecked) colorScheme.surfaceContainerHighest else colorScheme.tertiaryContainer,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
         label = "capsuleBadgeBg"
     )
@@ -295,7 +295,7 @@ fun CapsuleCheckItemRow(
                                 text = "待備",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = colorScheme.onSecondaryContainer
+                                color = colorScheme.onTertiaryContainer
                             )
                         }
                     }

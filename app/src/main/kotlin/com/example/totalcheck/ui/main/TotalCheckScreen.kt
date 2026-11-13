@@ -2,6 +2,7 @@ package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,8 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -43,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -75,18 +78,28 @@ fun TotalCheckScreen(
 
     val checklistsWithItems by viewModel.checklistsWithItems.collectAsStateWithLifecycle()
     val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
+    val useDynamicColor by viewModel.useDynamicColor.collectAsStateWithLifecycle()
     val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
 
-    Surface(
+    Scaffold(
         modifier = modifier.fillMaxSize(),
-        color = colorScheme.background
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        containerColor = colorScheme.surface,
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+        )
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
             TopAppHeaderBar(
                 isDarkTheme = isDarkMode,
-                onToggleTheme = { viewModel.toggleDarkMode() }
+                useDynamicColor = useDynamicColor,
+                onToggleTheme = { viewModel.toggleDarkMode() },
+                onToggleDynamicColor = { viewModel.toggleDynamicColor() }
             )
 
             if (checklistsWithItems.isEmpty()) {
@@ -113,7 +126,7 @@ fun TotalCheckScreen(
 
                 PrimaryScrollableTabRow(
                     selectedTabIndex = pagerState.currentPage.coerceIn(0, checklistsWithItems.lastIndex),
-                    containerColor = colorScheme.background,
+                    containerColor = colorScheme.surface,
                     contentColor = colorScheme.primary,
                     edgePadding = 16.dp,
                     divider = {
@@ -211,13 +224,14 @@ fun TotalCheckScreen(
 @Composable
 private fun TopAppHeaderBar(
     isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit
+    useDynamicColor: Boolean,
+    onToggleTheme: () -> Unit,
+    onToggleDynamicColor: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
             .padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -226,19 +240,58 @@ private fun TopAppHeaderBar(
             text = "TotalCheck",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.ExtraBold,
-            color = colorScheme.onBackground
+            color = colorScheme.onSurface
         )
-        FilledTonalIconButton(
-            onClick = onToggleTheme,
-            colors = IconButtonDefaults.filledTonalIconButtonColors(
-                containerColor = colorScheme.surfaceContainerHigh,
-                contentColor = colorScheme.primary
-            )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = if (isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                contentDescription = if (isDarkTheme) "切換為亮色模式" else "切換為暗色模式"
-            )
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (useDynamicColor) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (useDynamicColor) colorScheme.primary else colorScheme.outlineVariant
+                )
+            ) {
+                FilledTonalIconButton(
+                    onClick = onToggleDynamicColor,
+                    modifier = Modifier.size(42.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = if (useDynamicColor) colorScheme.primaryContainer else colorScheme.surfaceContainerHigh,
+                        contentColor = if (useDynamicColor) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Palette,
+                        contentDescription = if (useDynamicColor) "關閉動態取色" else "開啟動態取色",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, colorScheme.outlineVariant)
+            ) {
+                FilledTonalIconButton(
+                    onClick = onToggleTheme,
+                    modifier = Modifier.size(42.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = colorScheme.surfaceContainerHigh,
+                        contentColor = colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                        contentDescription = if (isDarkTheme) "切換為亮色模式" else "切換為暗色模式",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
     }
 }
