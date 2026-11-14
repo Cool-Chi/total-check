@@ -17,8 +17,9 @@
 2. **原生 Material 3 開發**：不使用 XML Layout，也不等待外部 Figma 設計稿，所有介面直接使用 `androidx.compose.material3` 實作。
 3. **API 36/37 全螢幕適配**：`minSdk = 26`、`targetSdk = 36`，實機測試為 Android 17 (API 37)。`MainActivity` 必須啟用 `enableEdgeToEdge()`，並正確處理 `WindowInsets`（狀態列、導覽列與 `WindowInsets.ime` 升降/遮罩）。
 4. **雙軌色彩引擎**：必須同時支援「預設精調亮/暗色盤（適配 HyperOS）」與「原生 Material 3 Dynamic Color 切換開關」，禁止寫死單一顏色值（如 `Color.Black` / `Color.White`）。
-5. **物理動效與零重組管線基準**：優先使用 `spring(dampingRatio = 0.8f, stiffness = 380f)` 物理彈簧模型，並尊重系統無障礙動畫縮放設定（Reduced Motion Fallback）；高頻率捲動與手勢動畫應下沉至 `graphicsLayer`、`drawBehind` / `drawWithContent` 或自訂 `SubcomposeLayout`（如 `StackedCardScrollLayout`），避免於滑動幀觸發 Composition 重組。
+5. **物理動效與零重組管線基準**：優先使用 `spring(dampingRatio = 0.8f, stiffness = 380f)` 物理彈簧模型，並尊重系統無障礙動畫縮放設定（Reduced Motion Fallback）；高頻率捲動與手勢動畫應下沉至 `graphicsLayer`、`drawBehind` / `drawWithContent` 或自訂 `Layout`（如 `StackedCardScrollLayout`、`ExpandingChecklistTabBar`），避免於滑動幀觸發 Composition 重組。
 6. **資料庫防鎖死**：`AppDatabase` 必須實作 Singleton 模式，並透過單一 `ChecklistRepository` 存取，為未來桌面 Widget 跨進程讀寫保留擴充性。
+7. **多語系資源管理**：所有介面文案、種子資料與無障礙描述統一透過 `res/values/strings.xml`、`res/values-b+zh+Hant/strings.xml` 與 `res/values-zh/strings.xml` 管理，嚴禁於 Composable 硬編碼顯示字串。
 
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。

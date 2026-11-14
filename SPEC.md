@@ -10,16 +10,16 @@
 ## 2. 功能範圍
 
 ### 核心功能（MVP — 主程式優先鎖定）
-- [x] **多清單管理**：建立、重新命名、刪除清單，支援水平滑動（`HorizontalPager`）與頂部膠囊 Tab 點擊／遠距預熱快速切換。
-- [x] **項目極速 CRUD**：底部常駐輸入列連續新增項目（隨軟鍵盤升降並自動上滑至頂部、向下捲動自動收合）、整列點擊切換勾選、行內編輯名稱（支援 `BackHandler` 退出）、長按外圈進度環刪除（`Hold-to-Delete Perimeter Ring`）與 `Snackbar` 復原。
+- [x] **多清單管理**：建立、重新命名、刪除清單，支援水平滑動（`HorizontalPager`）、頂部 `ExpandingChecklistTabBar` 點擊／遠距預熱切換與長按拖曳調整頁籤順序；進度卡整合清單改名／刪除按鈕，刪除清單時透過 `Snackbar` 提供連同內部項目的復原（Undo），並由自訂 `ScopedModalHost` 記憶鍵盤高度達成彈窗首幀零跳動展開。
+- [x] **項目極速 CRUD**：底部常駐輸入列連續新增項目（隨軟鍵盤升降並自動上滑至頂部、向下捲動自動收合）、整列點擊切換勾選、行內編輯名稱（支援 `BackHandler` 退出與軟鍵盤退場自動儲存）、長按外圈進度環刪除（`Hold-to-Delete Perimeter Ring`）與 `Snackbar` 復原。
 - [x] **項目自訂拖拽排序（Drag-to-Reorder）**：支援拖曳右側手把（`DragIndicator`）調整項目順序（含懸浮拖曳層、虛線目標槽位與邊緣自動捲動），並支援鍵盤方向鍵及 TalkBack 無障礙上下移動操作與 Room 批次持久化。
 - [x] **一鍵重置（Reset All）**：無二次確認彈窗立即歸零當前清單勾選狀態並觸發錯峰波浪動效（`Staggered Bulk Selection`），同時提供底部 `Snackbar` `復原 (Undo)` 機制。
-- [x] **狀態持久化**：Room Database 本地儲存，維持項目原始順序（點擊勾選原地狀態轉場，不隨勾選沉底），並提供「只看未帶」過濾切換。
+- [x] **狀態持久化與多語系資源**：Room Database 本地儲存，維持項目原始順序（點擊勾選原地狀態轉場，不隨勾選沉底）、提供「只看未帶」過濾切換，並完整抽離中英雙語字串資源（`values`、`values-b+zh+Hant`、`values-zh`）。
 - [x] **雙軌色彩與主題引擎**：內建專為 HyperOS / 非標準 Monet 系統調校的高對比亮/暗色盤、原生 Material 3 Dynamic Color 切換開關、`ThemeConfig?` 冷啟動零閃爍初始化，以及啟動骨架屏（`TotalCheckSkeletonShimmer`）。
-- [ ] **桌面 Widget（M7 規劃，UI/UX 待定稿，架構先行解耦）**：預留 `WidgetSyncManager` 觸發介面與 `DataStore` 狀態欄位，待小工具視覺與佈局定案後獨立實作 `widget/` 模組。
+- [ ] **桌面 Widget（M8 規劃，UI/UX 待定稿，架構先行解耦）**：預留 `WidgetSyncManager` 觸發介面與 `DataStore` 狀態欄位，待小工具視覺與佈局定案後獨立實作 `widget/` 模組。
 
-### 擴充功能（M6+ 迭代，底層欄位已預埋）
-- [ ] **讀取格式文檔快速載入列表（M6）**：支援讀取 Markdown / CSV / 結構化純文字等格式文檔，一鍵解析並快速匯入建立清點列表。
+### 擴充功能（M7+ 迭代，底層欄位已預埋）
+- [ ] **讀取格式文檔快速載入列表（M7）**：支援讀取 Markdown / CSV / 結構化純文字等格式文檔，一鍵解析並快速匯入建立清點列表。
 - [ ] **分類 / 標籤篩選**：支援項目分類標籤與 `Expanding Tag Selection` 擠開動效。
 - [ ] **清單匯出備份**：支援 CSV / Markdown / 純文字格式匯出與分享。
 
@@ -109,17 +109,18 @@ data class CheckItemEntity(
 
 | 界面區塊 / 觸發場景 | 對應動效模式 (Advanced Interaction Design) | 具體實作與狀態變化行為 |
 | --- | --- | --- |
-| **1. 亮暗主題切換** | **Radial Theme Transition**<br><br>(多波次圓形主題切換) | 按壓預擷取 `0.6f` 降採樣離屏快照（`LocalGraphicsContext` + `triggerMutex` 防抖），點擊時以真實觸控座標 `(x, y)` 為圓心透過 `clipPath` 多波次 `RevealWave` 圓形遮罩擴散（`400ms`）揭示新主題圖層，不縮放頁面內容。 |
-| **2. 清單組別切換** | **Gesture-Driven Pager**<br><br>(零重組跟手分頁) | 頂部膠囊 Tab 列與 `HorizontalPager`（`beyondViewportPageCount = 1`）透過 `snapshotFlow` 雙向綁定；鄰頁滑動 1:1 跟手插值，遠距點擊透過 `DistantTabTransition` 預熱鄰頁再平順滑動（`320ms` `FastOutSlowInEasing`）；長按 Tab 可編輯/刪除清單。 |
+| **1. 亮暗主題切換** | **Radial Theme Transition**<br><br>(多波次圓形主題切換) | 按壓預擷取 `0.6f` 降採樣離屏快照（`LocalGraphicsContext` + `triggerMutex` 防抖；僅於轉場與預擷取期間錄製 `liveLayer`），點擊時以真實觸控座標 `(x, y)` 為圓心透過 `clipPath` 多波次 `RevealWave` 圓形遮罩擴散（`400ms`）揭示新主題圖層，不縮放頁面內容。 |
+| **2. 清單組別切換與頁籤重排** | **Gesture-Driven Pager + Expanding Checklist Tab Bar**<br><br>(零重組跟手分頁與頁籤拖拽讓位) | 頂部 `ExpandingChecklistTabBar` 與 `HorizontalPager`（`beyondViewportPageCount = 1`）透過 `snapshotFlow` 雙向綁定；選中頁籤放大至 `1.08f` 並平滑推開相鄰頁籤，遠距點擊透過 `DistantTabTransition` 預熱鄰頁再平順滑動（`320ms`）；長按頁籤可懸浮拖曳重排（`1.06f`）並由 `TabReflowAnim` 彈簧補償讓位，清單改名／刪除則整合於進度卡操作鈕與刪除清單 `Snackbar` 復原。 |
 | **3. 清點進度條推進** | **Spring Stepper Progress**<br><br>(步驟條過衝回彈) | 位於 Tab 下方的進度條（顯示 `尚缺 X 項 / 共 Y 項`）。當勾選項目使進度增加時，進度條先微幅過衝（Overshoot，`dampingRatio = 0.65f`）再回彈穩定至目標比例。 |
 | **4. 單項勾選與原地轉場** | **Press Scale + In-Place State Transition**<br><br>(按壓回饋與原地狀態轉場) | 點擊整列任意處即可勾選。按壓瞬間卡片縮放至 `0.97f`，放開回彈 `1.0f` 並觸發系統震動（`HapticFeedbackType.TextHandleMove`）；勾選後卡片**保持原位不動**，透過單一 `Animatable`（`checkedProgress`）與 `lerpColor` / `drawBehind` 驅動背景色、文字透明度（`0.45f`）、刪除線與「待備 / 已備」膠囊標籤過渡，零重組切換。 |
-| **5. 堆疊卡片捲動排列** | **Stacked Card Scroll Layout**<br><br>(深度堆疊與重排補間) | 以自訂 `SubcomposeLayout`（`StackedCardScrollLayout`）取代傳統 `LazyColumn`：接近視窗頂/底緣的卡片自動壓縮為最多 3 層（`MAX_STACK_DEPTH = 3f`）的立體堆疊（每層縮放步階 `0.04f` 並依深度暗化遮罩），點擊壓縮卡片可自動展開捲入視野（`scrollToExpandItem`）；項目增刪或排序異動時觸發 `ItemReflowAnim` 平滑補間位移動畫。 |
+| **5. 堆疊卡片捲動排列** | **Stacked Card Scroll Layout**<br><br>(深度堆疊、重排補間與過捲動手風琴) | 以自訂 `Layout`（`StackedCardScrollLayout`）取代傳統 `LazyColumn`：接近視窗頂/底緣的卡片自動壓縮為最多 3 層（`MAX_STACK_DEPTH = 3f`）的立體堆疊（每層縮放步階 `0.04f` 並依深度暗化遮罩），點擊壓縮卡片可自動展開捲入視野（`scrollToExpandItem`）；項目增刪／排序異動觸發 `ItemReflowAnim`、勾選／改名觸發 `NeighborRippleWave` 鄰近波紋擴散；滑抵頂底邊界時呈現手風琴式過捲動拉伸回彈（Overscroll Accordion）。 |
 | **6. 一鍵重置清單** | **Staggered Bulk Selection**<br><br>(錯峰批量狀態更新) | 點擊「重置」按鈕時，DB 狀態立即歸零，列表項目的取消勾選視覺與脈衝放大由第一項往下依序錯峰（`20ms + idx * 35ms`，上限 `560ms`，以 `resetTriggeredAtMillis` 對齊時序）執行，同時底部彈出 `Snackbar` 提供 `Undo` 復原。 |
 | **7. 長按外圈進度環刪除** | **Hold-to-Delete Perimeter Ring**<br><br>(外框進度環長按刪除) | 按住項目卡片 `150ms` 後觸發長按震動回饋，沿 `24.dp` 膠囊外框順時針繪製紅色進度環（`PathMeasure` 於 `1000ms` 線性填滿），填滿後卡片縮放淡出（`160ms`）並執行刪除與 `Snackbar` 復原；中途放開、滑出或取消則於 `300ms` 內線性退回。 |
 | **8. 拖曳排序項目** | **Drag-to-Reorder**<br><br>(手把拖曳重排) | 拖曳項目右側 `DragIndicator` 手把時，卡片升起進入懸浮層（縮放 `1.03f`、陰影 `10.dp`、`primary` 邊框），原位顯示 `DashedDragPlaceholderSlot` 虛線槽位；拖曳至清單上下緣時自動捲動，放手後即時寫入 Room `sortOrder`；同步支援鍵盤方向鍵與 TalkBack 無障礙上下移動。 |
 | **9. 底部極速新增列** | **Seamless Focus Input**<br><br>(無縫焦點連續輸入) | 常駐於畫面底部並隨 `WindowInsets.ime` 平滑升降。輸入名稱按下鍵盤 `Done` 後保持鍵盤開啟、輸入框瞬間清空並自動上滑至頂部；列表向下捲動時自動平滑收合讓出可視空間，向上捲動或切換分頁時重新顯現。 |
 | **10. 啟動骨架屏** | **Startup Skeleton Shimmer** | 冷啟動等待 DataStore / Room 首幀資料期間（最少 `700ms`），以 `withFrameNanos` 驅動的微光掃描骨架屏（`TotalCheckSkeletonShimmer`）銜接，消除載入跳動。 |
-| **11. 後續擴充預留** | **Expanding Tag Selection** | 標籤篩選列選中時微幅放大並平滑推開相鄰標籤（待後續標籤功能迭代接入）。 |
+| **11. 滑出取消觸感與鍵盤定錨彈窗** | **Slide-Out Cancel & Scoped Modal** | 全域按鈕與 Chip 採用 `SlideOutCancelModifier`（按下下沉 `0.94f` / `1.5.dp`，手指滑離 `44.dp` 內依曲線衰減並取消觸發，並附帶鍵盤焦點外框）；新增/改名/刪除清單採用 `ScopedModalHost` 跨會話記憶軟鍵盤高度，首幀即精準定錨於鍵盤上方零二次跳動且凍結背景 IME。 |
+| **12. 後續擴充預留** | **Expanding Tag Selection** | 標籤篩選列選中時微幅放大並平滑推開相鄰標籤（待後續標籤功能迭代接入）。 |
 
 ---
 
