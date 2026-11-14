@@ -39,7 +39,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -65,6 +64,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -86,6 +86,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -186,6 +187,37 @@ internal fun ScopedModalHost(
     val isTextInputModal = modalContent is ChecklistModalContent.CreateChecklist ||
         modalContent is ChecklistModalContent.RenameChecklist
     var expectImeForModal by remember(sessionKey) { mutableStateOf(isTextInputModal) }
+    var isPrimaryInputFocused by remember(sessionKey) { mutableStateOf(false) }
+    var isTitleInputFocused by remember(sessionKey) { mutableStateOf(false) }
+    val isAnyInputFocused = isPrimaryInputFocused || isTitleInputFocused
+    var lastImeHiddenUptimeMs by remember(sessionKey) { mutableLongStateOf(0L) }
+    val dismissImeAndFocus: () -> Unit = {
+        lastImeHiddenUptimeMs = android.os.SystemClock.uptimeMillis()
+        expectImeForModal = false
+        isPrimaryInputFocused = false
+        isTitleInputFocused = false
+        keyboardController?.hide()
+        focusManager.clearFocus()
+    }
+    val dismissImeOrCloseModal: () -> Unit = {
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        val imeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density)).coerceAtLeast(0)
+        val recentlyClosedIme = (nowMs - lastImeHiddenUptimeMs) < 280L
+        if (
+            imeExtraPx > with(density) { 24.dp.roundToPx() } ||
+            isImeVisibleState.value ||
+            expectImeForModal ||
+            isAnyInputFocused ||
+            recentlyClosedIme
+        ) {
+            dismissImeAndFocus()
+        } else {
+            onRequestClose(true)
+        }
+    }
+    val isAnyInputFocusedState = rememberUpdatedState(isAnyInputFocused)
+    val dismissImeAndFocusState = rememberUpdatedState(dismissImeAndFocus)
+    val onRequestCloseState = rememberUpdatedState(onRequestClose)
     val currentImeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density))
         .coerceAtLeast(0)
         .toFloat()
@@ -296,10 +328,11 @@ internal fun ScopedModalHost(
             } else if (hasSeenImeOpen && (!imeVisible || imeExtra < peakImeExtraPx - dropTriggerPx)) {
                 hasSeenImeOpen = false
                 peakImeExtraPx = 0f
-                if (expectImeForModal) {
-                    expectImeForModal = false
-                    focusManager.clearFocus()
-                }
+                lastImeHiddenUptimeMs = android.os.SystemClock.uptimeMillis()
+                expectImeForModal = false
+                isPrimaryInputFocused = false
+                isTitleInputFocused = false
+                focusManager.clearFocus()
             }
         }
     }
@@ -338,14 +371,7 @@ internal fun ScopedModalHost(
     }
 
     BackHandler(enabled = isOpen) {
-        val imeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density)).coerceAtLeast(0)
-        if (imeExtraPx > with(density) { 24.dp.roundToPx() } || isImeVisibleState.value) {
-            expectImeForModal = false
-            keyboardController?.hide()
-            focusManager.clearFocus()
-        } else {
-            onRequestClose(true)
-        }
+        dismissImeOrCloseModal()
     }
 
     Box(
@@ -364,22 +390,43 @@ internal fun ScopedModalHost(
                 .drawBehind {
                     drawRect(color = Color.Black.copy(alpha = MODAL_SCRIM_MAX_ALPHA))
                 }
-                .pointerInput(isOpen) {
+                .pointerInput(isOpen, sessionKey) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        val edgeGuardPx = 28.dp.toPx()
+                        if (down.position.x < edgeGuardPx || down.position.x > size.width - edgeGuardPx) {
+                            return@awaitEachGesture
+                        }
                         down.consume()
                         val slop = viewConfiguration.touchSlop
+                        var cancelled = false
                         while (true) {
                             val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || change.isConsumed || event.type == PointerEventType.Exit) {
+                                cancelled = true
+                                break
+                            }
+                            val dist = hypot(
+                                change.position.x - down.position.x,
+                                change.position.y - down.position.y
+                            )
+                            if (dist > slop) {
+                                cancelled = true
+                            }
                             change.consume()
                             if (!change.pressed) {
-                                val dist = hypot(
-                                    change.position.x - down.position.x,
-                                    change.position.y - down.position.y
-                                )
-                                if (isOpen && dist <= slop) {
-                                    onRequestClose(true)
+                                if (!cancelled && isOpen && dist <= slop) {
+                                    val imeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density)).coerceAtLeast(0)
+                                    if (
+                                        imeExtraPx > 24.dp.roundToPx() ||
+                                        isImeVisibleState.value ||
+                                        isAnyInputFocusedState.value
+                                    ) {
+                                        dismissImeAndFocusState.value()
+                                    } else {
+                                        onRequestCloseState.value(true)
+                                    }
                                 }
                                 break
                             }
@@ -395,10 +442,9 @@ internal fun ScopedModalHost(
                 .then(
                     if (isTopAnchoredModal) {
                         Modifier
-                            .statusBarsPadding()
                             .navigationBarsPadding()
                             .imePadding()
-                            .padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 16.dp)
+                            .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 12.dp)
                     } else {
                         Modifier
                             .padding(horizontal = 24.dp, vertical = 16.dp)
@@ -436,6 +482,13 @@ internal fun ScopedModalHost(
                         }
                     }
 
+                    val isKeyboardOpen = isImeVisible || currentImeExtraPx > with(density) { 40.dp.toPx() }
+                    LaunchedEffect(rawImportText.isBlank()) {
+                        if (rawImportText.isBlank()) {
+                            isTitleInputFocused = false
+                        }
+                    }
+
                     val documentLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.OpenDocument()
                     ) { uri: Uri? ->
@@ -444,6 +497,8 @@ internal fun ScopedModalHost(
                             if (loaded != null) {
                                 isQuickImportMode = true
                                 expectImeForModal = false
+                                isPrimaryInputFocused = false
+                                isTitleInputFocused = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
                                 hasEditedTitleManually = false
@@ -460,11 +515,15 @@ internal fun ScopedModalHost(
                             applyImportSource(clipText, fileFallbackTitle)
                             if (hideOnHit) {
                                 expectImeForModal = false
+                                isPrimaryInputFocused = false
+                                isTitleInputFocused = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
                             }
                         } else {
                             expectImeForModal = false
+                            isPrimaryInputFocused = false
+                            isTitleInputFocused = false
                             keyboardController?.hide()
                             focusManager.clearFocus()
                         }
@@ -486,38 +545,69 @@ internal fun ScopedModalHost(
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
                         confirmFocus = confirmFocus,
-                        onDismissRequest = { onRequestClose(true) }
-                    ) { onFocusIndexChanged ->
-                        Text(
-                            text = stringResource(R.string.dialog_create_checklist_title),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        onDismissRequest = dismissImeOrCloseModal,
+                        headerContent = {
+                            Text(
+                                text = stringResource(R.string.dialog_create_checklist_title),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
 
-                        // Liquid Tab Indicator: 空白清單 vs 快速匯入
-                        LiquidTabBar(
-                            labels = listOf(
-                                stringResource(R.string.modal_tab_blank_list),
-                                stringResource(R.string.modal_tab_quick_import)
-                            ),
-                            selectedIndex = if (isQuickImportMode) 1 else 0,
-                            onSelect = { index ->
-                                if (index == 0) {
-                                    isQuickImportMode = false
-                                    expectImeForModal = true
+                            // Liquid Tab Indicator: 空白清單 vs 快速匯入
+                            LiquidTabBar(
+                                labels = listOf(
+                                    stringResource(R.string.modal_tab_blank_list),
+                                    stringResource(R.string.modal_tab_quick_import)
+                                ),
+                                selectedIndex = if (isQuickImportMode) 1 else 0,
+                                onSelect = { index ->
+                                    if (index == 0) {
+                                        isQuickImportMode = false
+                                        isPrimaryInputFocused = false
+                                        isTitleInputFocused = false
+                                        expectImeForModal = isImeVisibleState.value
+                                    } else {
+                                        isQuickImportMode = true
+                                        expectImeForModal = false
+                                        isPrimaryInputFocused = false
+                                        isTitleInputFocused = false
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        },
+                        footerContent = { onFocusIndexChanged ->
+                            // 共用固定底部操作列（兩頁位置與間距完全統一，且永遠停駐於鍵盤正上方不被遮擋）
+                            Spacer(modifier = Modifier.height(14.dp))
+                            ModalActionRow(
+                                cancelFocus = cancelFocus,
+                                confirmFocus = confirmFocus,
+                                confirmLabel = if (isQuickImportMode) {
+                                    stringResource(R.string.action_import_create_count, previewItems.size)
                                 } else {
-                                    isQuickImportMode = true
-                                    expectImeForModal = false
-                                    keyboardController?.hide()
-                                    focusManager.clearFocus()
+                                    stringResource(R.string.action_create)
+                                },
+                                confirmEnabled = confirmEnabled,
+                                isDestructive = false,
+                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                                onCancel = { if (isOpen) onRequestClose(true) },
+                                onConfirm = {
+                                    if (isQuickImportMode) {
+                                        if (isOpen && previewItems.isNotEmpty() && previewTitle.isNotBlank()) {
+                                            onConfirmImport(previewTitle.trim(), previewItems)
+                                        }
+                                    } else {
+                                        if (isOpen) onConfirmCreate(name)
+                                    }
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-
+                            )
+                        }
+                    ) { onFocusIndexChanged ->
                         val auxButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
 
                         if (!isQuickImportMode) {
@@ -529,7 +619,9 @@ internal fun ScopedModalHost(
                                     .fillMaxWidth()
                                     .focusRequester(primaryFocus)
                                     .onFocusChanged {
-                                        if (it.isFocused) {
+                                        val focused = it.hasFocus || it.isFocused
+                                        isPrimaryInputFocused = focused
+                                        if (focused) {
                                             onFocusIndexChanged(0)
                                             expectImeForModal = true
                                         }
@@ -566,7 +658,7 @@ internal fun ScopedModalHost(
                                 )
                             }
                         } else {
-                            // 第一層：主輸入框優先（單行起始高度與空白清單一致，可自動延展至 4 行）
+                            // 第一層：主輸入框優先（單行起始高度與空白清單一致，鍵盤展開時收斂為 2 行）
                             OutlinedTextField(
                                 value = rawImportText,
                                 onValueChange = { newText ->
@@ -576,7 +668,9 @@ internal fun ScopedModalHost(
                                     .fillMaxWidth()
                                     .focusRequester(primaryFocus)
                                     .onFocusChanged {
-                                        if (it.isFocused) {
+                                        val focused = it.hasFocus || it.isFocused
+                                        isPrimaryInputFocused = focused
+                                        if (focused) {
                                             onFocusIndexChanged(0)
                                             expectImeForModal = true
                                         }
@@ -585,7 +679,7 @@ internal fun ScopedModalHost(
                                     Text(text = stringResource(R.string.import_raw_text_placeholder))
                                 },
                                 minLines = 1,
-                                maxLines = 4,
+                                maxLines = if (isKeyboardOpen) 2 else 4,
                                 shape = RoundedCornerShape(16.dp)
                             )
                             Spacer(modifier = Modifier.height(10.dp))
@@ -710,7 +804,9 @@ internal fun ScopedModalHost(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .onFocusChanged {
-                                            if (it.isFocused) {
+                                            val focused = it.hasFocus || it.isFocused
+                                            isTitleInputFocused = focused
+                                            if (focused) {
                                                 expectImeForModal = true
                                             }
                                         },
@@ -721,6 +817,8 @@ internal fun ScopedModalHost(
                                     keyboardActions = KeyboardActions(
                                         onDone = {
                                             expectImeForModal = false
+                                            isPrimaryInputFocused = false
+                                            isTitleInputFocused = false
                                             keyboardController?.hide()
                                             focusManager.clearFocus()
                                         }
@@ -765,7 +863,7 @@ internal fun ScopedModalHost(
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(max = if (expectImeForModal) 112.dp else 188.dp)
+                                            .heightIn(max = if (isKeyboardOpen) 88.dp else 188.dp)
                                             .verticalScroll(rememberScrollState()),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
@@ -787,33 +885,7 @@ internal fun ScopedModalHost(
                                     }
                                 }
                             }
-
                         }
-
-                        // 共用底部操作列（兩頁位置與間距完全統一）
-                        Spacer(modifier = Modifier.height(20.dp))
-                        ModalActionRow(
-                            cancelFocus = cancelFocus,
-                            confirmFocus = confirmFocus,
-                            confirmLabel = if (isQuickImportMode) {
-                                stringResource(R.string.action_import_create_count, previewItems.size)
-                            } else {
-                                stringResource(R.string.action_create)
-                            },
-                            confirmEnabled = confirmEnabled,
-                            isDestructive = false,
-                            onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
-                            onCancel = { if (isOpen) onRequestClose(true) },
-                            onConfirm = {
-                                if (isQuickImportMode) {
-                                    if (isOpen && previewItems.isNotEmpty() && previewTitle.isNotBlank()) {
-                                        onConfirmImport(previewTitle.trim(), previewItems)
-                                    }
-                                } else {
-                                    if (isOpen) onConfirmCreate(name)
-                                }
-                            }
-                        )
                     }
                 }
 
@@ -836,7 +908,7 @@ internal fun ScopedModalHost(
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
                         confirmFocus = confirmFocus,
-                        onDismissRequest = { onRequestClose(true) }
+                        onDismissRequest = dismissImeOrCloseModal
                     ) { onFocusIndexChanged ->
                         Text(
                             text = stringResource(R.string.dialog_rename_checklist_title),
@@ -852,7 +924,9 @@ internal fun ScopedModalHost(
                                 .fillMaxWidth()
                                 .focusRequester(primaryFocus)
                                 .onFocusChanged {
-                                    if (it.isFocused) {
+                                    val focused = it.hasFocus || it.isFocused
+                                    isPrimaryInputFocused = focused
+                                    if (focused) {
                                         onFocusIndexChanged(0)
                                         expectImeForModal = true
                                     }
@@ -893,7 +967,7 @@ internal fun ScopedModalHost(
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
                         confirmFocus = confirmFocus,
-                        onDismissRequest = { onRequestClose(true) }
+                        onDismissRequest = dismissImeOrCloseModal
                     ) { onFocusIndexChanged ->
                         Text(
                             text = stringResource(R.string.dialog_delete_checklist_title),
@@ -948,6 +1022,8 @@ private fun ModalPanelContainer(
     confirmFocus: FocusRequester,
     onDismissRequest: () -> Unit,
     animateSize: Boolean = false,
+    headerContent: (@Composable () -> Unit)? = null,
+    footerContent: (@Composable (onFocusIndexChanged: (Int) -> Unit) -> Unit)? = null,
     content: @Composable (onFocusIndexChanged: (Int) -> Unit) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -1065,10 +1141,17 @@ private fun ModalPanelContainer(
                         Modifier
                     }
                 )
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp)
+                .padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            content { idx -> focusedCycleIndex = idx }
+            headerContent?.invoke()
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                content { idx -> focusedCycleIndex = idx }
+            }
+            footerContent?.invoke { idx -> focusedCycleIndex = idx }
         }
     }
 }
