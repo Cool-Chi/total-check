@@ -65,7 +65,7 @@
     <string name="action_import_from_clipboard_shortcut">📋 Import from Clipboard</string>
     <string name="action_paste_clipboard">📋 Paste Clipboard</string>
     <string name="action_select_document">📄 Choose File (.txt/.md/.csv)</string>
-    <string name="import_raw_text_placeholder">e.g. Camping Gear: Tent, Sleeping Bag, Flashlight</string>
+    <string name="import_raw_text_placeholder">e.g. Essentials: Wallet, Keyring, Mobile</string>
     <string name="import_ai_prompt_title">AI Prompt Example</string>
     <string name="import_ai_prompt_text">Reply with only one line in this format: \"List Name: Item 1, Item 2, Item 3\", with no extra text.</string>
     <string name="cd_copy_ai_prompt">Copy AI prompt</string>
