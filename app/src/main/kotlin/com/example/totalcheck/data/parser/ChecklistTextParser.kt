@@ -18,35 +18,55 @@ data class ParsedChecklistDraft(
 )
 
 /**
- * High-tolerance parser supporting both single-line delimiter strings
- * and multi-line Markdown / plain-text / CSV checklists.
+ * High-tolerance parser supporting single-line delimiter/whitespace strings
+ * and multi-line Markdown / plain-text / table / CSV / TSV / JSON-array checklists.
  */
 object ChecklistTextParser {
 
-    private val HORIZONTAL_RULE_REGEX = Regex("""^[-*_]{3,}\s*$""")
+    private const val BULLET_CHARS = """\-*+•·▪▫▸▹◦‣⁃–—●○◆◇➢➤→"""
+    private val HORIZONTAL_RULE_REGEX = Regex(
+        """^(?:[-*_]{3,}|\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?)\s*$"""
+    )
+    private val JSON_BRACKET_LINE_REGEX = Regex("""^[\[\]]\s*,?\s*$""")
     private val HEADING_PREFIX_REGEX = Regex("""^#{1,6}\s+""")
+    private val ORDERED_NUMBER_PATTERN = """(?:\(\d+\)|（\d+）|#?\d+[.)、])"""
+    private val CHECKED_MARKER_PATTERN = """(?:\[[xX✓✔☑vV]\]|[✓✔☑✅🟢])"""
+    private val UNCHECKED_MARKER_PATTERN = """(?:\[\s*\]|[☐□⬜🔲⭕])"""
+
     private val LIST_OR_CHECKBOX_PREFIX_REGEX = Regex(
-        """^(?:\d+[.)、]\s+|[-*+•·]\s+|\[[xX✓✔☑\s]?\]\s*|[✓✔☑☐□]\s*)"""
+        """^(?:$ORDERED_NUMBER_PATTERN\s+|[$BULLET_CHARS]\s+|\[[xX✓✔☑vV\s]?\]\s*|[✓✔☑✅🟢☐□⬜🔲⭕]\s*)"""
     )
     private val CHECKED_PREFIX_REGEX = Regex(
-        """^(?:\d+[.)、]\s*|[-*+•·]\s*)?(?:\[[xX✓✔☑]\]|[✓✔☑])\s*"""
+        """^(?:$ORDERED_NUMBER_PATTERN\s*|[$BULLET_CHARS]\s*)?$CHECKED_MARKER_PATTERN\s*"""
     )
     private val UNCHECKED_CHECKBOX_PREFIX_REGEX = Regex(
-        """^(?:\d+[.)、]\s*|[-*+•·]\s*)?(?:\[\s*\]|[☐□])\s*"""
+        """^(?:$ORDERED_NUMBER_PATTERN\s*|[$BULLET_CHARS]\s*)?$UNCHECKED_MARKER_PATTERN\s*"""
     )
-    private val UNORDERED_BULLET_PREFIX_REGEX = Regex("""^[-*+•·]\s+""")
-    private val ORDERED_NUMBER_PREFIX_REGEX = Regex("""^\d+[.)、]\s*""")
-    private val DELIMITER_SPLIT_REGEX = Regex("""[,，、;；]+""")
-    private val DELIMITER_CONTAINS_REGEX = Regex("""[,，、;；]""")
-    private val CSV_HEADER_REGEX = Regex(
-        """^"?(?:label|item|name|項目|名稱|项目|名称)"?\s*[,，]\s*"?(?:ischecked|is_checked|checked|status|狀態|状态|已備|已备)"?\s*$""",
+    private val UNORDERED_BULLET_PREFIX_REGEX = Regex("""^[$BULLET_CHARS]\s+""")
+    private val ORDERED_NUMBER_PREFIX_REGEX = Regex("""^$ORDERED_NUMBER_PATTERN\s*""")
+
+    private val PRIMARY_DELIMITER_SPLIT_REGEX = Regex("""[,，、;；|｜\t]+""")
+    private val PRIMARY_DELIMITER_CONTAINS_REGEX = Regex("""[,，、;；|｜\t]""")
+    private val WHITESPACE_SPLIT_REGEX = Regex("""[\s\u3000]+""")
+    private val WHITESPACE_CONTAINS_REGEX = Regex("""[\s\u3000]""")
+    private val INLINE_MARKER_BOUNDARY_REGEX = Regex(
+        """(?<=[\s\u3000])(?=(?:\[[xX✓✔☑vV\s]?\]|[✓✔☑✅🟢☐□⬜🔲⭕]|$ORDERED_NUMBER_PATTERN\s+|[$BULLET_CHARS]\s+))"""
+    )
+    private val SENTENCE_END_REGEX = Regex("""[.。!！?？]$""")
+
+    private val MARKDOWN_TABLE_ROW_REGEX = Regex("""^\|(.+)\|\s*$""")
+    private val CSV_OR_TSV_HEADER_REGEX = Regex(
+        """^"?(?:label|item|name|項目|名稱|项目|名称)"?\s*[,，\t|]\s*"?(?:ischecked|is_checked|checked|status|狀態|状态|已備|已备)"?\s*$""",
         RegexOption.IGNORE_CASE
     )
-    private val CSV_ROW_REGEX = Regex(
-        """^(?:"([^"]+)"|([^,，]+?))\s*[,，]\s*"?(true|false|1|0|checked|unchecked|已備|已备|待備|待备|yes|no|✓|✔|☑)"?\s*$""",
+    private val CSV_OR_TSV_ROW_REGEX = Regex(
+        """^(?:"([^"]+)"|([^,，\t]+?))\s*[,，\t]\s*"?(true|false|1|0|checked|unchecked|已備|已备|待備|待备|yes|no|✓|✔|☑|✅|\[[xX✓✔☑vV]\]|\[\s*\])"?\s*$""",
         RegexOption.IGNORE_CASE
     )
-    private val CHECKED_CSV_VALUES = setOf("true", "1", "checked", "已備", "已备", "yes", "✓", "✔", "☑")
+    private val CHECKBOX_START_REGEX = Regex("""^\[[xX✓✔☑vV\s]?\]""")
+    private val CHECKED_STATUS_VALUES = setOf(
+        "true", "1", "checked", "已備", "已备", "yes", "✓", "✔", "☑", "✅", "[x]", "[v]", "[✓]", "[✔]", "[☑]"
+    )
 
     fun parse(rawText: String): ParsedChecklistDraft {
         val cleanedLines = rawText
@@ -55,7 +75,11 @@ object ChecklistTextParser {
             .replace('\r', '\n')
             .lineSequence()
             .map { it.replace("\uFEFF", "").trim() }
-            .filter { it.isNotEmpty() && !HORIZONTAL_RULE_REGEX.matches(it) }
+            .filter {
+                it.isNotEmpty() &&
+                    !HORIZONTAL_RULE_REGEX.matches(it) &&
+                    !JSON_BRACKET_LINE_REGEX.matches(it)
+            }
             .toList()
 
         if (cleanedLines.isEmpty()) {
@@ -67,13 +91,17 @@ object ChecklistTextParser {
         }
 
         // Handle two-line variant where line 1 is strictly a header ending in colon
-        // and line 2 is a delimiter-separated single-line list.
+        // and line 2 is a delimiter- or whitespace-separated single-line list.
         val isTwoLineHeaderPlusSingleLine = cleanedLines.size == 2 &&
             endsWithColon(cleanedLines[0]) &&
             !LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(cleanedLines[0]) &&
             !LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(cleanedLines[1]) &&
-            !CSV_ROW_REGEX.matches(cleanedLines[1]) &&
-            DELIMITER_CONTAINS_REGEX.containsMatchIn(cleanedLines[1])
+            !CSV_OR_TSV_ROW_REGEX.matches(cleanedLines[1]) &&
+            !MARKDOWN_TABLE_ROW_REGEX.matches(cleanedLines[1]) &&
+            (
+                PRIMARY_DELIMITER_CONTAINS_REGEX.containsMatchIn(cleanedLines[1]) ||
+                    WHITESPACE_CONTAINS_REGEX.containsMatchIn(cleanedLines[1])
+                )
 
         val draft = if (cleanedLines.size == 1 || isTwoLineHeaderPlusSingleLine) {
             parseSingleLineMode(cleanedLines)
@@ -96,7 +124,7 @@ object ChecklistTextParser {
             title = cleanTitle(lines[0].dropLast(1))
             itemsText = lines[1]
         } else {
-            val line = lines[0]
+            val line = unwrapBracketArray(lines[0])
             val colonIdx = findTitleColonIndex(line)
             if (colonIdx > 0) {
                 title = cleanTitle(line.substring(0, colonIdx))
@@ -116,7 +144,7 @@ object ChecklistTextParser {
     }
 
     private fun parseMultiLineMode(rawLines: List<String>): ParsedChecklistDraft {
-        val lines = if (rawLines.isNotEmpty() && CSV_HEADER_REGEX.matches(rawLines[0])) {
+        val lines = if (rawLines.isNotEmpty() && isHeaderRow(rawLines[0])) {
             rawLines.drop(1)
         } else {
             rawLines
@@ -136,14 +164,23 @@ object ChecklistTextParser {
         val firstInlineColonIdx = findTitleColonIndex(firstLine)
         val firstIsInlineTitleWithItems = firstInlineColonIdx > 0 &&
             firstInlineColonIdx < firstLine.lastIndex &&
-            !CSV_ROW_REGEX.matches(firstLine)
+            !CSV_OR_TSV_ROW_REGEX.matches(firstLine) &&
+            !MARKDOWN_TABLE_ROW_REGEX.matches(firstLine)
         val firstHasNoPrefix = !LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(firstLine) &&
-            !CSV_ROW_REGEX.matches(firstLine) &&
-            !DELIMITER_CONTAINS_REGEX.containsMatchIn(firstLine)
-        val secondHasListFeature = lines.size >= 2 && (
+            !CSV_OR_TSV_ROW_REGEX.matches(firstLine) &&
+            !MARKDOWN_TABLE_ROW_REGEX.matches(firstLine) &&
+            !PRIMARY_DELIMITER_CONTAINS_REGEX.containsMatchIn(firstLine)
+        val secondHasStructuredPrefix = lines.size >= 2 && (
             LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(lines[1]) ||
-                CSV_ROW_REGEX.matches(lines[1])
+                CSV_OR_TSV_ROW_REGEX.matches(lines[1]) ||
+                MARKDOWN_TABLE_ROW_REGEX.matches(lines[1])
             )
+        val secondHasDelimitedOrSpacedItems = lines.size >= 2 &&
+            !WHITESPACE_CONTAINS_REGEX.containsMatchIn(firstLine) &&
+            (
+                PRIMARY_DELIMITER_CONTAINS_REGEX.containsMatchIn(lines[1]) ||
+                    WHITESPACE_CONTAINS_REGEX.containsMatchIn(lines[1])
+                )
 
         when {
             firstIsHeading -> {
@@ -162,7 +199,7 @@ object ChecklistTextParser {
                 }
                 bodyLines.addAll(lines.drop(1))
             }
-            firstHasNoPrefix && secondHasListFeature -> {
+            firstHasNoPrefix && (secondHasStructuredPrefix || secondHasDelimitedOrSpacedItems) -> {
                 title = cleanTitle(firstLine)
                 bodyLines.addAll(lines.drop(1))
             }
@@ -173,7 +210,7 @@ object ChecklistTextParser {
 
         val items = mutableListOf<ParsedItemDraft>()
         for (line in bodyLines) {
-            if (CSV_HEADER_REGEX.matches(line)) continue
+            if (isHeaderRow(line)) continue
             parseMultiLineEntry(line, items)
         }
 
@@ -185,8 +222,27 @@ object ChecklistTextParser {
     }
 
     private fun parseMultiLineEntry(line: String, outItems: MutableList<ParsedItemDraft>) {
-        // 1. Check CSV 2-column format first: "label",true or label,1
-        val csvMatch = CSV_ROW_REGEX.matchEntire(line)
+        // 1. Markdown table row: | item | status | or | item |
+        val tableMatch = MARKDOWN_TABLE_ROW_REGEX.matchEntire(line)
+        if (tableMatch != null) {
+            val cells = tableMatch.groupValues[1]
+                .split('|')
+                .map { it.trim() }
+            if (cells.isNotEmpty()) {
+                val rawLabel = cells[0]
+                val clean = cleanItemLabel(rawLabel)
+                if (clean.isNotEmpty()) {
+                    val statusCell = cells.getOrNull(1)?.lowercase().orEmpty()
+                    val isChecked = statusCell in CHECKED_STATUS_VALUES ||
+                        CHECKED_PREFIX_REGEX.containsMatchIn(rawLabel)
+                    outItems.add(ParsedItemDraft(label = clean, isChecked = isChecked))
+                }
+            }
+            return
+        }
+
+        // 2. Check CSV / TSV 2-column format: "label",true or label\t1
+        val csvMatch = CSV_OR_TSV_ROW_REGEX.matchEntire(line)
         if (csvMatch != null) {
             val rawLabel = csvMatch.groupValues[1].ifEmpty { csvMatch.groupValues[2] }
             val statusToken = csvMatch.groupValues[3].lowercase()
@@ -195,14 +251,14 @@ object ChecklistTextParser {
                 outItems.add(
                     ParsedItemDraft(
                         label = clean,
-                        isChecked = statusToken in CHECKED_CSV_VALUES
+                        isChecked = statusToken in CHECKED_STATUS_VALUES
                     )
                 )
             }
             return
         }
 
-        // 2. Check explicit checkbox / checked marker
+        // 3. Check explicit checkbox / checked marker
         val hasCheckedMarker = CHECKED_PREFIX_REGEX.containsMatchIn(line)
         val hasUncheckedCheckbox = !hasCheckedMarker && UNCHECKED_CHECKBOX_PREFIX_REGEX.containsMatchIn(line)
         if (hasCheckedMarker || hasUncheckedCheckbox) {
@@ -214,22 +270,33 @@ object ChecklistTextParser {
             return
         }
 
-        // 3. No explicit checkbox: strip bullet / numbered list markers
+        // 4. Strip bullet / numbered list markers if present
+        val hadListPrefix = UNORDERED_BULLET_PREFIX_REGEX.containsMatchIn(line) ||
+            ORDERED_NUMBER_PREFIX_REGEX.containsMatchIn(line)
         val stripped = stripPlainListPrefix(line)
 
-        // 4. Smart short-phrase expansion if delimiter-separated tokens form >= 2 short items
-        if (DELIMITER_CONTAINS_REGEX.containsMatchIn(stripped)) {
-            val candidateTokens = DELIMITER_SPLIT_REGEX.split(stripped)
-                .map { cleanItemLabel(it) }
+        // 5. Smart expansion for delimiter-separated short items
+        if (PRIMARY_DELIMITER_CONTAINS_REGEX.containsMatchIn(stripped)) {
+            val candidateTokens = PRIMARY_DELIMITER_SPLIT_REGEX.split(stripped)
+                .map { it.trim() }
                 .filter { it.isNotEmpty() }
             if (candidateTokens.size >= 2 && candidateTokens.all { it.length <= 32 }) {
-                for (token in candidateTokens) {
-                    val tokenChecked = CHECKED_PREFIX_REGEX.containsMatchIn(token)
-                    val tokenLabel = cleanItemLabel(stripPrefixes(token, isChecked = tokenChecked))
-                    if (tokenLabel.isNotEmpty()) {
-                        outItems.add(ParsedItemDraft(label = tokenLabel, isChecked = tokenChecked))
-                    }
-                }
+                addParsedTokens(candidateTokens, outItems)
+                return
+            }
+        }
+
+        // 6. Smart whitespace expansion ONLY on plain unprefixed lines (preserving e.g. "1. AA Battery")
+        if (!hadListPrefix && WHITESPACE_CONTAINS_REGEX.containsMatchIn(stripped)) {
+            val candidateTokens = WHITESPACE_SPLIT_REGEX.split(stripped)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (
+                candidateTokens.size >= 2 &&
+                candidateTokens.all { it.length <= 24 } &&
+                !SENTENCE_END_REGEX.containsMatchIn(stripped)
+            ) {
+                addParsedTokens(candidateTokens, outItems)
                 return
             }
         }
@@ -241,8 +308,28 @@ object ChecklistTextParser {
     }
 
     private fun splitSingleLineItems(itemsText: String): List<ParsedItemDraft> {
-        val rawTokens = DELIMITER_SPLIT_REGEX.split(itemsText)
+        val trimmed = unwrapBracketArray(itemsText.trim())
+        if (trimmed.isEmpty()) return emptyList()
+
+        val rawTokens = when {
+            INLINE_MARKER_BOUNDARY_REGEX.containsMatchIn(trimmed) ->
+                INLINE_MARKER_BOUNDARY_REGEX.split(trimmed)
+            PRIMARY_DELIMITER_CONTAINS_REGEX.containsMatchIn(trimmed) ->
+                PRIMARY_DELIMITER_SPLIT_REGEX.split(trimmed)
+            LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(trimmed) ->
+                listOf(trimmed)
+            WHITESPACE_CONTAINS_REGEX.containsMatchIn(trimmed) ->
+                WHITESPACE_SPLIT_REGEX.split(trimmed)
+            else ->
+                listOf(trimmed)
+        }
+
         val result = ArrayList<ParsedItemDraft>(rawTokens.size)
+        addParsedTokens(rawTokens, result)
+        return result
+    }
+
+    private fun addParsedTokens(rawTokens: List<String>, outItems: MutableList<ParsedItemDraft>) {
         for (raw in rawTokens) {
             val token = raw.trim()
             if (token.isEmpty()) continue
@@ -250,10 +337,29 @@ object ChecklistTextParser {
             val stripped = stripPrefixes(token, isChecked = isChecked)
             val clean = cleanItemLabel(stripped)
             if (clean.isNotEmpty()) {
-                result.add(ParsedItemDraft(label = clean, isChecked = isChecked))
+                outItems.add(ParsedItemDraft(label = clean, isChecked = isChecked))
             }
         }
-        return result
+    }
+
+    private fun isHeaderRow(line: String): Boolean {
+        if (CSV_OR_TSV_HEADER_REGEX.matches(line)) return true
+        val tableMatch = MARKDOWN_TABLE_ROW_REGEX.matchEntire(line) ?: return false
+        val cells = tableMatch.groupValues[1].split('|').map { it.trim().trim('"', '\'') }
+        if (cells.size >= 2) {
+            val joined = "${cells[0]},${cells[1]}"
+            if (CSV_OR_TSV_HEADER_REGEX.matches(joined)) return true
+        }
+        return false
+    }
+
+    private fun unwrapBracketArray(text: String): String {
+        val t = text.trim()
+        val isCheckboxPrefix = CHECKBOX_START_REGEX.containsMatchIn(t)
+        if (!isCheckboxPrefix && t.length >= 2 && t.startsWith('[') && t.endsWith(']')) {
+            return t.substring(1, t.length - 1).trim()
+        }
+        return t
     }
 
     private fun endsWithColon(text: String): Boolean {
@@ -269,6 +375,9 @@ object ChecklistTextParser {
             else -> fullIdx
         }
         if (colonIdx <= 0) return -1
+        if (colonIdx + 2 < line.length && line[colonIdx + 1] == '/' && line[colonIdx + 2] == '/') {
+            return -1
+        }
         val left = line.substring(0, colonIdx).trim()
         if (left.isEmpty() || LIST_OR_CHECKBOX_PREFIX_REGEX.containsMatchIn(left)) {
             return -1
@@ -295,12 +404,20 @@ object ChecklistTextParser {
     private fun cleanTitle(raw: String): String {
         var cleaned = raw.trim()
         cleaned = cleaned.replaceFirst(HEADING_PREFIX_REGEX, "")
-        cleaned = cleaned.trim().trim('#', '*', '[', ']', '"', '\'', '「', '」', ':', '：').trim()
+        cleaned = cleaned.trim()
+            .trim('#', '*', '[', ']', '"', '\'', '「', '」', '【', '】', '《', '》', ':', '：')
+            .trim()
         return cleaned
     }
 
     private fun cleanItemLabel(raw: String): String {
-        var cleaned = raw.trim()
+        var cleaned = raw.trim().trimEnd(',').trim()
+        if (cleaned.length >= 4 && cleaned.startsWith("~~") && cleaned.endsWith("~~")) {
+            cleaned = cleaned.substring(2, cleaned.length - 2).trim()
+        }
+        if (cleaned.length >= 4 && cleaned.startsWith("**") && cleaned.endsWith("**")) {
+            cleaned = cleaned.substring(2, cleaned.length - 2).trim()
+        }
         if (cleaned.length >= 2) {
             val first = cleaned.first()
             val last = cleaned.last()
