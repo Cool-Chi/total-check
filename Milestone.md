@@ -23,6 +23,7 @@
 | `v0.9.0` | **啟動骨架屏與轉場效能優化** | `TotalCheckSkeletonShimmer` 啟動骨架屏、`0.6f` 降採樣快照與多波次 `RevealWave` 主題擴散、`CapsuleComponents` `Animatable` + `drawBehind` 零重組色彩插值、`DistantTabTransition` 遠距分頁預熱滑動 |
 | `v0.10.0` | **M5（項目欄位動畫、堆疊排列與互動重構）** | 自訂 `StackedCardScrollLayout`（深度堆疊壓縮、層次暗化、點擊展開與 `ItemReflowAnim` / `NeighborRippleWave` 重排與鄰近波紋）、`Hold-to-Delete Perimeter Ring`（150ms 延遲 + 1000ms 外圈進度環刪除 + 300ms 退回）、`Drag-to-Reorder` 拖曳排序與懸浮層（含鍵盤/TalkBack 無障礙移動與 `ChecklistDao.updateItems` 批次持久化）、滾動方向感知 `QuickInputBar` 自動隱藏與 `BackHandler` 退出編輯 |
 | `v0.11.0` | **M6（頂部導覽列與其餘介面交互動效優化）** | 頂部 `ExpandingChecklistTabBar` 長按拖曳排序與 `TabReflowAnim` 彈簧讓位、`SlideOutCancelModifier`（`0.94f` 按壓下沉與 `44.dp` 滑出衰減取消）、自訂 `ScopedModalOverlay`（記憶軟鍵盤高度達成輸入彈窗首幀零二次跳動、背景 IME 凍結）、進度卡整合清單改名/刪除與刪除清單 `Snackbar` 連同項目復原、`StackedCardScrollLayout` 邊界過捲動手風琴拉伸回彈（Overscroll Accordion），以及中英雙語字串資源（`values` / `values-b+zh+Hant` / `values-zh`） |
+| `v0.12.0` | **M7（格式文檔解析引擎與即時預覽快速匯入）** | 新增高容錯雙模式解析器 `ChecklistTextParser`（單行冒號/逗號/頓號與多行 Markdown/CSV/編號列表）、`ChecklistDao.createChecklistWithItems` 批次匯入交易、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（支援剪貼簿貼上、`.txt`/`.md`/`.csv` 文檔讀取、0 延遲即時預覽標題編輯與項目狀態微調/剔除）及三語系字串資源 |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -30,14 +31,14 @@ app/src/main/kotlin/com/example/totalcheck/
 ├── MainActivity.kt                        # ThemeConfig? 延遲首幀 + SystemBarStyle 動態反轉 + RadialThemeTransitionContainer
 ├── data/
 │   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ChecklistDao
+│   ├── parser/ChecklistTextParser.kt      # 單行與多行 Markdown/CSV 高容錯清單解析引擎
 │   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig: isDarkMode, useDynamicColor)
-│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
+│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次匯入與排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
 │   └── widget/WidgetSyncManager.kt        # 未來對接 Jetpack Glance updateAll() 的解耦鉤子
 └── ui/
     ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ExpandingChecklistTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
 ```
 
-## 4. 後續待實作項目（M7+）
-- **M7（格式文檔快速載入列表）**：（原 M6 順延）實作 App 支援讀取格式文檔（如 Markdown / CSV / 結構化純文字），快速解析並匯入建立清點列表。
+## 4. 後續待實作項目（M8+）
 - **M8（桌面小工具）**：（原 M7 順延）實作 `widget/` 模組（Jetpack Glance）並對接 `WidgetSyncManager.notifyDataChanged()`。
