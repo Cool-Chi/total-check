@@ -151,10 +151,12 @@ fun RadialThemeTransitionContainer(
     val fallbackAlpha = remember { Animatable(1f) }
     val clipPath = remember { Path() }
 
+    var isPreCapturing by remember { mutableStateOf(false) }
     val isTransitioning = activeWaves.isNotEmpty() || baseSnapshotBitmap != null
 
     fun clearAllWavesAndSnapshots() {
         sequenceGuard++
+        isPreCapturing = false
         preCaptureJob?.cancel()
         preCaptureJob = null
         activeWaves.forEach { wave ->
@@ -200,22 +202,24 @@ fun RadialThemeTransitionContainer(
         if (!currentReducedMotion &&
             !triggerMutex.isLocked &&
             containerSize.width > 0 &&
-            containerSize.height > 0 &&
-            hasRecordedLiveFrame &&
-            drawnThemeEpoch == committedThemeEpoch
+            containerSize.height > 0
         ) {
-            val existing = preCaptureJob
-            if (existing == null || existing.isCancelled || preCaptureEpoch != drawnThemeEpoch) {
-                existing?.cancel()
-                if (recordScaledSnapshot()) {
-                    preCaptureEpoch = drawnThemeEpoch
-                    preCaptureJob = scope.async { snapshotLayer.toImageBitmap() }
+            isPreCapturing = true
+            if (hasRecordedLiveFrame && drawnThemeEpoch == committedThemeEpoch) {
+                val existing = preCaptureJob
+                if (existing == null || existing.isCancelled || preCaptureEpoch != drawnThemeEpoch) {
+                    existing?.cancel()
+                    if (recordScaledSnapshot()) {
+                        preCaptureEpoch = drawnThemeEpoch
+                        preCaptureJob = scope.async { snapshotLayer.toImageBitmap() }
+                    }
                 }
             }
         }
     }
 
     val onCancelPreCapture: () -> Unit = {
+        isPreCapturing = false
         preCaptureJob?.cancel()
         preCaptureJob = null
     }
@@ -224,6 +228,7 @@ fun RadialThemeTransitionContainer(
         capturedBitmap: ImageBitmap,
         clickOrigin: Offset
     ) {
+        isPreCapturing = false
         val w = containerSize.width.toFloat()
         val h = containerSize.height.toFloat()
         if (w <= 0f || h <= 0f) {
@@ -269,9 +274,6 @@ fun RadialThemeTransitionContainer(
 
         newWave.job = scope.launch {
             try {
-                // Yield across Frame 1's animation callback so Frame 1's recomposition/traversal
-                // completes BEFORE animateTo locks in startTimeNanos on Frame 2, ensuring the
-                // full 400ms duration is visibly rendered from radius 0 -> maxRadius.
                 withFrameNanos { }
                 newWave.radiusAnim.animateTo(
                     targetValue = maxRadius,
@@ -280,7 +282,6 @@ fun RadialThemeTransitionContainer(
                         easing = EaseOut
                     )
                 )
-                // Once this wave reaches maxRadius, it covers 100% of the viewport
                 val idx = activeWaves.indexOf(newWave)
                 if (idx >= 0) {
                     for (i in 0 until idx) {
@@ -319,7 +320,7 @@ fun RadialThemeTransitionContainer(
             scope.launch { fallbackAlpha.snapTo(1f) }
             committedThemeEpoch++
             currentOnToggleTheme()
-        } else if (w <= 0f || h <= 0f || !hasRecordedLiveFrame) {
+        } else if (w <= 0f || h <= 0f) {
             clearAllWavesAndSnapshots()
             committedThemeEpoch++
             currentOnToggleTheme()
@@ -354,6 +355,10 @@ fun RadialThemeTransitionContainer(
             } else {
                 scope.launch {
                     triggerMutex.withLock {
+                        if (!hasRecordedLiveFrame || drawnThemeEpoch != committedThemeEpoch) {
+                            isPreCapturing = true
+                            withFrameNanos { }
+                        }
                         val preCaptured = if (activePreCapture != null &&
                             !activePreCapture.isCancelled &&
                             capturedEpoch == committedThemeEpoch
@@ -386,17 +391,26 @@ fun RadialThemeTransitionContainer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = fallbackAlpha.value
-                    }
                     .drawWithContent {
-                        liveLayer.record {
+                        val shouldRecord = isTransitioning || isPreCapturing
+                        if (shouldRecord) {
+                            liveLayer.alpha = fallbackAlpha.value
+                            liveLayer.record {
+                                this@drawWithContent.drawContent()
+                            }
+                            hasRecordedLiveFrame = true
+                            drawnThemeEpoch = committedThemeEpoch
+                            if (isPreCapturing && !isTransitioning && preCaptureJob == null) {
+                                if (recordScaledSnapshot()) {
+                                    preCaptureEpoch = drawnThemeEpoch
+                                    preCaptureJob = scope.async { snapshotLayer.toImageBitmap() }
+                                }
+                            }
+                            if (!isTransitioning) {
+                                drawLayer(liveLayer)
+                            }
+                        } else {
                             this@drawWithContent.drawContent()
-                        }
-                        hasRecordedLiveFrame = true
-                        drawnThemeEpoch = committedThemeEpoch
-                        if (!isTransitioning) {
-                            drawLayer(liveLayer)
                         }
                     }
             ) {
