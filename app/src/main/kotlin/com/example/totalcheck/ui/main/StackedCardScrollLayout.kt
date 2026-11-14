@@ -22,8 +22,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -38,8 +38,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
-import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.ScrollAxisRange
@@ -53,8 +53,12 @@ import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 private const val MAX_STACK_DEPTH = 3f
 private const val FADE_OUT_DEPTH = 4f
@@ -94,33 +98,34 @@ data class PlacedStackedItemInfo(
 @Stable
 class StackedCardSlotState {
     val depthState: MutableFloatState = mutableFloatStateOf(0f)
-    val isCompressed: Boolean by derivedStateOf { depthState.floatValue > COMPRESSED_STACK_INTERACTION_THRESHOLD }
+
+    // 供手勢與回呼於非組裝階段惰性讀取，避免捲動時觸發 Composition 重組
+    val isCompressed: Boolean
+        get() = depthState.floatValue > COMPRESSED_STACK_INTERACTION_THRESHOLD
 }
+
+private const val RIPPLE_LAYER_DELAY_NANOS = 35_000_000L
+private const val RIPPLE_TOGGLE_DURATION_NANOS = 320_000_000L
+private const val RIPPLE_RENAME_DURATION_NANOS = 360_000_000L
+private const val RIPPLE_MAX_EFFECTIVE_DISTANCE = 9
+private const val RIPPLE_ATTENUATION_RATE = 0.48f
+private const val RIPPLE_MIN_ATTENUATION = 0.02f
+private const val RIPPLE_MAX_ACTIVE_WAVES = 3
+
+internal class NeighborRippleWave(
+    val sourceKey: Any,
+    val anchorIndex: Int,
+    val intensity: Float,
+    val durationNanos: Long,
+    val maxEffectiveDistance: Int,
+    var startNanos: Long = 0L
+)
 
 private class ItemReflowAnim(
     var currentOffsetPx: Float = 0f,
     var lastNaturalTopPx: Float? = null,
     var activeAnim: TargetBasedAnimation<Float, AnimationVector1D>? = null,
     var startNanos: Long = 0L
-)
-
-private data class MeasuredSlotItem(
-    val index: Int,
-    val key: Any,
-    val naturalTop: Float,
-    val height: Float,
-    val placeable: Placeable
-)
-
-private data class ComputedStackPlacement(
-    val placedTopY: Float,
-    val scale: Float,
-    val alpha: Float,
-    val zIndex: Float,
-    val depth: Float,
-    val transformOrigin: TransformOrigin,
-    val isTopStack: Boolean,
-    val isBottomStack: Boolean
 )
 
 @Stable
@@ -136,9 +141,19 @@ class StackedCardListState {
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
 
-    private val cachedHeightsPx = HashMap<Any, Int>()
     private val reflowAnims = HashMap<Any, ItemReflowAnim>()
     private val slotStates = HashMap<Any, StackedCardSlotState>()
+    internal val activeRippleWaves = ArrayList<NeighborRippleWave>(4)
+    internal var currentRippleFrameNanos: Long = 0L
+
+    internal var placeablesBuffer: Array<Placeable?> = arrayOfNulls(32)
+    internal var placedTopYsBuffer: FloatArray = FloatArray(32)
+    internal var scalesBuffer: FloatArray = FloatArray(32)
+    internal var alphasBuffer: FloatArray = FloatArray(32)
+    internal var zIndicesBuffer: FloatArray = FloatArray(32)
+    internal var originYsBuffer: FloatArray = FloatArray(32)
+    internal var depthsBuffer: FloatArray = FloatArray(32)
+    internal var visibleFlagsBuffer: BooleanArray = BooleanArray(32)
 
     internal var currentItemTops: FloatArray = FloatArray(0)
     internal var currentItemHeights: FloatArray = FloatArray(0)
@@ -154,6 +169,20 @@ class StackedCardListState {
 
     var placedItemsInfo: List<PlacedStackedItemInfo> = emptyList()
         internal set
+
+    internal fun ensureBufferCapacity(size: Int) {
+        if (placeablesBuffer.size < size) {
+            val nextSize = maxOf(size, placeablesBuffer.size * 2)
+            placeablesBuffer = arrayOfNulls(nextSize)
+            placedTopYsBuffer = FloatArray(nextSize)
+            scalesBuffer = FloatArray(nextSize)
+            alphasBuffer = FloatArray(nextSize)
+            zIndicesBuffer = FloatArray(nextSize)
+            originYsBuffer = FloatArray(nextSize)
+            depthsBuffer = FloatArray(nextSize)
+            visibleFlagsBuffer = BooleanArray(nextSize)
+        }
+    }
 
     val scrollOffsetPx: Float
         get() = scrollOffsetState.floatValue
@@ -285,22 +314,41 @@ class StackedCardListState {
         }
     }
 
+    fun triggerNeighborRipple(
+        sourceKey: Any,
+        intensity: Float = 1f,
+        isReducedMotion: Boolean = false
+    ) {
+        if (isReducedMotion) return
+        val anchorIndex = currentKeys.indexOf(sourceKey)
+        if (anchorIndex < 0) return
+        val maxSpan = maxOf(anchorIndex, (currentKeys.size - 1 - anchorIndex)).coerceAtLeast(0)
+        val maxEffectiveDistance = minOf(maxSpan, RIPPLE_MAX_EFFECTIVE_DISTANCE)
+        val durationNanos = if (intensity < 0.85f) {
+            RIPPLE_RENAME_DURATION_NANOS
+        } else {
+            RIPPLE_TOGGLE_DURATION_NANOS
+        }
+        if (activeRippleWaves.size >= RIPPLE_MAX_ACTIVE_WAVES) {
+            activeRippleWaves.removeAt(0)
+        }
+        activeRippleWaves.add(
+            NeighborRippleWave(
+                sourceKey = sourceKey,
+                anchorIndex = anchorIndex,
+                intensity = intensity.coerceIn(0.1f, 1.5f),
+                durationNanos = durationNanos,
+                maxEffectiveDistance = maxEffectiveDistance
+            )
+        )
+        reflowSignal.tryEmit(Unit)
+    }
+
     internal fun getSlotState(key: Any): StackedCardSlotState {
         return slotStates.getOrPut(key) { StackedCardSlotState() }
     }
 
-    internal fun getCachedHeight(key: Any): Int? = cachedHeightsPx[key]
-
     internal fun peekReflowOffset(key: Any): Float = reflowAnims[key]?.currentOffsetPx ?: 0f
-
-    internal fun updateCachedHeight(key: Any, heightPx: Int): Boolean {
-        val prev = cachedHeightsPx[key]
-        if (prev != heightPx) {
-            cachedHeightsPx[key] = heightPx
-            return prev != null
-        }
-        return false
-    }
 
     internal fun syncReflowOnMeasure(
         keys: List<Any>,
@@ -351,15 +399,10 @@ class StackedCardListState {
                 if (it.next() !in activeKeySet) it.remove()
             }
         }
-        if (cachedHeightsPx.size > activeKeySet.size + 16) {
-            val it = cachedHeightsPx.keys.iterator()
-            while (it.hasNext()) {
-                if (it.next() !in activeKeySet) it.remove()
-            }
-        }
     }
 
     internal fun hasActiveAnimations(): Boolean {
+        if (activeRippleWaves.isNotEmpty()) return true
         for (entry in reflowAnims.values) {
             if (entry.activeAnim != null) return true
         }
@@ -380,6 +423,23 @@ class StackedCardListState {
                 entry.startNanos = 0L
             } else {
                 entry.currentOffsetPx = anim.getValueFromNanos(elapsedNanos)
+            }
+            anyChanged = true
+        }
+        if (activeRippleWaves.isNotEmpty()) {
+            currentRippleFrameNanos = frameNanos
+            var idx = activeRippleWaves.lastIndex
+            while (idx >= 0) {
+                val wave = activeRippleWaves[idx]
+                if (wave.startNanos == 0L) {
+                    wave.startNanos = frameNanos
+                }
+                val elapsedNanos = (frameNanos - wave.startNanos).coerceAtLeast(0L)
+                val maxLifeNanos = wave.maxEffectiveDistance * RIPPLE_LAYER_DELAY_NANOS + wave.durationNanos
+                if (elapsedNanos >= maxLifeNanos) {
+                    activeRippleWaves.removeAt(idx)
+                }
+                idx--
             }
             anyChanged = true
         }
@@ -435,13 +495,7 @@ fun <T> BidirectionalStackedCardList(
     val peekStepPx = with(density) { peekStep.toPx() }
     val defaultCardHeightPx = with(density) { 62.dp.roundToPx() }
     val minExpandedHeightPx = with(density) { 78.dp.toPx() }
-    val bucketSizePx = with(density) { 160.dp.toPx() }.coerceAtLeast(1f)
-    val preMeasureBufferPx = with(density) { 360.dp.toPx() }
-
-    // 僅以較粗粒度追蹤捲動區段，確保鍵盤升降與一般滑動期間不觸發逐幀子組合重測
-    val scrollBucket by remember(state, bucketSizePx) {
-        derivedStateOf { (state.scrollOffsetState.floatValue / bucketSizePx).toInt() }
-    }
+    val maxRipplePushPx = with(density) { 6.dp.toPx() }
 
     Box(
         modifier = modifier
@@ -501,36 +555,42 @@ fun <T> BidirectionalStackedCardList(
                 flingBehavior = ScrollableDefaults.flingBehavior()
             )
     ) {
-        SubcomposeLayout(modifier = Modifier.fillMaxSize()) { constraints ->
-            // 【測量階段】：僅於清單資料改變、寬度改變或跨越 160.dp 捲動區段時執行子組合與測量
+        // 直接預組裝 Layout：徹底移除 SubcomposeLayout 在滑動與拖曳期間的子組合開銷
+        Layout(
+            modifier = Modifier.fillMaxSize(),
+            content = {
+                items.forEachIndexed { index, item ->
+                    val itemKey = key(item)
+                    key(itemKey) {
+                        val slotState = remember(itemKey) { state.getSlotState(itemKey) }
+                        itemContent(index, item, slotState)
+                    }
+                }
+            }
+        ) { measurables, constraints ->
             val itemsList = currentItems
             val keySelector = currentKeySelector
             val reducedMotion = currentReducedMotion
-            val bucket = scrollBucket
 
             val width = constraints.maxWidth
             val height = constraints.maxHeight
             val viewportH = height.toFloat()
             state.viewportHeightState.floatValue = viewportH
 
-            val count = itemsList.size
+            val count = minOf(measurables.size, itemsList.size)
             if (count == 0 || width <= 0 || height <= 0) {
                 state.maxScrollState.floatValue = 0f
                 state.scrollOffsetState.floatValue = 0f
                 state.placedItemsInfo = emptyList()
                 state.currentKeys = emptyList()
                 state.currentTotalLinearHeight = 0f
-                return@SubcomposeLayout layout(width, height) {}
+                return@Layout layout(width, height) {}
             }
 
+            state.ensureBufferCapacity(count)
+            val placeables = state.placeablesBuffer
             val keys = ArrayList<Any>(count)
-            val keySet = HashSet<Any>(count)
-            for (i in 0 until count) {
-                val k = keySelector(itemsList[i])
-                keys.add(k)
-                keySet.add(k)
-            }
-            state.pruneRemovedKeys(keySet)
+            val keySet = HashSet<Any>(count * 2)
 
             val itemWidth = (width - startPaddingPx - endPaddingPx).coerceAtLeast(1)
             val itemConstraints = Constraints(
@@ -540,64 +600,22 @@ fun <T> BidirectionalStackedCardList(
                 maxHeight = constraints.maxHeight
             )
 
-            // 1) 估算各項目內容位置並測量目前區段可視與緩衝範圍的卡片
-            val estTops = FloatArray(count)
-            val estHeights = FloatArray(count)
-            var cursorY = topPaddingPx
-            for (i in 0 until count) {
-                val h = (state.getCachedHeight(keys[i]) ?: defaultCardHeightPx).toFloat()
-                estTops[i] = cursorY
-                estHeights[i] = h
-                cursorY += h + gapPx
-            }
-
-            val bucketStart = bucket * bucketSizePx
-            val windowMinContentY = bucketStart - preMeasureBufferPx
-            val windowMaxContentY = bucketStart + bucketSizePx + viewportH + preMeasureBufferPx
-            val measuredPlaceables = HashMap<Any, Placeable>(24)
-
-            for (i in 0 until count) {
-                val k = keys[i]
-                val reflowHint = state.peekReflowOffset(k)
-                val itemTop = estTops[i] + reflowHint
-                val itemBottom = itemTop + estHeights[i]
-                if (itemBottom >= windowMinContentY && itemTop <= windowMaxContentY) {
-                    val slotState = state.getSlotState(k)
-                    val measurables = subcompose(k) {
-                        itemContent(i, itemsList[i], slotState)
-                    }
-                    if (measurables.isNotEmpty()) {
-                        val placeable = measurables[0].measure(itemConstraints)
-                        measuredPlaceables[k] = placeable
-                        state.updateCachedHeight(k, placeable.height)
-                    }
-                }
-            }
-
-            // 2) 以實測高度精算最終線性位置與同步補位彈簧狀態（不讀取動態 IME 或 Scroll 狀態）
             val finalTops = FloatArray(count)
             val finalHeights = FloatArray(count)
-            cursorY = topPaddingPx
-            val measuredSlotItems = ArrayList<MeasuredSlotItem>(measuredPlaceables.size)
+            var cursorY = topPaddingPx
+
             for (i in 0 until count) {
-                val k = keys[i]
-                val placeable = measuredPlaceables[k]
-                val h = (placeable?.height ?: state.getCachedHeight(k) ?: defaultCardHeightPx).toFloat()
+                val k = keySelector(itemsList[i])
+                keys.add(k)
+                keySet.add(k)
+                val p = measurables[i].measure(itemConstraints)
+                placeables[i] = p
+                val h = p.height.toFloat()
                 finalTops[i] = cursorY
                 finalHeights[i] = h
-                if (placeable != null) {
-                    measuredSlotItems.add(
-                        MeasuredSlotItem(
-                            index = i,
-                            key = k,
-                            naturalTop = cursorY,
-                            height = h,
-                            placeable = placeable
-                        )
-                    )
-                }
                 cursorY += h + gapPx
             }
+            state.pruneRemovedKeys(keySet)
 
             val totalLinearHeight = cursorY - gapPx + bottomPaddingPx
             state.syncReflowOnMeasure(
@@ -620,7 +638,7 @@ fun <T> BidirectionalStackedCardList(
             val effectiveStride = (avgStride - peekStepPx).coerceAtLeast(1f)
 
             layout(width, height) {
-                // 【放置與圖層階段】：於此處讀取滾動偏移、鍵盤高度、進度卡收摺比例及編緝鎖定項，達成零重測 60fps
+                // 【Placement 與圖層階段】：零配置陣列計算堆疊座標，捲動與鍵盤升降期間 0 重組、0 重測
                 @Suppress("UNUSED_VARIABLE")
                 val frameTick = state.animFrameNanos.longValue
 
@@ -665,14 +683,20 @@ fun <T> BidirectionalStackedCardList(
                 }
                 val bottomPinBottomY = effectiveBottomBound - bottomHeadroomPx
 
-                val placements = ArrayList<Pair<Placeable, ComputedStackPlacement>>(measuredSlotItems.size)
-                val newPlacedInfos = ArrayList<PlacedStackedItemInfo>(measuredSlotItems.size)
+                val placedTopYs = state.placedTopYsBuffer
+                val scales = state.scalesBuffer
+                val alphas = state.alphasBuffer
+                val zIndices = state.zIndicesBuffer
+                val originYs = state.originYsBuffer
+                val depths = state.depthsBuffer
+                val visibleFlags = state.visibleFlagsBuffer
+                val newPlacedInfos = ArrayList<PlacedStackedItemInfo>(count)
 
-                for (slot in measuredSlotItems) {
-                    val k = slot.key
-                    val h = slot.height
+                for (i in 0 until count) {
+                    val k = keys[i]
+                    val h = finalHeights[i]
                     val reflowOffsetPx = state.peekReflowOffset(k)
-                    val rawTop = topInsetPx + (slot.naturalTop + reflowOffsetPx) - clampedScroll
+                    val rawTop = topInsetPx + (finalTops[i] + reflowOffsetPx) - clampedScroll
                     val rawBottom = rawTop + h
                     val isPinnedExpanded = pinnedKey != null && k == pinnedKey
 
@@ -682,21 +706,17 @@ fun <T> BidirectionalStackedCardList(
                         val clampedY = rawTop.coerceIn(minY, maxY)
                         state.getSlotState(k).depthState.floatValue = 0f
 
-                        placements.add(
-                            slot.placeable to ComputedStackPlacement(
-                                placedTopY = clampedY,
-                                scale = 1f,
-                                alpha = 1f,
-                                zIndex = 20f,
-                                depth = 0f,
-                                transformOrigin = TransformOrigin(0.5f, 0.5f),
-                                isTopStack = false,
-                                isBottomStack = false
-                            )
-                        )
+                        placedTopYs[i] = clampedY
+                        scales[i] = 1f
+                        alphas[i] = 1f
+                        zIndices[i] = 20f
+                        originYs[i] = 0.5f
+                        depths[i] = 0f
+                        visibleFlags[i] = true
+
                         newPlacedInfos.add(
                             PlacedStackedItemInfo(
-                                index = slot.index,
+                                index = i,
                                 key = k,
                                 placedTopY = clampedY,
                                 heightPx = h,
@@ -728,6 +748,7 @@ fun <T> BidirectionalStackedCardList(
                     state.getSlotState(k).depthState.floatValue = depth
 
                     if (depth > FADE_OUT_DEPTH + 0.1f) {
+                        visibleFlags[i] = false
                         continue
                     }
 
@@ -745,24 +766,24 @@ fun <T> BidirectionalStackedCardList(
                     }
 
                     val placedTopY: Float
-                    val transformOrigin: TransformOrigin
+                    val originY: Float
 
                     if (isTopStack) {
                         val stackVisualDepth = depth.coerceAtMost(activeMaxDepth)
                         val extraFade = (depth - activeMaxDepth).coerceAtLeast(0f)
                         val tuckInPx = extraFade * (peekStepPx * 0.5f)
                         placedTopY = topPinY - peekStepPx * stackVisualDepth + tuckInPx
-                        transformOrigin = TransformOrigin(0.5f, 0f)
+                        originY = 0f
                     } else if (isBottomStack) {
                         val stackVisualDepth = depth.coerceAtMost(activeMaxDepth)
                         val extraFade = (depth - activeMaxDepth).coerceAtLeast(0f)
                         val tuckInPx = extraFade * (peekStepPx * 0.5f)
                         val placedBottomY = bottomPinBottomY + peekStepPx * stackVisualDepth - tuckInPx
                         placedTopY = placedBottomY - h
-                        transformOrigin = TransformOrigin(0.5f, 1f)
+                        originY = 1f
                     } else {
                         placedTopY = rawTop
-                        transformOrigin = TransformOrigin(0.5f, 0.5f)
+                        originY = 0.5f
                     }
 
                     val zIndex = if (depth <= 0f) {
@@ -771,21 +792,17 @@ fun <T> BidirectionalStackedCardList(
                         (10f - depth).coerceAtLeast(0f)
                     }
 
-                    placements.add(
-                        slot.placeable to ComputedStackPlacement(
-                            placedTopY = placedTopY,
-                            scale = scale,
-                            alpha = alpha,
-                            zIndex = zIndex,
-                            depth = depth,
-                            transformOrigin = transformOrigin,
-                            isTopStack = isTopStack,
-                            isBottomStack = isBottomStack
-                        )
-                    )
+                    placedTopYs[i] = placedTopY
+                    scales[i] = scale
+                    alphas[i] = alpha
+                    zIndices[i] = zIndex
+                    originYs[i] = originY
+                    depths[i] = depth
+                    visibleFlags[i] = true
+
                     newPlacedInfos.add(
                         PlacedStackedItemInfo(
-                            index = slot.index,
+                            index = i,
                             key = k,
                             placedTopY = placedTopY,
                             heightPx = h,
@@ -799,18 +816,86 @@ fun <T> BidirectionalStackedCardList(
 
                 state.placedItemsInfo = newPlacedInfos
 
-                for (entry in placements) {
-                    val placeable = entry.first
-                    val p = entry.second
+                val rippleWaves = state.activeRippleWaves
+                val hasActiveRipple = !reducedMotion && rippleWaves.isNotEmpty()
+                val rippleFrameNanos = state.currentRippleFrameNanos
+                val piF = PI.toFloat()
+
+                for (i in 0 until count) {
+                    if (!visibleFlags[i]) continue
+                    val placeable = placeables[i] ?: continue
+                    var rippleOffsetY = 0f
+                    var rippleScaleAdd = 0f
+                    if (hasActiveRipple) {
+                        val itemDepth = depths[i]
+                        val stackVisibility = (1f - (itemDepth / 2.5f)).coerceIn(0f, 1f)
+                        if (stackVisibility > 0.01f) {
+                            for (w in 0 until rippleWaves.size) {
+                                val wave = rippleWaves[w]
+                                val waveStart = wave.startNanos
+                                if (waveStart == 0L) continue
+                                val elapsedNanos = (rippleFrameNanos - waveStart).coerceAtLeast(0L)
+                                val currentSourceIdx = keys.indexOf(wave.sourceKey)
+                                val distance: Int
+                                val direction: Float
+                                if (currentSourceIdx >= 0) {
+                                    val diff = i - currentSourceIdx
+                                    if (diff == 0) {
+                                        distance = 0
+                                        direction = 0f
+                                    } else {
+                                        distance = abs(diff)
+                                        direction = if (diff < 0) -1f else 1f
+                                    }
+                                } else {
+                                    val virtualSourceIdx = (wave.anchorIndex - 0.5f)
+                                        .coerceIn(-0.5f, (count - 0.5f))
+                                    val diff = i.toFloat() - virtualSourceIdx
+                                    distance = ceil(abs(diff)).roundToInt().coerceAtLeast(1)
+                                    direction = if (diff < 0f) -1f else 1f
+                                }
+                                if (distance > RIPPLE_MAX_EFFECTIVE_DISTANCE) continue
+                                val localElapsedNanos = elapsedNanos - distance * RIPPLE_LAYER_DELAY_NANOS
+                                if (localElapsedNanos in 1L until wave.durationNanos) {
+                                    val u = (localElapsedNanos.toFloat() / wave.durationNanos.toFloat())
+                                        .coerceIn(0f, 1f)
+                                    val scaleEnv = (sin(u * piF) * (1f - u) * 1.74f).coerceIn(0f, 1f)
+                                    if (distance == 0) {
+                                        rippleScaleAdd += 0.012f * wave.intensity * stackVisibility * scaleEnv
+                                    } else {
+                                        val attenuation = exp(-RIPPLE_ATTENUATION_RATE * (distance - 1))
+                                        if (attenuation >= RIPPLE_MIN_ATTENUATION) {
+                                            val oneMinusU = 1f - u
+                                            val pushWave = sin(u * piF * 1.45f) * oneMinusU * oneMinusU * 2.01f
+                                            val weight = wave.intensity * attenuation * stackVisibility
+                                            rippleOffsetY += direction * maxRipplePushPx * weight * pushWave
+                                            rippleScaleAdd += 0.014f * weight * scaleEnv
+                                        }
+                                    }
+                                }
+                            }
+                            rippleOffsetY = rippleOffsetY.coerceIn(
+                                -maxRipplePushPx * 1.35f,
+                                maxRipplePushPx * 1.35f
+                            )
+                            rippleScaleAdd = rippleScaleAdd.coerceIn(0f, 0.028f)
+                        }
+                    }
+
+                    val topY = (placedTopYs[i] + rippleOffsetY).roundToInt()
+                    val sc = scales[i] * (1f + rippleScaleAdd)
+                    val al = alphas[i]
+                    val z = zIndices[i]
+                    val oy = originYs[i]
                     placeable.placeRelativeWithLayer(
                         x = startPaddingPx,
-                        y = p.placedTopY.roundToInt(),
-                        zIndex = p.zIndex
+                        y = topY,
+                        zIndex = z
                     ) {
-                        scaleX = p.scale
-                        scaleY = p.scale
-                        alpha = p.alpha
-                        this.transformOrigin = p.transformOrigin
+                        scaleX = sc
+                        scaleY = sc
+                        alpha = al
+                        transformOrigin = TransformOrigin(0.5f, oy)
                     }
                 }
             }
