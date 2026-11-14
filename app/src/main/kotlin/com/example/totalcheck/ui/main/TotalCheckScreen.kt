@@ -123,6 +123,7 @@ fun TotalCheckScreen(
 
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
+    val selectedChecklistId by viewModel.selectedChecklistId.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
     val themeConfig by viewModel.themeConfig.collectAsStateWithLifecycle()
     val isDarkMode = themeConfig?.isDarkMode ?: true
@@ -463,11 +464,20 @@ fun TotalCheckScreen(
                                 .padding(bottom = with(density) { quickBarBodyHeightHolder.value.toDp() })
                         )
                     } else {
-                            val pagerState = rememberPagerState(pageCount = { checklists.size })
+                            val requestedInitialId = pendingScrollToChecklistId ?: selectedChecklistId
+                            val initialPageIndex = requestedInitialId
+                                ?.let { id -> checklists.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
+                                ?: 0
+                            val pagerState = rememberPagerState(
+                                initialPage = initialPageIndex,
+                                pageCount = { checklists.size }
+                            )
                             val isReducedMotion = LocalReducedMotion.current
                             var distantTabTransition by remember { mutableStateOf<DistantTabTransition?>(null) }
                             var activeTabScrollJob by remember { mutableStateOf<Job?>(null) }
-                            var activeChecklistId by remember { mutableStateOf(checklists.firstOrNull()?.id) }
+                            var activeChecklistId by remember {
+                                mutableStateOf(checklists.getOrNull(initialPageIndex)?.id)
+                            }
                             val currentChecklistsInPager by rememberUpdatedState(checklists)
 
                             // 使用者手動拖曳 Pager 時立即取消遠距導航接管與編輯鎖定，保持 1:1 跟手控制

@@ -162,6 +162,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedChecklistId.value = checklistId
     }
 
+    fun selectAndScrollToChecklist(checklistId: Long) {
+        if (checklistId <= 0L) return
+        _selectedChecklistId.value = checklistId
+        _pendingScrollToChecklistId.value = checklistId
+    }
+
     fun createChecklist(name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
