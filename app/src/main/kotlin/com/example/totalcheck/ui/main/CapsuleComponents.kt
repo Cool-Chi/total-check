@@ -68,6 +68,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -77,6 +78,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -87,15 +89,15 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -119,7 +121,7 @@ import kotlin.math.roundToInt
 fun CapsuleProgressModule(
     uncheckedCount: Int,
     totalCount: Int,
-    animatedProgress: Float,
+    progressProvider: () -> Float,
     showUncheckedOnly: Boolean,
     onToggleUncheckedOnly: () -> Unit,
     onReset: () -> Unit,
@@ -145,15 +147,22 @@ fun CapsuleProgressModule(
     val completedCount = (totalCount - uncheckedCount).coerceAtLeast(0)
     var previousCompletedCount by remember { mutableIntStateOf(completedCount) }
     val badgePulse = remember { Animatable(1f) }
-    LaunchedEffect(completedCount, totalCount) {
-        if (!isReducedMotion && totalCount > 0 && completedCount != previousCompletedCount) {
-            badgePulse.snapTo(if (completedCount > previousCompletedCount) 1.18f else 0.90f)
-            badgePulse.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(dampingRatio = 0.4f, stiffness = 420f)
-            )
-        }
+    LaunchedEffect(completedCount, totalCount, isReducedMotion) {
+        val prev = previousCompletedCount
         previousCompletedCount = completedCount
+        if (isReducedMotion || totalCount <= 0) {
+            badgePulse.snapTo(1f)
+        } else {
+            if (completedCount != prev) {
+                badgePulse.snapTo(if (completedCount > prev) 1.18f else 0.90f)
+            }
+            if (badgePulse.value != 1f || badgePulse.targetValue != 1f) {
+                badgePulse.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(dampingRatio = 0.4f, stiffness = 420f)
+                )
+            }
+        }
     }
 
     Surface(
@@ -217,30 +226,48 @@ fun CapsuleProgressModule(
 
             val trackColor = colorScheme.surfaceContainerHighest
             val dividerColor = colorScheme.surfaceContainerHigh
+            val trackPath = remember { Path() }
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(14.dp)
                     .graphicsLayer {
-                        val over = (animatedProgress - 1f).coerceAtLeast(0f)
+                        val currentProgress = progressProvider()
+                        val over = (currentProgress - 1f).coerceAtLeast(0f)
                         scaleX = 1f + over * 0.08f
                         scaleY = 1f + over * 0.45f
                         transformOrigin = TransformOrigin(0.5f, 0.5f)
                     }
             ) {
+                val currentProgress = progressProvider()
                 val radius = size.height / 2f
                 val corner = CornerRadius(radius, radius)
+                trackPath.reset()
+                trackPath.addRoundRect(
+                    RoundRect(
+                        left = 0f,
+                        top = 0f,
+                        right = size.width,
+                        bottom = size.height,
+                        cornerRadius = corner
+                    )
+                )
                 drawRoundRect(
                     color = trackColor,
                     cornerRadius = corner
                 )
-                val fillWidth = (size.width * animatedProgress.coerceAtLeast(0.02f))
-                    .coerceIn(size.height, size.width)
-                drawRoundRect(
-                    color = accentColor,
-                    size = Size(fillWidth, size.height),
-                    cornerRadius = corner
-                )
+                val clampedProgress = currentProgress.coerceIn(0f, 1f)
+                if (clampedProgress > 0.002f) {
+                    val fillWidth = (size.width * clampedProgress).coerceIn(0f, size.width)
+                    clipPath(trackPath) {
+                        drawRoundRect(
+                            color = accentColor,
+                            topLeft = Offset(fillWidth - size.width, 0f),
+                            size = Size(size.width, size.height),
+                            cornerRadius = corner
+                        )
+                    }
+                }
                 if (totalCount in 2..20) {
                     val dividerWidth = 2.5.dp.toPx()
                     for (i in 1 until totalCount) {
@@ -335,7 +362,7 @@ fun CapsuleCheckItemRow(
     isEditing: Boolean = false,
     isFloatingDragged: Boolean = false,
     stackDepthProvider: () -> Float = { 0f },
-    isCompressedStackCard: Boolean = false,
+    isCompressedProvider: () -> Boolean = { false },
     onCompressedClick: (() -> Unit)? = null,
     resetWaveKey: Int = 0,
     resetDelayMs: Int? = null,
@@ -344,8 +371,6 @@ fun CapsuleCheckItemRow(
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
     onDelete: () -> Unit = {},
-    onDragCoordsUpdated: ((rowCoords: LayoutCoordinates, handleCoords: LayoutCoordinates) -> Unit)? = null,
-    onDragCoordsCleared: (() -> Unit)? = null,
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
     onMoveUp: (() -> Unit)? = null,
@@ -358,6 +383,7 @@ fun CapsuleCheckItemRow(
     val scope = rememberCoroutineScope()
     val isReducedMotion = LocalReducedMotion.current
     val currentOnToggle by rememberUpdatedState(onToggle)
+    val currentIsCompressedProvider by rememberUpdatedState(isCompressedProvider)
     val currentOnCompressedClick by rememberUpdatedState(onCompressedClick)
     val currentOnDelete by rememberUpdatedState(onDelete)
 
@@ -430,22 +456,24 @@ fun CapsuleCheckItemRow(
     }
 
     val targetCheckedProgress = if (visualChecked && !isEditing) 1f else 0f
-    if (checkedProgress.targetValue != targetCheckedProgress || checkedProgress.value != targetCheckedProgress) {
-        LaunchedEffect(targetCheckedProgress, isReducedMotion) {
-            if (isReducedMotion) {
-                checkedProgress.snapTo(targetCheckedProgress)
-            } else {
-                checkedProgress.animateTo(
-                    targetValue = targetCheckedProgress,
-                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
-                )
-            }
+    LaunchedEffect(targetCheckedProgress, isReducedMotion) {
+        if (isReducedMotion) {
+            checkedProgress.snapTo(targetCheckedProgress)
+        } else if (
+            checkedProgress.targetValue != targetCheckedProgress ||
+            checkedProgress.value != targetCheckedProgress
+        ) {
+            checkedProgress.animateTo(
+                targetValue = targetCheckedProgress,
+                animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
+            )
         }
     }
 
     // Hold-to-Delete Perimeter Ring (按住 150ms 後外圈 24dp 進度環於 1000ms 線性填滿刪除，中途放開/移出/取消於 300ms 內退回)
     var isPressed by remember(item.id) { mutableStateOf(false) }
     var isDeleting by remember(item.id) { mutableStateOf(false) }
+    var isCardFocused by remember(item.id) { mutableStateOf(false) }
     val holdRingProgress = remember(item.id) { Animatable(0f) }
     val deleteExitProgress = remember(item.id) { Animatable(0f) }
     var holdAnimJob by remember(item.id) { mutableStateOf<Job?>(null) }
@@ -463,19 +491,6 @@ fun CapsuleCheckItemRow(
     val progressSegmentPath = remember(item.id) { Path() }
     val pathMeasure = remember(item.id) { PathMeasure() }
     var cachedRingSize by remember(item.id) { mutableStateOf(Size.Zero) }
-    var rowLayoutCoords by remember(item.id) { mutableStateOf<LayoutCoordinates?>(null) }
-    var handleLayoutCoords by remember(item.id) { mutableStateOf<LayoutCoordinates?>(null) }
-
-    DisposableEffect(item.id, isEditing, isCompressedStackCard) {
-        if (isEditing || isCompressedStackCard) {
-            onDragCoordsCleared?.invoke()
-        }
-        onDispose {
-            if (isEditing || isCompressedStackCard) {
-                onDragCoordsCleared?.invoke()
-            }
-        }
-    }
 
     val triggerHoldDelete: () -> Unit = {
         if (!isDeleting) {
@@ -542,13 +557,6 @@ fun CapsuleCheckItemRow(
         modifier = modifier
             .fillMaxWidth()
             .testTag("check_item_card_${item.id}")
-            .onGloballyPositioned { coords ->
-                rowLayoutCoords = coords
-                val hCoords = handleLayoutCoords
-                if (!isCompressedStackCard && hCoords != null && coords.isAttached && hCoords.isAttached) {
-                    onDragCoordsUpdated?.invoke(coords, hCoords)
-                }
-            }
     ) {
         Box(
             modifier = Modifier
@@ -583,15 +591,20 @@ fun CapsuleCheckItemRow(
                     } else {
                         lerp(1.5f, 1f, t).dp.toPx()
                     }
-                    val baseBorderColor = if (ringProgress > 0.001f) {
-                        ringTrackBorderColor
+                    val baseBorderColor = when {
+                        ringProgress > 0.001f -> ringTrackBorderColor
+                        isCardFocused && !isEditing -> colorScheme.primary
+                        else -> lerpColor(uncheckedBorderColor, checkedBorderColor, t)
+                    }
+                    val effectiveBorderStrokePx = if (isCardFocused && !isEditing && ringProgress <= 0.001f) {
+                        2.dp.toPx()
                     } else {
-                        lerpColor(uncheckedBorderColor, checkedBorderColor, t)
+                        baseBorderStrokePx
                     }
                     drawRoundRect(
                         color = baseBorderColor,
                         cornerRadius = corner,
-                        style = Stroke(width = baseBorderStrokePx)
+                        style = Stroke(width = effectiveBorderStrokePx)
                     )
                     if (ringProgress > 0.001f && size.width > 0f && size.height > 0f) {
                         if (cachedRingSize != size) {
@@ -639,11 +652,48 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 }
-                .pointerInput(item.id, isEditing, isDeleting, isReducedMotion, isCompressedStackCard) {
+                .onFocusChanged { isCardFocused = it.isFocused }
+                .focusable(enabled = !isEditing && !isDeleting)
+                .onKeyEvent { event ->
+                    if (
+                        event.type == KeyEventType.KeyDown &&
+                        event.nativeKeyEvent.repeatCount == 0 &&
+                        !isEditing &&
+                        !isDeleting
+                    ) {
+                        when (event.key) {
+                            Key.Spacebar, Key.Enter, Key.NumPadEnter -> {
+                                if (currentIsCompressedProvider()) {
+                                    currentOnCompressedClick?.invoke()
+                                } else {
+                                    currentOnToggle()
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                .semantics {
+                    stateDescription = if (visualChecked) "已備" else "待備"
+                    if (!isEditing && !isDeleting) {
+                        onClick(label = if (visualChecked) "標記為待備" else "標記為已備") {
+                            if (currentIsCompressedProvider()) {
+                                currentOnCompressedClick?.invoke()
+                            } else {
+                                currentOnToggle()
+                            }
+                            true
+                        }
+                    }
+                }
+                .pointerInput(item.id, isEditing, isDeleting, isReducedMotion) {
                     if (isEditing || isDeleting) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = true)
-                        if (isCompressedStackCard) {
+                        if (currentIsCompressedProvider()) {
                             val touchSlop = viewConfiguration.touchSlop
                             while (true) {
                                 val event = awaitPointerEvent(pass = PointerEventPass.Final)
@@ -742,9 +792,12 @@ fun CapsuleCheckItemRow(
                             scaleX = 1f + extra * 0.5f
                             scaleY = 1f + extra
                         }
-                        .clip(RoundedCornerShape(50))
                         .drawBehind {
-                            drawRect(lerpColor(uncheckedIndicatorColor, checkedIndicatorColor, checkedProgress.value.coerceIn(0f, 1f)))
+                            val r = size.width / 2f
+                            drawRoundRect(
+                                color = lerpColor(uncheckedIndicatorColor, checkedIndicatorColor, checkedProgress.value.coerceIn(0f, 1f)),
+                                cornerRadius = CornerRadius(r, r)
+                            )
                         }
                 )
                 Spacer(modifier = Modifier.width(12.dp))
@@ -831,9 +884,12 @@ fun CapsuleCheckItemRow(
                                 scaleX = badgeScale
                                 scaleY = badgeScale
                             }
-                            .clip(RoundedCornerShape(50))
                             .drawBehind {
-                                drawRect(lerpColor(uncheckedBadgeBgColor, checkedBadgeBgColor, checkedProgress.value.coerceIn(0f, 1f)))
+                                val r = size.height / 2f
+                                drawRoundRect(
+                                    color = lerpColor(uncheckedBadgeBgColor, checkedBadgeBgColor, checkedProgress.value.coerceIn(0f, 1f)),
+                                    cornerRadius = CornerRadius(r, r)
+                                )
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -870,8 +926,8 @@ fun CapsuleCheckItemRow(
                     }
                     IconButton(
                         onClick = {
-                            if (isCompressedStackCard) {
-                                onCompressedClick?.invoke()
+                            if (currentIsCompressedProvider()) {
+                                currentOnCompressedClick?.invoke()
                             } else {
                                 onStartEdit()
                             }
@@ -895,14 +951,6 @@ fun CapsuleCheckItemRow(
                         modifier = Modifier
                             .size(34.dp)
                             .testTag("drag_handle_${item.id}")
-                            .onGloballyPositioned { coords ->
-                                handleLayoutCoords = coords
-                                val rCoords = rowLayoutCoords
-                                if (!isCompressedStackCard && rCoords != null && rCoords.isAttached && coords.isAttached) {
-                                    onDragCoordsUpdated?.invoke(rCoords, coords)
-                                }
-                            }
-                            .clip(RoundedCornerShape(10.dp))
                             .drawBehind {
                                 if (isHandleFocused) {
                                     val r = 10.dp.toPx()
@@ -916,7 +964,7 @@ fun CapsuleCheckItemRow(
                             .onFocusChanged { isHandleFocused = it.isFocused }
                             .focusable()
                             .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown) {
+                                if (event.type == KeyEventType.KeyDown && !currentIsCompressedProvider()) {
                                     when (event.key) {
                                         Key.DirectionUp -> {
                                             if (canMoveUp && onMoveUp != null) {

@@ -2,13 +2,10 @@ package com.example.totalcheck.ui.main
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.DragInteraction
@@ -30,19 +27,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.LightMode
@@ -83,16 +74,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -100,14 +86,12 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.totalcheck.data.local.CheckItemEntity
@@ -115,7 +99,6 @@ import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -172,17 +155,13 @@ fun TotalCheckScreen(
 
     val imeInsets = WindowInsets.ime
     val navBarInsets = WindowInsets.navigationBars
-    val imeThresholdPx = with(density) { 24.dp.roundToPx() }
-    val isImeVisible by remember(density, imeInsets, navBarInsets, imeThresholdPx) {
-        derivedStateOf {
-            imeInsets.getBottom(density) > navBarInsets.getBottom(density) + imeThresholdPx
-        }
-    }
+    val imeCollapseSpanPx = with(density) { 180.dp.toPx() }.coerceAtLeast(1f)
 
-    val shouldCollapseProgress = isImeVisible || editingItemId != null
-    val progressCollapseAnim = remember { Animatable(if (shouldCollapseProgress) 1f else 0f) }
-    LaunchedEffect(shouldCollapseProgress, isReducedMotionGlobal) {
-        val target = if (shouldCollapseProgress) 1f else 0f
+    // 僅於進入/離開單項編輯時以彈簧驅動進度卡收摺；一般鍵盤升降直接於 Placement 階段 1:1 讀取 imeInsets，達成 0 重組
+    val shouldForceCollapseProgress = editingItemId != null
+    val progressCollapseAnim = remember { Animatable(if (shouldForceCollapseProgress) 1f else 0f) }
+    LaunchedEffect(shouldForceCollapseProgress, isReducedMotionGlobal) {
+        val target = if (shouldForceCollapseProgress) 1f else 0f
         if (isReducedMotionGlobal) {
             progressCollapseAnim.snapTo(target)
         } else {
@@ -191,6 +170,13 @@ fun TotalCheckScreen(
                 animationSpec = spring(dampingRatio = 0.88f, stiffness = 360f, visibilityThreshold = 0.002f)
             )
         }
+    }
+
+    val progressCollapseFractionProvider: () -> Float = {
+        val imePx = imeInsets.getBottom(density).toFloat()
+        val navPx = navBarInsets.getBottom(density).toFloat()
+        val imeFraction = ((imePx - navPx) / imeCollapseSpanPx).coerceIn(0f, 1f)
+        maxOf(progressCollapseAnim.value.coerceIn(0f, 1f), imeFraction)
     }
 
     val shouldHideQuickInput = editingItemId != null
@@ -207,11 +193,11 @@ fun TotalCheckScreen(
         }
     }
 
-    var quickBarTotalHeightPx by remember { mutableFloatStateOf(0f) }
+    val quickBarHeightHolder = remember { FloatValueHolder(0f) }
     val bottomOverlayInsetPxProvider: () -> Float = {
         val imePx = imeInsets.getBottom(density).toFloat()
         val navPx = navBarInsets.getBottom(density).toFloat()
-        val bodyHeightPx = (quickBarTotalHeightPx - navPx).coerceAtLeast(0f)
+        val bodyHeightPx = (quickBarHeightHolder.value - navPx).coerceAtLeast(0f)
         val visibleQuickBarPx = bodyHeightPx * (1f - quickInputHideAnim.value.coerceIn(0f, 1f))
         maxOf(imePx, navPx) + visibleQuickBarPx
     }
@@ -267,7 +253,6 @@ fun TotalCheckScreen(
                             )
                         } else {
                             val pagerState = rememberPagerState(pageCount = { checklists.size })
-                            val tabListState = rememberLazyListState()
                             val isReducedMotion = LocalReducedMotion.current
                             var distantTabTransition by remember { mutableStateOf<DistantTabTransition?>(null) }
                             var activeTabScrollJob by remember { mutableStateOf<Job?>(null) }
@@ -346,14 +331,6 @@ fun TotalCheckScreen(
                                     .collect { targetIndex ->
                                         if (targetIndex in checklists.indices) {
                                             viewModel.selectChecklist(checklists[targetIndex].id)
-                                            val layoutInfo = tabListState.layoutInfo
-                                            val targetItemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
-                                            val isFullyVisible = targetItemInfo != null &&
-                                                targetItemInfo.offset >= layoutInfo.viewportStartOffset &&
-                                                (targetItemInfo.offset + targetItemInfo.size) <= layoutInfo.viewportEndOffset
-                                            if (!isFullyVisible) {
-                                                tabListState.animateScrollToItem(targetIndex)
-                                            }
                                         }
                                     }
                             }
@@ -379,12 +356,11 @@ fun TotalCheckScreen(
                             submitHolder.onSubmit = submitNewItem
 
                             Column(modifier = Modifier.fillMaxSize()) {
-                                CapsuleChecklistTabBar(
+                                ExpandingChecklistTabBar(
                                     checklists = checklists,
                                     itemsByChecklist = itemsByChecklist,
                                     pagerState = pagerState,
                                     distantTabTransition = distantTabTransition,
-                                    tabListState = tabListState,
                                     onSelectPage = navigateToPage,
                                     onLongPressTab = { checklist ->
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -410,37 +386,39 @@ fun TotalCheckScreen(
                                         val stackedListState = remember(checklist.id) { StackedCardListState() }
                                         val totalCount = items.size
                                         val uncheckedCount = items.count { !it.isChecked }
-                                        val targetProgress = if (totalCount == 0) 1f else (totalCount - uncheckedCount).toFloat() / totalCount
+                                        val targetProgress = if (totalCount == 0) 0f else (totalCount - uncheckedCount).toFloat() / totalCount
                                         val progressAnimatable = remember(checklist.id) { Animatable(targetProgress) }
-                                        var previousTargetProgress by remember(checklist.id) { mutableFloatStateOf(targetProgress) }
                                         var resetWave by remember(checklist.id) { mutableStateOf(ResetWaveState()) }
 
                                         LaunchedEffect(targetProgress, isReducedMotion) {
                                             if (isReducedMotion) {
                                                 progressAnimatable.snapTo(targetProgress)
-                                            } else if (targetProgress > previousTargetProgress) {
-                                                progressAnimatable.animateTo(
-                                                    targetValue = targetProgress,
-                                                    initialVelocity = 1.6f,
-                                                    animationSpec = spring(
-                                                        dampingRatio = 0.38f,
-                                                        stiffness = 240f,
-                                                        visibilityThreshold = 0.0005f
+                                            } else if (
+                                                abs(progressAnimatable.targetValue - targetProgress) > 0.0001f ||
+                                                abs(progressAnimatable.value - targetProgress) > 0.0005f
+                                            ) {
+                                                if (targetProgress > progressAnimatable.value) {
+                                                    progressAnimatable.animateTo(
+                                                        targetValue = targetProgress,
+                                                        initialVelocity = 1.6f,
+                                                        animationSpec = spring(
+                                                            dampingRatio = 0.38f,
+                                                            stiffness = 240f,
+                                                            visibilityThreshold = 0.0005f
+                                                        )
                                                     )
-                                                )
-                                            } else if (targetProgress < previousTargetProgress) {
-                                                progressAnimatable.animateTo(
-                                                    targetValue = targetProgress,
-                                                    animationSpec = spring(
-                                                        dampingRatio = 0.45f,
-                                                        stiffness = 260f,
-                                                        visibilityThreshold = 0.0005f
+                                                } else {
+                                                    progressAnimatable.animateTo(
+                                                        targetValue = targetProgress,
+                                                        animationSpec = spring(
+                                                            dampingRatio = 0.45f,
+                                                            stiffness = 260f,
+                                                            visibilityThreshold = 0.0005f
+                                                        )
                                                     )
-                                                )
+                                                }
                                             }
-                                            previousTargetProgress = targetProgress
                                         }
-                                        val animatedProgress = progressAnimatable.value
                                         val visibleItems = remember(items, showUncheckedOnly) {
                                             if (showUncheckedOnly) {
                                                 items.filter { !it.isChecked }
@@ -461,52 +439,32 @@ fun TotalCheckScreen(
                                             previousFirstId = currentFirstId
                                         }
 
-                                        // 進入單項原地編輯時，立即平滑置中於鍵盤上方可視區並跟隨鍵盤實測高度微調
+                                        // 進入單項原地編輯時，單次平滑置中於鍵盤上方可視區（搭配 Placement 階段 pinnedExpandedKey 即時邊界保護）
                                         LaunchedEffect(editingItemId) {
                                             val targetEditId = editingItemId ?: return@LaunchedEffect
                                             if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
 
                                             val minExpectedImePx = with(density) { 280.dp.toPx() }
-                                            val initialBottomInset = maxOf(
+                                            val targetBottomInset = maxOf(
                                                 imeInsets.getBottom(density).toFloat(),
                                                 navBarInsets.getBottom(density).toFloat() + minExpectedImePx
                                             )
                                             stackedListState.scrollToCenterItem(
                                                 key = targetEditId,
                                                 targetTopInsetPx = 0f,
-                                                targetBottomInsetPx = initialBottomInset,
+                                                targetBottomInsetPx = targetBottomInset,
                                                 animated = !isReducedMotion
                                             )
                                         }
 
-                                        LaunchedEffect(editingItemId, checklist.id) {
-                                            val targetEditId = editingItemId ?: return@LaunchedEffect
-                                            if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
-                                            val openThreshold = navBarInsets.getBottom(density) + with(density) { 48.dp.roundToPx() }
-                                            snapshotFlow { imeInsets.getBottom(density) }
-                                                .distinctUntilChanged()
-                                                .collectLatest { imePx ->
-                                                    if (imePx > openThreshold) {
-                                                        delay(50L)
-                                                        stackedListState.scrollToCenterItem(
-                                                            key = targetEditId,
-                                                            targetTopInsetPx = 0f,
-                                                            targetBottomInsetPx = imePx.toFloat(),
-                                                            animated = !isReducedMotion
-                                                        )
-                                                    }
-                                                }
-                                        }
-
-                                        var progressCardHeightPx by remember(checklist.id) {
-                                            mutableFloatStateOf(with(density) { 142.dp.toPx() })
+                                        val progressCardHeightHolder = remember(checklist.id) {
+                                            FloatValueHolder(with(density) { 142.dp.toPx() })
                                         }
                                         val topOverlayInsetPxProvider: () -> Float = {
-                                            progressCardHeightPx * (1f - progressCollapseAnim.value.coerceIn(0f, 1f))
+                                            progressCardHeightHolder.value * (1f - progressCollapseFractionProvider())
                                         }
 
-                                        val itemCoordsMap = remember(checklist.id) { mutableMapOf<Long, ItemDragCoords>() }
-                                        var containerCoords by remember(checklist.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                                        var containerWidthPx by remember(checklist.id) { mutableFloatStateOf(0f) }
                                         var containerHeightPx by remember(checklist.id) { mutableFloatStateOf(0f) }
                                         var draggedItemId by remember(checklist.id) { mutableStateOf<Long?>(null) }
                                         var workingItems by remember(checklist.id) { mutableStateOf<List<CheckItemEntity>>(emptyList()) }
@@ -643,7 +601,7 @@ fun TotalCheckScreen(
                                                 CapsuleProgressModule(
                                                     uncheckedCount = uncheckedCount,
                                                     totalCount = totalCount,
-                                                    animatedProgress = animatedProgress,
+                                                    progressProvider = { progressAnimatable.value },
                                                     showUncheckedOnly = showUncheckedOnly,
                                                     onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
                                                     onReset = {
@@ -681,51 +639,49 @@ fun TotalCheckScreen(
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .onGloballyPositioned { coords ->
-                                                            containerCoords = coords
-                                                            containerHeightPx = coords.size.height.toFloat()
+                                                        .onSizeChanged { size ->
+                                                            containerWidthPx = size.width.toFloat()
+                                                            containerHeightPx = size.height.toFloat()
                                                         }
                                                         .pointerInput(checklist.id) {
+                                                            val handleRightInsetPx = with(density) { 14.dp.toPx() }
+                                                            val handleLeftInsetPx = with(density) { 64.dp.toPx() }
                                                             awaitEachGesture {
                                                                 val down = awaitFirstDown(
                                                                     requireUnconsumed = true,
                                                                     pass = PointerEventPass.Initial
                                                                 )
                                                                 if (draggedItemId != null || isSettlingDrop) return@awaitEachGesture
-                                                                val cCoords = containerCoords ?: return@awaitEachGesture
-                                                                if (!cCoords.isAttached) return@awaitEachGesture
+                                                                val widthPx = containerWidthPx
+                                                                if (widthPx <= 0f) return@awaitEachGesture
+
+                                                                // O(1) X 軸快速篩除：非右側六點拖曳手把區域直接略過，完全不影響一般點擊或捲動
+                                                                val handleLeftX = widthPx - handleLeftInsetPx
+                                                                val handleRightX = widthPx - handleRightInsetPx
+                                                                if (down.position.x !in handleLeftX..handleRightX) return@awaitEachGesture
 
                                                                 val itemsNow = currentVisibleItemsState.value
                                                                 if (itemsNow.isEmpty()) return@awaitEachGesture
 
-                                                                val downRoot = cCoords.localToRoot(down.position)
-                                                                val horizPadLeft = with(density) { 4.dp.toPx() }
-                                                                val horizPadRight = with(density) { 10.dp.toPx() }
-                                                                var hitItemId: Long? = null
-                                                                var hitCoords: ItemDragCoords? = null
-
-                                                                for (candidate in itemsNow) {
-                                                                    if (stackedListState.getSlotState(candidate.id).isCompressed) continue
-                                                                    val coords = itemCoordsMap[candidate.id] ?: continue
-                                                                    if (!coords.handleCoords.isAttached || !coords.rowCoords.isAttached) continue
-                                                                    val hBounds = coords.handleCoords.boundsInRoot()
-                                                                    val rBounds = coords.rowCoords.boundsInRoot()
-                                                                    if (downRoot.x in (hBounds.left - horizPadLeft)..(hBounds.right + horizPadRight) &&
-                                                                        downRoot.y in rBounds.top..rBounds.bottom
-                                                                    ) {
-                                                                        hitItemId = candidate.id
-                                                                        hitCoords = coords
+                                                                var hitInfo: PlacedStackedItemInfo? = null
+                                                                for (info in stackedListState.placedItemsInfo) {
+                                                                    if (info.isCompressed) continue
+                                                                    val itemId = info.key as? Long ?: continue
+                                                                    if (editingItemId == itemId) continue
+                                                                    if (down.position.y in info.visualTopY..info.visualBottomY) {
+                                                                        hitInfo = info
                                                                         break
                                                                     }
                                                                 }
 
-                                                                if (hitItemId == null || hitCoords == null) return@awaitEachGesture
+                                                                val matchedInfo = hitInfo ?: return@awaitEachGesture
+                                                                val hitItemId = matchedInfo.key as? Long ?: return@awaitEachGesture
 
                                                                 // 命中右側六點拖曳手把：立即消費事件並開啟零延遲拖曳
                                                                 down.consume()
 
-                                                                val rowTopInContainer = cCoords.localPositionOf(hitCoords.rowCoords, Offset.Zero).y
-                                                                val rowHeightPx = hitCoords.rowCoords.size.height.toFloat().coerceAtLeast(1f)
+                                                                val rowTopInContainer = matchedInfo.placedTopY
+                                                                val rowHeightPx = matchedInfo.heightPx.coerceAtLeast(1f)
                                                                 val grabOffsetY = down.position.y - rowTopInContainer
                                                                 val minOverlayY = topOverlayInsetPxProvider().coerceAtLeast(0f)
                                                                 val maxOverlayY = (containerHeightPx - bottomOverlayInsetPxProvider() - rowHeightPx)
@@ -809,7 +765,6 @@ fun TotalCheckScreen(
                                                         peekStep = 8.dp,
                                                         modifier = Modifier.fillMaxSize()
                                                     ) { index, item, slotState ->
-                                                        val isCompressed = slotState.isCompressed
                                                         if (draggedItemId == item.id) {
                                                             val slotHeightDp = with(density) { draggedItemHeightPx.toDp() }
                                                                 .coerceAtLeast(52.dp)
@@ -820,10 +775,15 @@ fun TotalCheckScreen(
                                                                 onToggle = {
                                                                     viewModel.toggleItemChecked(item)
                                                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    stackedListState.triggerNeighborRipple(
+                                                                        sourceKey = item.id,
+                                                                        intensity = 1f,
+                                                                        isReducedMotion = isReducedMotion
+                                                                    )
                                                                 },
                                                                 isEditing = editingItemId == item.id,
                                                                 stackDepthProvider = { slotState.depthState.floatValue },
-                                                                isCompressedStackCard = isCompressed,
+                                                                isCompressedProvider = { slotState.isCompressed },
                                                                 onCompressedClick = {
                                                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                                     scope.launch {
@@ -843,6 +803,12 @@ fun TotalCheckScreen(
                                                                 onConfirmEdit = { newLabel ->
                                                                     viewModel.renameItem(item.id, newLabel)
                                                                     editingItemId = null
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    stackedListState.triggerNeighborRipple(
+                                                                        sourceKey = item.id,
+                                                                        intensity = 0.65f,
+                                                                        isReducedMotion = isReducedMotion
+                                                                    )
                                                                 },
                                                                 onCancelEdit = {
                                                                     editingItemId = null
@@ -865,34 +831,29 @@ fun TotalCheckScreen(
                                                                         }
                                                                     }
                                                                 },
-                                                                onDragCoordsUpdated = { rowCoords, handleCoords ->
-                                                                    itemCoordsMap[item.id] = ItemDragCoords(
-                                                                        rowCoords = rowCoords,
-                                                                        handleCoords = handleCoords
-                                                                    )
-                                                                },
-                                                                onDragCoordsCleared = {
-                                                                    itemCoordsMap.remove(item.id)
-                                                                },
-                                                                canMoveUp = index > 0 && draggedItemId == null && !isCompressed,
-                                                                canMoveDown = index < displayedItems.lastIndex && draggedItemId == null && !isCompressed,
+                                                                canMoveUp = index > 0 && draggedItemId == null,
+                                                                canMoveDown = index < displayedItems.lastIndex && draggedItemId == null,
                                                                 onMoveUp = {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                    viewModel.moveItemByStep(
-                                                                        checklistId = checklist.id,
-                                                                        itemId = item.id,
-                                                                        delta = -1,
-                                                                        showUncheckedOnly = showUncheckedOnly
-                                                                    )
+                                                                    if (!slotState.isCompressed) {
+                                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                        viewModel.moveItemByStep(
+                                                                            checklistId = checklist.id,
+                                                                            itemId = item.id,
+                                                                            delta = -1,
+                                                                            showUncheckedOnly = showUncheckedOnly
+                                                                        )
+                                                                    }
                                                                 },
                                                                 onMoveDown = {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                    viewModel.moveItemByStep(
-                                                                        checklistId = checklist.id,
-                                                                        itemId = item.id,
-                                                                        delta = 1,
-                                                                        showUncheckedOnly = showUncheckedOnly
-                                                                    )
+                                                                    if (!slotState.isCompressed) {
+                                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                        viewModel.moveItemByStep(
+                                                                            checklistId = checklist.id,
+                                                                            itemId = item.id,
+                                                                            delta = 1,
+                                                                            showUncheckedOnly = showUncheckedOnly
+                                                                        )
+                                                                    }
                                                                 }
                                                             )
                                                         }
@@ -926,12 +887,12 @@ fun TotalCheckScreen(
                                             val progressPlaceable = pageMeasurables[0].measure(
                                                 pageConstraints.copy(minHeight = 0)
                                             )
-                                            progressCardHeightPx = progressPlaceable.height.toFloat()
+                                            progressCardHeightHolder.value = progressPlaceable.height.toFloat()
                                             val listBoxPlaceable = pageMeasurables[1].measure(pageConstraints)
 
                                             layout(pageConstraints.maxWidth, pageConstraints.maxHeight) {
                                                 listBoxPlaceable.placeRelative(0, 0)
-                                                val collapse = progressCollapseAnim.value.coerceIn(0f, 1f)
+                                                val collapse = progressCollapseFractionProvider()
                                                 val yOffset = if (collapse >= 0.99f) {
                                                     -progressPlaceable.height - 200
                                                 } else {
@@ -974,7 +935,7 @@ fun TotalCheckScreen(
                 val quickBarPlaceable = outerMeasurables[0].measure(
                     outerConstraints.copy(minHeight = 0)
                 )
-                quickBarTotalHeightPx = quickBarPlaceable.height.toFloat()
+                quickBarHeightHolder.value = quickBarPlaceable.height.toFloat()
 
                 val isLoadingState = isStartupLoading || checklists.isEmpty()
                 val contentConstraints = if (isLoadingState) {
@@ -1030,128 +991,6 @@ fun TotalCheckScreen(
                 actionTargetChecklist = null
             }
         )
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun CapsuleChecklistTabBar(
-    checklists: List<ChecklistEntity>,
-    itemsByChecklist: Map<Long, List<CheckItemEntity>>,
-    pagerState: PagerState,
-    distantTabTransition: DistantTabTransition?,
-    tabListState: androidx.compose.foundation.lazy.LazyListState,
-    onSelectPage: (Int) -> Unit,
-    onLongPressTab: (ChecklistEntity) -> Unit,
-    onAddChecklist: () -> Unit
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val currentDistant by rememberUpdatedState(distantTabTransition)
-    val labelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        LazyRow(
-            state = tabListState,
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            itemsIndexed(items = checklists, key = { _, item -> item.id }) { index, checklist ->
-                val currentIndex by rememberUpdatedState(index)
-                val unchecked = itemsByChecklist[checklist.id].orEmpty().count { !it.isChecked }
-                val unselectedContainerColor = colorScheme.surfaceContainerHigh
-                val selectedContainerColor = colorScheme.primaryContainer
-                val unselectedBorderColor = colorScheme.outlineVariant
-                val selectedBorderColor = colorScheme.primary
-                val unselectedLabelColor = colorScheme.onSurfaceVariant
-                val selectedLabelColor = colorScheme.onPrimaryContainer
-
-                val selectionFraction: () -> Float = {
-                    val distant = currentDistant
-                    if (distant != null) {
-                        val p = distant.progress.value.coerceIn(0f, 1f)
-                        when (currentIndex) {
-                            distant.toPage -> p
-                            distant.fromPage -> 1f - p
-                            else -> 0f
-                        }
-                    } else {
-                        val pagePos = pagerState.currentPage + pagerState.currentPageOffsetFraction
-                        (1f - abs(pagePos - currentIndex)).coerceIn(0f, 1f)
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .semantics {
-                            selected = (currentDistant?.toPage ?: pagerState.currentPage) == currentIndex
-                        }
-                        .clip(RoundedCornerShape(50))
-                        .drawBehind {
-                            val t = selectionFraction()
-                            val radius = size.height / 2f
-                            val corner = CornerRadius(radius, radius)
-                            drawRoundRect(
-                                color = lerpColor(unselectedContainerColor, selectedContainerColor, t),
-                                cornerRadius = corner
-                            )
-                            drawRoundRect(
-                                color = lerpColor(unselectedBorderColor, selectedBorderColor, t),
-                                cornerRadius = corner,
-                                style = Stroke(width = 1.dp.toPx())
-                            )
-                        }
-                        .combinedClickable(
-                            onClick = { onSelectPage(currentIndex) },
-                            onLongClick = { onLongPressTab(checklist) }
-                        )
-                ) {
-                    BasicText(
-                        text = if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name,
-                        style = labelStyle,
-                        color = {
-                            lerpColor(
-                                unselectedLabelColor,
-                                selectedLabelColor,
-                                selectionFraction()
-                            )
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, colorScheme.outlineVariant)
-        ) {
-            FilledTonalIconButton(
-                onClick = onAddChecklist,
-                modifier = Modifier.size(42.dp),
-                shape = RoundedCornerShape(50),
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = colorScheme.surfaceContainerHigh,
-                    contentColor = colorScheme.primary
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = "新增清單",
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
     }
 }
 
@@ -1469,14 +1308,5 @@ private data class ResetWaveState(
     val triggeredAtUptimeMs: Long = 0L
 )
 
-private class DistantTabTransition(
-    val fromPage: Int,
-    val toPage: Int,
-    val progress: Animatable<Float, AnimationVector1D> = Animatable(0f)
-)
-
-private data class ItemDragCoords(
-    val rowCoords: LayoutCoordinates,
-    val handleCoords: LayoutCoordinates
-)
+private class FloatValueHolder(var value: Float)
 
