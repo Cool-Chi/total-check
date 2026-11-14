@@ -21,8 +21,8 @@ android {
     applicationId = "com.example.totalcheck"
     minSdk = 26
     targetSdk = 36
-    versionCode = 2
-    versionName = "0.12.1-preview"
+    versionCode = 3
+    versionName = "0.13.0"
   }
 
   val rootDebugKeystore = rootProject.file("debug.keystore")
@@ -121,6 +121,10 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   ksp(libs.androidx.room.compiler)
   implementation(libs.androidx.datastore.preferences)
+
+  // Jetpack Glance AppWidget
+  implementation(libs.androidx.glance.appwidget)
+  implementation(libs.androidx.glance.material3)
 
   // Navigation
   implementation(libs.androidx.navigation3.ui)
