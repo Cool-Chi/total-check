@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -40,11 +41,28 @@ interface ChecklistDao {
     @Update
     suspend fun updateChecklist(checklist: ChecklistEntity)
 
+    @Update
+    suspend fun updateChecklists(checklists: List<ChecklistEntity>)
+
     @Query("DELETE FROM checklists WHERE id = :id")
     suspend fun deleteChecklist(id: Long)
 
+    @Query("SELECT * FROM check_items WHERE checklistId = :checklistId ORDER BY sortOrder ASC, id DESC")
+    suspend fun getItemsByChecklist(checklistId: Long): List<CheckItemEntity>
+
     @Delete
     suspend fun deleteChecklist(checklist: ChecklistEntity)
+
+    @Transaction
+    suspend fun restoreChecklistWithItems(
+        checklist: ChecklistEntity,
+        items: List<CheckItemEntity>
+    ) {
+        insertChecklist(checklist)
+        if (items.isNotEmpty()) {
+            insertItems(items)
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItem(item: CheckItemEntity): Long

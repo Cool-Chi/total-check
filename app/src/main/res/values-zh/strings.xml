@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TotalCheck</string>
+    <string name="header_brand_title">隨身清點板</string>
+
+    <!-- Header Actions -->
+    <string name="cd_disable_dynamic_color">關閉動態取色</string>
+    <string name="cd_enable_dynamic_color">開啟動態取色</string>
+    <string name="cd_switch_to_light_mode">切換為亮色模式</string>
+    <string name="cd_switch_to_dark_mode">切換為暗色模式</string>
+
+    <!-- Tab Bar -->
+    <string name="cd_add_checklist">新增清單</string>
+    <string name="a11y_tab_empty">%1$s，目前沒有項目</string>
+    <string name="a11y_tab_counts">%1$s，尚缺 %2$d 項，共 %3$d 項</string>
+    <string name="a11y_move_left">向左移動</string>
+    <string name="a11y_move_right">向右移動</string>
+
+    <!-- Progress Module -->
+    <string name="progress_all_set">已備齊</string>
+    <string name="progress_left_count">尚缺 %1$d</string>
+    <string name="progress_total_count">/ 共 %1$d 項</string>
+    <string name="action_reset_all">一鍵重置</string>
+    <string name="filter_unchecked_only">只看未帶</string>
+    <string name="cd_rename_checklist">更改清單名稱</string>
+    <string name="cd_delete_checklist">刪除清單</string>
+    <string name="cd_delete_checklist_disabled">至少須保留一個清單，無法刪除</string>
+
+    <!-- Check Item Row -->
+    <string name="status_checked">已備</string>
+    <string name="status_unchecked">待備</string>
+    <string name="a11y_mark_unchecked">標記為待備</string>
+    <string name="a11y_mark_checked">標記為已備</string>
+    <string name="cd_save_name">儲存名稱</string>
+    <string name="cd_cancel_edit">取消編輯</string>
+    <string name="cd_edit_item_name">編輯項目名稱</string>
+    <string name="cd_drag_reorder_item">拖曳排序「%1$s」</string>
+    <string name="a11y_move_up">上移一格</string>
+    <string name="a11y_move_down">下移一格</string>
+
+    <!-- Snackbars -->
+    <string name="snackbar_reset_checklist">已重置「%1$s」所有項目</string>
+    <string name="snackbar_deleted_item">已刪除「%1$s」</string>
+    <string name="snackbar_deleted_checklist">已刪除「%1$s」清單</string>
+    <string name="action_undo">復原</string>
+
+    <!-- Dialogs & Quick Input -->
+    <string name="dialog_create_checklist_title">新增清點清單</string>
+    <string name="dialog_create_checklist_placeholder">例如：露營裝備</string>
+    <string name="action_create">建立</string>
+    <string name="action_cancel">取消</string>
+    <string name="dialog_rename_checklist_title">更改清單名稱</string>
+    <string name="dialog_checklist_name_label">清單名稱</string>
+    <string name="dialog_delete_checklist_title">刪除清單</string>
+    <string name="dialog_delete_checklist_message">確定要刪除「%1$s」嗎？此清單內的 %2$d 個項目也會一併移除。</string>
+    <string name="dialog_delete_checklist_empty_message">確定要刪除「%1$s」嗎？</string>
+    <string name="action_delete">刪除</string>
+    <string name="action_save">儲存</string>
+    <string name="quick_add_placeholder">快速新增清點項目...</string>
+    <string name="cd_add_item">新增項目</string>
+
+    <!-- Skeleton -->
+    <string name="skeleton_loading_state">正在載入清單資料</string>
+    <string name="skeleton_sample_left">尚缺 4</string>
+    <string name="skeleton_sample_total">/ 共 6 項</string>
+
+    <!-- Initial Seed Data -->
+    <string name="seed_checklist_carry_on">隨身包</string>
+    <string name="seed_checklist_lab">實驗室</string>
+    <string name="seed_checklist_travel">返鄉行李</string>
+
+    <string-array name="seed_items_carry_on">
+        <item>鑰匙與門禁卡</item>
+        <item>行動電源 (10000mAh)</item>
+        <item>Type-C 充電線</item>
+        <item>抗噪耳機</item>
+        <item>錢包與悠遊卡</item>
+        <item>摺疊傘</item>
+    </string-array>
+
+    <string-array name="seed_items_lab">
+        <item>筆記型電腦</item>
+        <item>實驗紀錄本</item>
+        <item>防靜電手環</item>
+        <item>USB-C 擴充塢</item>
+        <item>識別證</item>
+        <item>白袍</item>
+    </string-array>
+
+    <string-array name="seed_items_travel">
+        <item>換洗衣物 (3 天份)</item>
+        <item>筆電充電器</item>
+        <item>個人盥洗包</item>
+        <item>高鐵車票 / 證件</item>
+        <item>備用眼鏡</item>
+        <item>常備藥品</item>
+    </string-array>
+</resources>

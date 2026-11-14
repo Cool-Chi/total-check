@@ -1,3 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TotalCheck</string>
+    <string name="header_brand_title">TotalCheck</string>
+
+    <!-- Header Actions -->
+    <string name="cd_disable_dynamic_color">Disable dynamic color</string>
+    <string name="cd_enable_dynamic_color">Enable dynamic color</string>
+    <string name="cd_switch_to_light_mode">Switch to light mode</string>
+    <string name="cd_switch_to_dark_mode">Switch to dark mode</string>
+
+    <!-- Tab Bar -->
+    <string name="cd_add_checklist">Add checklist</string>
+    <string name="a11y_tab_empty">%1$s, no items yet</string>
+    <string name="a11y_tab_counts">%1$s, %2$d left, %3$d total</string>
+    <string name="a11y_move_left">Move left</string>
+    <string name="a11y_move_right">Move right</string>
+
+    <!-- Progress Module -->
+    <string name="progress_all_set">All set</string>
+    <string name="progress_left_count">%1$d left</string>
+    <string name="progress_total_count">/ %1$d total</string>
+    <string name="action_reset_all">Reset</string>
+    <string name="filter_unchecked_only">Unchecked</string>
+    <string name="cd_rename_checklist">Rename checklist</string>
+    <string name="cd_delete_checklist">Delete checklist</string>
+    <string name="cd_delete_checklist_disabled">Keep at least 1 checklist</string>
+
+    <!-- Check Item Row -->
+    <string name="status_checked">Ready</string>
+    <string name="status_unchecked">Need</string>
+    <string name="a11y_mark_unchecked">Mark as needed</string>
+    <string name="a11y_mark_checked">Mark as ready</string>
+    <string name="cd_save_name">Save name</string>
+    <string name="cd_cancel_edit">Cancel edit</string>
+    <string name="cd_edit_item_name">Edit item name</string>
+    <string name="cd_drag_reorder_item">Drag to reorder \"%1$s\"</string>
+    <string name="a11y_move_up">Move up</string>
+    <string name="a11y_move_down">Move down</string>
+
+    <!-- Snackbars -->
+    <string name="snackbar_reset_checklist">Reset \"%1$s\"</string>
+    <string name="snackbar_deleted_item">Deleted \"%1$s\"</string>
+    <string name="snackbar_deleted_checklist">Deleted \"%1$s\"</string>
+    <string name="action_undo">Undo</string>
+
+    <!-- Dialogs & Quick Input -->
+    <string name="dialog_create_checklist_title">New Checklist</string>
+    <string name="dialog_create_checklist_placeholder">e.g. Camping Gear</string>
+    <string name="action_create">Create</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="dialog_rename_checklist_title">Rename Checklist</string>
+    <string name="dialog_checklist_name_label">List Name</string>
+    <string name="dialog_delete_checklist_title">Delete Checklist</string>
+    <string name="dialog_delete_checklist_message">Delete \"%1$s\"? All %2$d items in this list will also be removed.</string>
+    <string name="dialog_delete_checklist_empty_message">Delete \"%1$s\"?</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_save">Save</string>
+    <string name="quick_add_placeholder">Quick add item...</string>
+    <string name="cd_add_item">Add item</string>
+
+    <!-- Skeleton -->
+    <string name="skeleton_loading_state">Loading checklists</string>
+    <string name="skeleton_sample_left">4 left</string>
+    <string name="skeleton_sample_total">/ 6 total</string>
+
+    <!-- Initial Seed Data -->
+    <string name="seed_checklist_carry_on">Carry-On</string>
+    <string name="seed_checklist_lab">Lab</string>
+    <string name="seed_checklist_travel">Trip Pack</string>
+
+    <string-array name="seed_items_carry_on">
+        <item>Keys &amp; Access Card</item>
+        <item>Power Bank (10000mAh)</item>
+        <item>USB-C Cable</item>
+        <item>ANC Earbuds</item>
+        <item>Wallet &amp; Transit Card</item>
+        <item>Compact Umbrella</item>
+    </string-array>
+
+    <string-array name="seed_items_lab">
+        <item>Laptop</item>
+        <item>Lab Notebook</item>
+        <item>ESD Wrist Strap</item>
+        <item>USB-C Hub</item>
+        <item>ID Badge</item>
+        <item>Lab Coat</item>
+    </string-array>
+
+    <string-array name="seed_items_travel">
+        <item>3-Day Clothes</item>
+        <item>Laptop Charger</item>
+        <item>Toiletry Kit</item>
+        <item>Train Ticket &amp; ID</item>
+        <item>Spare Glasses</item>
+        <item>Daily Meds</item>
+    </string-array>
 </resources>

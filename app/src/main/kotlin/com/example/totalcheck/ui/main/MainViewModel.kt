@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -29,21 +31,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ChecklistRepository(application, database.checklistDao())
     private val preferencesRepository = UserPreferencesRepository(application)
 
-    val checklists: StateFlow<List<ChecklistEntity>> = repository.observeAllChecklists()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList()
-        )
+    private val reorderMutex = Mutex()
+    private val _latestDbChecklists = MutableStateFlow<List<ChecklistEntity>>(emptyList())
+    private val _optimisticChecklistOrder = MutableStateFlow<List<Long>?>(null)
 
-    val itemsByChecklist: StateFlow<Map<Long, List<CheckItemEntity>>> =
-        repository.observeAllItems()
-            .map { items -> items.groupBy { it.checklistId } }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = emptyMap()
-            )
+    val checklists: StateFlow<List<ChecklistEntity>> = combine(
+        _latestDbChecklists,
+        _optimisticChecklistOrder
+    ) { dbList, optimisticOrder ->
+        if (optimisticOrder == null || dbList.isEmpty()) {
+            dbList
+        } else {
+            val dbIds = dbList.map { it.id }
+            if (dbIds == optimisticOrder || dbIds.toSet() != optimisticOrder.toSet()) {
+                dbList
+            } else {
+                val byId = dbList.associateBy { it.id }
+                optimisticOrder.mapNotNull { byId[it] }
+            }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
+
+    private val _optimisticItemLabels = MutableStateFlow<Map<Long, String>>(emptyMap())
+
+    val itemsByChecklist: StateFlow<Map<Long, List<CheckItemEntity>>> = combine(
+        repository.observeAllItems(),
+        _optimisticItemLabels
+    ) { items, optimisticLabels ->
+        val merged = if (optimisticLabels.isEmpty()) {
+            items
+        } else {
+            val staleKeys = mutableListOf<Long>()
+            val mapped = items.map { item ->
+                val overrideLabel = optimisticLabels[item.id]
+                if (overrideLabel != null) {
+                    if (item.label == overrideLabel) {
+                        staleKeys.add(item.id)
+                        item
+                    } else {
+                        item.copy(label = overrideLabel)
+                    }
+                } else {
+                    item
+                }
+            }
+            if (staleKeys.isNotEmpty()) {
+                _optimisticItemLabels.value = _optimisticItemLabels.value - staleKeys.toSet()
+            }
+            mapped
+        }
+        merged.groupBy { it.checklistId }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyMap()
+    )
 
     private val _selectedChecklistId = MutableStateFlow<Long?>(null)
     val selectedChecklistId: StateFlow<Long?> = _selectedChecklistId.asStateFlow()
@@ -78,6 +124,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val startupBeginMs = SystemClock.uptimeMillis()
+        viewModelScope.launch {
+            repository.observeAllChecklists().collect { dbList ->
+                _latestDbChecklists.value = dbList
+                val opt = _optimisticChecklistOrder.value
+                if (opt != null) {
+                    val dbIds = dbList.map { it.id }
+                    if (dbIds == opt || dbIds.toSet() != opt.toSet()) {
+                        _optimisticChecklistOrder.compareAndSet(opt, null)
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             preferencesRepository.themeConfig.collect { config ->
                 _themeConfig.value = config
@@ -120,16 +178,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun renameChecklist(id: Long, newName: String) {
         val trimmed = newName.trim()
         if (trimmed.isEmpty()) return
+        _latestDbChecklists.value = _latestDbChecklists.value.map {
+            if (it.id == id) it.copy(name = trimmed) else it
+        }
         viewModelScope.launch {
             repository.renameChecklist(id = id, newName = trimmed)
         }
     }
 
-    fun deleteChecklist(id: Long) {
+    fun deleteChecklist(
+        checklist: ChecklistEntity,
+        onDeleted: (ChecklistEntity, List<CheckItemEntity>) -> Unit = { _, _ -> }
+    ) {
         if (checklists.value.size <= 1) return
         viewModelScope.launch {
-            repository.deleteChecklist(id)
+            val itemsSnapshot = repository.deleteChecklistWithSnapshot(checklist)
+            onDeleted(checklist, itemsSnapshot)
         }
+    }
+
+    fun restoreChecklist(checklist: ChecklistEntity, items: List<CheckItemEntity>) {
+        viewModelScope.launch {
+            repository.restoreChecklistWithItems(checklist, items)
+            _pendingScrollToChecklistId.value = checklist.id
+        }
+    }
+
+    fun reorderChecklists(orderedIds: List<Long>) {
+        val current = checklists.value
+        if (current.size <= 1 || orderedIds.isEmpty()) return
+        if (orderedIds.toSet() != current.map { it.id }.toSet()) return
+        _optimisticChecklistOrder.value = orderedIds
+        viewModelScope.launch {
+            reorderMutex.withLock {
+                val latestOrder = _optimisticChecklistOrder.value ?: orderedIds
+                val freshDb = repository.observeAllChecklists().first()
+                repository.reorderChecklists(
+                    orderedIds = latestOrder,
+                    currentChecklists = freshDb
+                )
+            }
+        }
+    }
+
+    fun moveChecklistByStep(checklistId: Long, delta: Int) {
+        val current = checklists.value
+        val fromIdx = current.indexOfFirst { it.id == checklistId }
+        if (fromIdx < 0) return
+        val toIdx = (fromIdx + delta).coerceIn(0, current.lastIndex)
+        if (toIdx == fromIdx) return
+        val mutableIds = current.map { it.id }.toMutableList()
+        val moved = mutableIds.removeAt(fromIdx)
+        mutableIds.add(toIdx, moved)
+        reorderChecklists(mutableIds)
     }
 
     fun toggleDarkMode() {
@@ -171,6 +272,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun renameItem(itemId: Long, newLabel: String) {
         val trimmed = newLabel.trim()
         if (trimmed.isEmpty()) return
+        _optimisticItemLabels.value = _optimisticItemLabels.value + (itemId to trimmed)
         viewModelScope.launch {
             repository.updateItemLabel(itemId = itemId, newLabel = trimmed)
         }

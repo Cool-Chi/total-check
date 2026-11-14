@@ -1,6 +1,7 @@
 package com.example.totalcheck.data.repository
 
 import android.content.Context
+import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistDao
 import com.example.totalcheck.data.local.ChecklistEntity
@@ -45,6 +46,37 @@ class ChecklistRepository(
     suspend fun deleteChecklist(checklist: ChecklistEntity) {
         dao.deleteChecklist(checklist)
         WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    suspend fun deleteChecklistWithSnapshot(checklist: ChecklistEntity): List<CheckItemEntity> {
+        val itemsSnapshot = dao.getItemsByChecklist(checklist.id)
+        dao.deleteChecklist(checklist.id)
+        WidgetSyncManager.notifyDataChanged(appContext)
+        return itemsSnapshot
+    }
+
+    suspend fun restoreChecklistWithItems(
+        checklist: ChecklistEntity,
+        items: List<CheckItemEntity>
+    ) {
+        dao.restoreChecklistWithItems(checklist = checklist, items = items)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    suspend fun reorderChecklists(
+        orderedIds: List<Long>,
+        currentChecklists: List<ChecklistEntity>
+    ) {
+        if (orderedIds.isEmpty() || currentChecklists.isEmpty()) return
+        val byId = currentChecklists.associateBy { it.id }
+        val updated = orderedIds.mapIndexedNotNull { index, id ->
+            val entity = byId[id] ?: return@mapIndexedNotNull null
+            if (entity.sortOrder != index) entity.copy(sortOrder = index) else null
+        }
+        if (updated.isNotEmpty()) {
+            dao.updateChecklists(updated)
+            WidgetSyncManager.notifyDataChanged(appContext)
+        }
     }
 
     suspend fun addItem(checklistId: Long, label: String): Long {
@@ -118,33 +150,28 @@ class ChecklistRepository(
     suspend fun seedInitialDataIfNeeded() {
         if (dao.getChecklistCount() > 0) return
 
-        val carryOnId = dao.insertChecklist(ChecklistEntity(name = "隨身包", sortOrder = 0))
-        val labId = dao.insertChecklist(ChecklistEntity(name = "實驗室", sortOrder = 1))
-        val travelId = dao.insertChecklist(ChecklistEntity(name = "返鄉行李", sortOrder = 2))
-
-        val initialItems = listOf(
-            CheckItemEntity(checklistId = carryOnId, label = "鑰匙與門禁卡", isChecked = false, sortOrder = 0),
-            CheckItemEntity(checklistId = carryOnId, label = "行動電源 (10000mAh)", isChecked = false, sortOrder = 1),
-            CheckItemEntity(checklistId = carryOnId, label = "Type-C 充電線", isChecked = false, sortOrder = 2),
-            CheckItemEntity(checklistId = carryOnId, label = "抗噪耳機", isChecked = false, sortOrder = 3),
-            CheckItemEntity(checklistId = carryOnId, label = "錢包與悠遊卡", isChecked = true, sortOrder = 4),
-            CheckItemEntity(checklistId = carryOnId, label = "摺疊傘", isChecked = true, sortOrder = 5),
-
-            CheckItemEntity(checklistId = labId, label = "筆記型電腦", isChecked = false, sortOrder = 0),
-            CheckItemEntity(checklistId = labId, label = "實驗紀錄本", isChecked = false, sortOrder = 1),
-            CheckItemEntity(checklistId = labId, label = "防靜電手環", isChecked = false, sortOrder = 2),
-            CheckItemEntity(checklistId = labId, label = "USB-C 擴充塢", isChecked = false, sortOrder = 3),
-            CheckItemEntity(checklistId = labId, label = "識別證", isChecked = true, sortOrder = 4),
-            CheckItemEntity(checklistId = labId, label = "白袍", isChecked = true, sortOrder = 5),
-
-            CheckItemEntity(checklistId = travelId, label = "換洗衣物 (3 天份)", isChecked = false, sortOrder = 0),
-            CheckItemEntity(checklistId = travelId, label = "筆電充電器", isChecked = false, sortOrder = 1),
-            CheckItemEntity(checklistId = travelId, label = "個人盥洗包", isChecked = false, sortOrder = 2),
-            CheckItemEntity(checklistId = travelId, label = "高鐵車票 / 證件", isChecked = false, sortOrder = 3),
-            CheckItemEntity(checklistId = travelId, label = "備用眼鏡", isChecked = true, sortOrder = 4),
-            CheckItemEntity(checklistId = travelId, label = "常備藥品", isChecked = true, sortOrder = 5),
+        val res = appContext.resources
+        val carryOnId = dao.insertChecklist(
+            ChecklistEntity(name = appContext.getString(R.string.seed_checklist_carry_on), sortOrder = 0)
         )
-        dao.insertItems(initialItems)
+        val labId = dao.insertChecklist(
+            ChecklistEntity(name = appContext.getString(R.string.seed_checklist_lab), sortOrder = 1)
+        )
+        val travelId = dao.insertChecklist(
+            ChecklistEntity(name = appContext.getString(R.string.seed_checklist_travel), sortOrder = 2)
+        )
+
+        val carryOnItems = res.getStringArray(R.array.seed_items_carry_on).mapIndexed { idx, label ->
+            CheckItemEntity(checklistId = carryOnId, label = label, isChecked = idx >= 4, sortOrder = idx)
+        }
+        val labItems = res.getStringArray(R.array.seed_items_lab).mapIndexed { idx, label ->
+            CheckItemEntity(checklistId = labId, label = label, isChecked = idx >= 4, sortOrder = idx)
+        }
+        val travelItems = res.getStringArray(R.array.seed_items_travel).mapIndexed { idx, label ->
+            CheckItemEntity(checklistId = travelId, label = label, isChecked = idx >= 4, sortOrder = idx)
+        }
+
+        dao.insertItems(carryOnItems + labItems + travelItems)
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 }
