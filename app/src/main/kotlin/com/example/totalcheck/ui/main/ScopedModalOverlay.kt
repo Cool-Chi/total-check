@@ -1,0 +1,702 @@
+package com.example.totalcheck.ui.main
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
+import androidx.compose.ui.zIndex
+import com.example.totalcheck.R
+import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.ui.theme.LocalReducedMotion
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlin.math.hypot
+
+private val MODAL_ENTRANCE_EASING = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
+private const val MODAL_SCRIM_ENTER_MS = 200
+private const val MODAL_PANEL_ENTER_MS = 250
+private const val MODAL_EXIT_MS = 150
+private const val MODAL_START_SCALE = 0.92f
+private const val MODAL_SCRIM_MAX_ALPHA = 0.48f
+private val MODAL_TRANSLATE_Y = 20.dp
+
+@Immutable
+internal sealed interface ChecklistModalContent {
+    data object CreateChecklist : ChecklistModalContent
+    data class RenameChecklist(val checklist: ChecklistEntity) : ChecklistModalContent
+    data class DeleteChecklistConfirm(
+        val checklist: ChecklistEntity,
+        val itemCount: Int
+    ) : ChecklistModalContent
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ScopedModalHost(
+    modalContent: ChecklistModalContent?,
+    isOpen: Boolean,
+    sessionKey: Int,
+    onRequestClose: (restoreFocus: Boolean) -> Unit,
+    onConfirmCreate: (String) -> Unit,
+    onConfirmRename: (ChecklistEntity, String) -> Unit,
+    onConfirmDelete: (ChecklistEntity) -> Unit,
+    onExited: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val navBarInsets = WindowInsets.navigationBars
+    val isImeVisible = WindowInsets.isImeVisible
+    val isImeVisibleState = rememberUpdatedState(isImeVisible)
+
+    // 跨會話記憶裝置軟鍵盤實測高度，使輸入型彈窗開啟第一幀即精準停駐於鍵盤上方最終位置，完全不產生二次上移位移
+    val defaultImeExtraPx = with(density) { 300.dp.toPx() }
+    var rememberedImeExtraPx by remember { mutableFloatStateOf(defaultImeExtraPx) }
+    LaunchedEffect(density) {
+        val minKeyboardPx = with(density) { 120.dp.toPx() }
+        snapshotFlow {
+            (imeInsets.getBottom(density) - navBarInsets.getBottom(density)).toFloat()
+        }.collectLatest { imeExtra ->
+            if (imeExtra > minKeyboardPx) {
+                delay(180L)
+                rememberedImeExtraPx = imeExtra
+            }
+        }
+    }
+
+    if (modalContent == null) return
+
+    val colorScheme = MaterialTheme.colorScheme
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val isReducedMotion = LocalReducedMotion.current
+    val translateYPx = with(density) { MODAL_TRANSLATE_Y.toPx() }
+
+    val isTextInputModal = modalContent is ChecklistModalContent.CreateChecklist ||
+        modalContent is ChecklistModalContent.RenameChecklist
+    var expectImeForModal by remember(sessionKey) { mutableStateOf(isTextInputModal) }
+    val currentImeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density))
+        .coerceAtLeast(0)
+        .toFloat()
+    val sessionAnchorImePx = remember(sessionKey) {
+        if (isTextInputModal) {
+            maxOf(rememberedImeExtraPx, currentImeExtraPx)
+        } else {
+            0f
+        }
+    }
+    val modalImeLiftAnim = remember(sessionKey) { Animatable(sessionAnchorImePx) }
+
+    val scrimProgress = remember { Animatable(0f) }
+    val panelProgress = remember { Animatable(0f) }
+
+    val primaryFocus = remember(sessionKey) { FocusRequester() }
+    val cancelFocus = remember(sessionKey) { FocusRequester() }
+    val confirmFocus = remember(sessionKey) { FocusRequester() }
+
+    LaunchedEffect(isOpen, sessionKey, isReducedMotion) {
+        if (isOpen) {
+            if (modalContent is ChecklistModalContent.DeleteChecklistConfirm) {
+                runCatching { cancelFocus.requestFocus() }
+            }
+            // 輸入型彈窗於首幀立即同步請求焦點與喚起軟鍵盤，與遮罩及面板入場動效同時展開
+            if (isTextInputModal) {
+                expectImeForModal = true
+                runCatching {
+                    primaryFocus.requestFocus()
+                    keyboardController?.show()
+                }
+            }
+            if (isReducedMotion) {
+                scrimProgress.snapTo(1f)
+                panelProgress.snapTo(1f)
+            } else {
+                coroutineScope {
+                    launch {
+                        scrimProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(
+                                durationMillis = MODAL_SCRIM_ENTER_MS,
+                                easing = LinearEasing
+                            )
+                        )
+                    }
+                    launch {
+                        panelProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(
+                                durationMillis = MODAL_PANEL_ENTER_MS,
+                                easing = MODAL_ENTRANCE_EASING
+                            )
+                        )
+                    }
+                }
+            }
+        } else {
+            keyboardController?.hide()
+            if (isReducedMotion) {
+                scrimProgress.snapTo(0f)
+                panelProgress.snapTo(0f)
+            } else {
+                coroutineScope {
+                    launch {
+                        scrimProgress.animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(
+                                durationMillis = MODAL_EXIT_MS,
+                                easing = LinearEasing
+                            )
+                        )
+                    }
+                    launch {
+                        panelProgress.animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(
+                                durationMillis = MODAL_EXIT_MS,
+                                easing = MODAL_ENTRANCE_EASING
+                            )
+                        )
+                    }
+                }
+            }
+            onExited()
+        }
+    }
+
+    // 追蹤鍵盤於當前彈窗會話中的實際展開與退場：若使用者以系統操作直接收起鍵盤，即刻解除上方鎖定並平滑歸位
+    LaunchedEffect(isOpen, sessionKey, isTextInputModal) {
+        if (!isOpen || !isTextInputModal) return@LaunchedEffect
+        var hasSeenImeOpen = false
+        var peakImeExtraPx = 0f
+        val openThresholdPx = with(density) { 40.dp.toPx() }
+        val dropTriggerPx = with(density) { 12.dp.toPx() }
+
+        snapshotFlow {
+            val imeExtra = (imeInsets.getBottom(density) - navBarInsets.getBottom(density))
+                .coerceAtLeast(0)
+                .toFloat()
+            imeExtra to isImeVisibleState.value
+        }.collect { (imeExtra, imeVisible) ->
+            if (imeExtra > openThresholdPx && imeVisible) {
+                hasSeenImeOpen = true
+                if (imeExtra > peakImeExtraPx) {
+                    peakImeExtraPx = imeExtra
+                }
+            } else if (hasSeenImeOpen && (!imeVisible || imeExtra < peakImeExtraPx - dropTriggerPx)) {
+                hasSeenImeOpen = false
+                peakImeExtraPx = 0f
+                if (expectImeForModal) {
+                    expectImeForModal = false
+                    focusManager.clearFocus()
+                }
+            }
+        }
+    }
+
+    // 協調輸入型彈窗垂直落點：開啟時鎖定於鍵盤上方零位移展開；收起鍵盤時平滑回落至畫面正中央
+    LaunchedEffect(isOpen, expectImeForModal, isReducedMotion, sessionKey) {
+        if (!isOpen || !isTextInputModal) return@LaunchedEffect
+        if (expectImeForModal) {
+            val targetLift = maxOf(
+                sessionAnchorImePx,
+                rememberedImeExtraPx,
+                (imeInsets.getBottom(density) - navBarInsets.getBottom(density))
+                    .coerceAtLeast(0)
+                    .toFloat()
+            )
+            if (modalImeLiftAnim.value < targetLift - 1f) {
+                if (isReducedMotion) {
+                    modalImeLiftAnim.snapTo(targetLift)
+                } else {
+                    modalImeLiftAnim.animateTo(
+                        targetValue = targetLift,
+                        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                    )
+                }
+            }
+        } else {
+            if (isReducedMotion) {
+                modalImeLiftAnim.snapTo(0f)
+            } else {
+                modalImeLiftAnim.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                )
+            }
+        }
+    }
+
+    BackHandler(enabled = isOpen) {
+        val imeExtraPx = (imeInsets.getBottom(density) - navBarInsets.getBottom(density)).coerceAtLeast(0)
+        if (imeExtraPx > with(density) { 24.dp.roundToPx() } || isImeVisibleState.value) {
+            expectImeForModal = false
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        } else {
+            onRequestClose(true)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .zIndex(50f)
+    ) {
+        // 局部遮罩層：200ms 線性淡入 / 150ms 線性淡出，攔截背景觸控與翻頁
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("modal_scrim")
+                .graphicsLayer {
+                    alpha = scrimProgress.value.coerceIn(0f, 1f)
+                }
+                .drawBehind {
+                    drawRect(color = Color.Black.copy(alpha = MODAL_SCRIM_MAX_ALPHA))
+                }
+                .pointerInput(isOpen) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val slop = viewConfiguration.touchSlop
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            if (!change.pressed) {
+                                val dist = hypot(
+                                    change.position.x - down.position.x,
+                                    change.position.y - down.position.y
+                                )
+                                if (isOpen && dist <= slop) {
+                                    onRequestClose(true)
+                                }
+                                break
+                            }
+                        }
+                    }
+                }
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .graphicsLayer {
+                    translationY = -modalImeLiftAnim.value * 0.5f
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            when (modalContent) {
+                is ChecklistModalContent.CreateChecklist -> {
+                    var name by remember(sessionKey) { mutableStateOf("") }
+                    val confirmEnabled = name.isNotBlank()
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = true,
+                        confirmEnabled = confirmEnabled,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = { onRequestClose(true) }
+                    ) { onFocusIndexChanged ->
+                        Text(
+                            text = stringResource(R.string.dialog_create_checklist_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(primaryFocus)
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        onFocusIndexChanged(0)
+                                        expectImeForModal = true
+                                    }
+                                },
+                            placeholder = {
+                                Text(stringResource(R.string.dialog_create_checklist_placeholder))
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (isOpen && name.isNotBlank()) onConfirmCreate(name)
+                                }
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        ModalActionRow(
+                            cancelFocus = cancelFocus,
+                            confirmFocus = confirmFocus,
+                            confirmLabel = stringResource(R.string.action_create),
+                            confirmEnabled = confirmEnabled,
+                            isDestructive = false,
+                            onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                            onCancel = { if (isOpen) onRequestClose(true) },
+                            onConfirm = { if (isOpen) onConfirmCreate(name) }
+                        )
+                    }
+                }
+
+                is ChecklistModalContent.RenameChecklist -> {
+                    var nameInput by remember(sessionKey) {
+                        mutableStateOf(
+                            TextFieldValue(
+                                text = modalContent.checklist.name,
+                                selection = TextRange(modalContent.checklist.name.length)
+                            )
+                        )
+                    }
+                    val confirmEnabled = nameInput.text.isNotBlank()
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = true,
+                        confirmEnabled = confirmEnabled,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = { onRequestClose(true) }
+                    ) { onFocusIndexChanged ->
+                        Text(
+                            text = stringResource(R.string.dialog_rename_checklist_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = nameInput,
+                            onValueChange = { nameInput = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(primaryFocus)
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        onFocusIndexChanged(0)
+                                        expectImeForModal = true
+                                    }
+                                },
+                            label = { Text(stringResource(R.string.dialog_checklist_name_label)) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (isOpen && nameInput.text.isNotBlank()) {
+                                        onConfirmRename(modalContent.checklist, nameInput.text)
+                                    }
+                                }
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        ModalActionRow(
+                            cancelFocus = cancelFocus,
+                            confirmFocus = confirmFocus,
+                            confirmLabel = stringResource(R.string.action_save),
+                            confirmEnabled = confirmEnabled,
+                            isDestructive = false,
+                            onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                            onCancel = { if (isOpen) onRequestClose(true) },
+                            onConfirm = { if (isOpen) onConfirmRename(modalContent.checklist, nameInput.text) }
+                        )
+                    }
+                }
+
+                is ChecklistModalContent.DeleteChecklistConfirm -> {
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = false,
+                        confirmEnabled = true,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = { onRequestClose(true) }
+                    ) { onFocusIndexChanged ->
+                        Text(
+                            text = stringResource(R.string.dialog_delete_checklist_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = if (modalContent.itemCount > 0) {
+                                stringResource(
+                                    R.string.dialog_delete_checklist_message,
+                                    modalContent.checklist.name,
+                                    modalContent.itemCount
+                                )
+                            } else {
+                                stringResource(
+                                    R.string.dialog_delete_checklist_empty_message,
+                                    modalContent.checklist.name
+                                )
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        ModalActionRow(
+                            cancelFocus = cancelFocus,
+                            confirmFocus = confirmFocus,
+                            confirmLabel = stringResource(R.string.action_delete),
+                            confirmEnabled = true,
+                            isDestructive = true,
+                            onFocusIndexChanged = onFocusIndexChanged,
+                            onCancel = { if (isOpen) onRequestClose(true) },
+                            onConfirm = { if (isOpen) onConfirmDelete(modalContent.checklist) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModalPanelContainer(
+    panelProgressProvider: () -> Float,
+    translateYPx: Float,
+    isReducedMotion: Boolean,
+    hasTextInput: Boolean,
+    confirmEnabled: Boolean,
+    primaryFocus: FocusRequester,
+    cancelFocus: FocusRequester,
+    confirmFocus: FocusRequester,
+    onDismissRequest: () -> Unit,
+    content: @Composable (onFocusIndexChanged: (Int) -> Unit) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var focusedCycleIndex by remember { mutableIntStateOf(0) }
+
+    val focusCycle = remember(hasTextInput, confirmEnabled, primaryFocus, cancelFocus, confirmFocus) {
+        buildList {
+            if (hasTextInput) add(0 to primaryFocus)
+            val cancelIdx = if (hasTextInput) 1 else 0
+            add(cancelIdx to cancelFocus)
+            if (confirmEnabled) {
+                add((cancelIdx + 1) to confirmFocus)
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier
+            .widthIn(min = 280.dp, max = 400.dp)
+            .fillMaxWidth()
+            .testTag("modal_panel")
+            .graphicsLayer {
+                val p = panelProgressProvider().coerceIn(0f, 1f)
+                alpha = p
+                if (!isReducedMotion) {
+                    val sc = lerp(MODAL_START_SCALE, 1f, p)
+                    scaleX = sc
+                    scaleY = sc
+                    translationY = lerp(translateYPx, 0f, p)
+                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                }
+            }
+            .pointerInput(Unit) {
+                // 避免點擊面板內非互動空白區域穿透至背後遮罩
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                }
+            }
+            .focusGroup()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.Escape -> {
+                        onDismissRequest()
+                        true
+                    }
+                    Key.Tab -> {
+                        if (focusCycle.isNotEmpty()) {
+                            val currentPos = focusCycle.indexOfFirst { it.first == focusedCycleIndex }
+                            val nextPos = if (event.isShiftPressed) {
+                                if (currentPos <= 0) focusCycle.lastIndex else currentPos - 1
+                            } else {
+                                if (currentPos < 0 || currentPos >= focusCycle.lastIndex) 0 else currentPos + 1
+                            }
+                            runCatching { focusCycle[nextPos].second.requestFocus() }
+                        }
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        if (hasTextInput && focusedCycleIndex == 0) {
+                            runCatching { cancelFocus.requestFocus() }
+                        }
+                        true
+                    }
+                    Key.DirectionUp -> {
+                        if (hasTextInput && focusedCycleIndex > 0) {
+                            runCatching { primaryFocus.requestFocus() }
+                        }
+                        true
+                    }
+                    Key.DirectionLeft -> {
+                        if (hasTextInput && focusedCycleIndex == 0) {
+                            false
+                        } else {
+                            val cancelIdx = if (hasTextInput) 1 else 0
+                            if (focusedCycleIndex > cancelIdx) {
+                                runCatching { cancelFocus.requestFocus() }
+                            }
+                            true
+                        }
+                    }
+                    Key.DirectionRight -> {
+                        if (hasTextInput && focusedCycleIndex == 0) {
+                            false
+                        } else {
+                            val cancelIdx = if (hasTextInput) 1 else 0
+                            if (focusedCycleIndex == cancelIdx && confirmEnabled) {
+                                runCatching { confirmFocus.requestFocus() }
+                            }
+                            true
+                        }
+                    }
+                    else -> false
+                }
+            }
+            .semantics { isTraversalGroup = true },
+        shape = RoundedCornerShape(24.dp),
+        color = colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp,
+        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.7f))
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) {
+            content { idx -> focusedCycleIndex = idx }
+        }
+    }
+}
+
+@Composable
+private fun ModalActionRow(
+    cancelFocus: FocusRequester,
+    confirmFocus: FocusRequester,
+    confirmLabel: String,
+    confirmEnabled: Boolean,
+    isDestructive: Boolean,
+    onFocusIndexChanged: (Int) -> Unit,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TactileTextButton(
+            onClick = onCancel,
+            modifier = Modifier
+                .focusRequester(cancelFocus)
+                .onFocusChanged { if (it.isFocused) onFocusIndexChanged(0) }
+                .testTag("modal_cancel_button")
+        ) {
+            Text(stringResource(R.string.action_cancel))
+        }
+        TactileButton(
+            onClick = onConfirm,
+            enabled = confirmEnabled,
+            shape = RoundedCornerShape(50),
+            containerColor = if (isDestructive) colorScheme.error else colorScheme.primary,
+            contentColor = if (isDestructive) colorScheme.onError else colorScheme.onPrimary,
+            modifier = Modifier
+                .focusRequester(confirmFocus)
+                .onFocusChanged { if (it.isFocused) onFocusIndexChanged(1) }
+                .testTag("modal_confirm_button")
+        ) {
+            Text(confirmLabel)
+        }
+    }
+}

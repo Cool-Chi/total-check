@@ -32,16 +32,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.RestartAlt
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -86,12 +82,15 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -108,6 +107,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp
+import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import com.example.totalcheck.ui.theme.LocalThemeTransitioning
@@ -125,6 +125,11 @@ fun CapsuleProgressModule(
     showUncheckedOnly: Boolean,
     onToggleUncheckedOnly: () -> Unit,
     onReset: () -> Unit,
+    canDeleteChecklist: Boolean,
+    onRenameChecklist: () -> Unit,
+    onDeleteChecklist: () -> Unit,
+    renameButtonFocusRequester: FocusRequester = remember { FocusRequester() },
+    deleteButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -181,7 +186,11 @@ fun CapsuleProgressModule(
             ) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        text = if (uncheckedCount == 0 && totalCount > 0) "已備齊" else "尚缺 $uncheckedCount",
+                        text = if (uncheckedCount == 0 && totalCount > 0) {
+                            stringResource(R.string.progress_all_set)
+                        } else {
+                            stringResource(R.string.progress_left_count, uncheckedCount)
+                        },
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = accentColor,
@@ -193,23 +202,21 @@ fun CapsuleProgressModule(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "/ 共 $totalCount 項",
+                        text = stringResource(R.string.progress_total_count, totalCount),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
                 val hasCheckedItems = totalCount > uncheckedCount
-                FilledTonalButton(
+                TactileButton(
                     onClick = onReset,
                     enabled = hasCheckedItems,
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = colorScheme.surfaceContainerHighest,
-                        contentColor = colorScheme.onSurface,
-                        disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
-                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f)
-                    ),
+                    containerColor = colorScheme.surfaceContainerHighest,
+                    contentColor = colorScheme.onSurface,
+                    disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                    disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Icon(
@@ -218,7 +225,10 @@ fun CapsuleProgressModule(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "一鍵重置", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        text = stringResource(R.string.action_reset_all),
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
 
@@ -288,13 +298,13 @@ fun CapsuleProgressModule(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                FilterChip(
+                TactileFilterChip(
                     selected = showUncheckedOnly,
                     onClick = onToggleUncheckedOnly,
                     shape = RoundedCornerShape(50),
                     label = {
                         Text(
-                            text = "只看未帶",
+                            text = stringResource(R.string.filter_unchecked_only),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -306,17 +316,65 @@ fun CapsuleProgressModule(
                             modifier = Modifier.size(16.dp)
                         )
                     },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = colorScheme.tertiaryContainer,
-                        selectedLabelColor = colorScheme.onTertiaryContainer,
-                        selectedLeadingIconColor = colorScheme.onTertiaryContainer
-                    )
+                    selectedContainerColor = colorScheme.tertiaryContainer,
+                    selectedLabelColor = colorScheme.onTertiaryContainer,
+                    selectedLeadingIconColor = colorScheme.onTertiaryContainer
                 )
-                Text(
-                    text = if (showUncheckedOnly) "已隱藏已備項目" else "顯示全部項目",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TactileIconButton(
+                        onClick = onRenameChecklist,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .focusRequester(renameButtonFocusRequester)
+                            .testTag("rename_checklist_button"),
+                        shape = RoundedCornerShape(50),
+                        containerColor = colorScheme.surfaceContainerHighest,
+                        contentColor = colorScheme.onSurfaceVariant,
+                        border = BorderStroke(1.dp, colorScheme.outlineVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = stringResource(R.string.cd_rename_checklist),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    TactileIconButton(
+                        onClick = onDeleteChecklist,
+                        enabled = canDeleteChecklist,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .focusRequester(deleteButtonFocusRequester)
+                            .testTag("delete_checklist_button"),
+                        shape = RoundedCornerShape(50),
+                        containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
+                        contentColor = colorScheme.onErrorContainer,
+                        disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (canDeleteChecklist) {
+                                colorScheme.error.copy(alpha = 0.35f)
+                            } else {
+                                colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            }
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.DeleteOutline,
+                            contentDescription = stringResource(
+                                if (canDeleteChecklist) {
+                                    R.string.cd_delete_checklist
+                                } else {
+                                    R.string.cd_delete_checklist_disabled
+                                }
+                            ),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -368,6 +426,7 @@ fun CapsuleCheckItemRow(
     resetDelayMs: Int? = null,
     resetTriggeredAtMillis: Long = 0L,
     onStartEdit: () -> Unit = {},
+    onEditDraftChanged: ((String) -> Unit)? = null,
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
     onDelete: () -> Unit = {},
@@ -380,6 +439,7 @@ fun CapsuleCheckItemRow(
     val colorScheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val keyboardFocusController = LocalKeyboardFocusVisible.current
     val scope = rememberCoroutineScope()
     val isReducedMotion = LocalReducedMotion.current
     val currentOnToggle by rememberUpdatedState(onToggle)
@@ -474,6 +534,7 @@ fun CapsuleCheckItemRow(
     var isPressed by remember(item.id) { mutableStateOf(false) }
     var isDeleting by remember(item.id) { mutableStateOf(false) }
     var isCardFocused by remember(item.id) { mutableStateOf(false) }
+    var isChildButtonPressed by remember(item.id) { mutableStateOf(false) }
     val holdRingProgress = remember(item.id) { Animatable(0f) }
     val deleteExitProgress = remember(item.id) { Animatable(0f) }
     var holdAnimJob by remember(item.id) { mutableStateOf<Job?>(null) }
@@ -552,6 +613,13 @@ fun CapsuleCheckItemRow(
     val checkedBadgeBgColor = colorScheme.surfaceContainerHighest
 
     val isDarkSurface = colorScheme.surface.luminance() < 0.5f
+    val statusCheckedLabel = stringResource(R.string.status_checked)
+    val statusUncheckedLabel = stringResource(R.string.status_unchecked)
+    val markUncheckedActionLabel = stringResource(R.string.a11y_mark_unchecked)
+    val markCheckedActionLabel = stringResource(R.string.a11y_mark_checked)
+    val dragReorderDescription = stringResource(R.string.cd_drag_reorder_item, item.label)
+    val moveUpActionLabel = stringResource(R.string.a11y_move_up)
+    val moveDownActionLabel = stringResource(R.string.a11y_move_down)
 
     Box(
         modifier = modifier
@@ -591,12 +659,16 @@ fun CapsuleCheckItemRow(
                     } else {
                         lerp(1.5f, 1f, t).dp.toPx()
                     }
+                    val showCardFocusRing = isCardFocused &&
+                        keyboardFocusController.isKeyboardFocusVisible &&
+                        !isEditing &&
+                        ringProgress <= 0.001f
                     val baseBorderColor = when {
                         ringProgress > 0.001f -> ringTrackBorderColor
-                        isCardFocused && !isEditing -> colorScheme.primary
+                        showCardFocusRing -> colorScheme.primary
                         else -> lerpColor(uncheckedBorderColor, checkedBorderColor, t)
                     }
-                    val effectiveBorderStrokePx = if (isCardFocused && !isEditing && ringProgress <= 0.001f) {
+                    val effectiveBorderStrokePx = if (showCardFocusRing) {
                         2.dp.toPx()
                     } else {
                         baseBorderStrokePx
@@ -677,9 +749,9 @@ fun CapsuleCheckItemRow(
                     }
                 }
                 .semantics {
-                    stateDescription = if (visualChecked) "已備" else "待備"
+                    stateDescription = if (visualChecked) statusCheckedLabel else statusUncheckedLabel
                     if (!isEditing && !isDeleting) {
-                        onClick(label = if (visualChecked) "標記為待備" else "標記為已備") {
+                        onClick(label = if (visualChecked) markUncheckedActionLabel else markCheckedActionLabel) {
                             if (currentIsCompressedProvider()) {
                                 currentOnCompressedClick?.invoke()
                             } else {
@@ -693,6 +765,7 @@ fun CapsuleCheckItemRow(
                     if (isEditing || isDeleting) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = true)
+                        if (isChildButtonPressed) return@awaitEachGesture
                         if (currentIsCompressedProvider()) {
                             val touchSlop = viewConfiguration.touchSlop
                             while (true) {
@@ -802,26 +875,56 @@ fun CapsuleCheckItemRow(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
 
+                var localOptimisticLabel by remember(item.id) { mutableStateOf<String?>(null) }
+                if (localOptimisticLabel != null && item.label == localOptimisticLabel) {
+                    localOptimisticLabel = null
+                }
+                val displayedLabel = localOptimisticLabel ?: item.label
+
                 if (isEditing) {
+                    val keyboardController = LocalSoftwareKeyboardController.current
                     var editValue by remember(item.id, isEditing) {
                         mutableStateOf(
                             TextFieldValue(
-                                text = item.label,
-                                selection = TextRange(item.label.length)
+                                text = displayedLabel,
+                                selection = TextRange(displayedLabel.length)
                             )
                         )
                     }
                     val focusRequester = remember { FocusRequester() }
                     LaunchedEffect(isEditing) {
-                        focusRequester.requestFocus()
+                        runCatching {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        }
                     }
 
                     BasicTextField(
                         value = editValue,
-                        onValueChange = { editValue = it },
+                        onValueChange = {
+                            editValue = it
+                            onEditDraftChanged?.invoke(it.text)
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .focusRequester(focusRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (
+                                    event.type == KeyEventType.KeyDown &&
+                                    event.key == Key.Escape
+                                ) {
+                                    val trimmed = editValue.text.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        localOptimisticLabel = trimmed
+                                        onConfirmEdit(trimmed)
+                                    } else {
+                                        onCancelEdit()
+                                    }
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                             .padding(vertical = 4.dp),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -832,38 +935,48 @@ fun CapsuleCheckItemRow(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = {
-                                if (editValue.text.isNotBlank()) {
-                                    onConfirmEdit(editValue.text)
+                                val trimmed = editValue.text.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    localOptimisticLabel = trimmed
+                                    onConfirmEdit(trimmed)
+                                } else {
+                                    onCancelEdit()
                                 }
                             }
                         )
                     )
-                    IconButton(
-                        onClick = { onConfirmEdit(editValue.text) },
+                    TactileIconButton(
+                        onClick = {
+                            val trimmed = editValue.text.trim()
+                            if (trimmed.isNotEmpty()) {
+                                localOptimisticLabel = trimmed
+                                onConfirmEdit(trimmed)
+                            }
+                        },
                         enabled = editValue.text.isNotBlank(),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(36.dp),
+                        contentColor = colorScheme.primary
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Check,
-                            contentDescription = "儲存名稱",
-                            tint = colorScheme.primary,
+                            contentDescription = stringResource(R.string.cd_save_name),
                             modifier = Modifier.size(18.dp)
                         )
                     }
-                    IconButton(
+                    TactileIconButton(
                         onClick = onCancelEdit,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(36.dp),
+                        contentColor = colorScheme.onSurfaceVariant
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "取消編輯",
-                            tint = colorScheme.onSurfaceVariant,
+                            contentDescription = stringResource(R.string.cd_cancel_edit),
                             modifier = Modifier.size(18.dp)
                         )
                     }
                 } else {
                     Text(
-                        text = item.label,
+                        text = displayedLabel,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
                         color = colorScheme.onSurface,
@@ -877,7 +990,7 @@ fun CapsuleCheckItemRow(
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
-                            .width(76.dp)
+                            .width(80.dp)
                             .height(28.dp)
                             .graphicsLayer {
                                 val badgeScale = 1f + (wavePulseScale.value - 1f) * 1.8f
@@ -908,14 +1021,14 @@ fun CapsuleCheckItemRow(
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             Text(
-                                text = "已備",
+                                text = statusCheckedLabel,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Medium,
                                 color = colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
-                            text = "待備",
+                            text = statusUncheckedLabel,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = colorScheme.onTertiaryContainer,
@@ -924,7 +1037,7 @@ fun CapsuleCheckItemRow(
                             }
                         )
                     }
-                    IconButton(
+                    TactileIconButton(
                         onClick = {
                             if (currentIsCompressedProvider()) {
                                 currentOnCompressedClick?.invoke()
@@ -934,12 +1047,13 @@ fun CapsuleCheckItemRow(
                         },
                         modifier = Modifier
                             .size(34.dp)
-                            .testTag("edit_item_button_${item.id}")
+                            .testTag("edit_item_button_${item.id}"),
+                        contentColor = colorScheme.onSurfaceVariant,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Edit,
-                            contentDescription = "編輯項目名稱",
-                            tint = colorScheme.onSurfaceVariant,
+                            contentDescription = stringResource(R.string.cd_edit_item_name),
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -952,7 +1066,7 @@ fun CapsuleCheckItemRow(
                             .size(34.dp)
                             .testTag("drag_handle_${item.id}")
                             .drawBehind {
-                                if (isHandleFocused) {
+                                if (isHandleFocused && keyboardFocusController.isKeyboardFocusVisible) {
                                     val r = 10.dp.toPx()
                                     drawRoundRect(
                                         color = focusRingColor,
@@ -989,13 +1103,13 @@ fun CapsuleCheckItemRow(
                                 }
                             }
                             .semantics {
-                                contentDescription = "拖曳排序「${item.label}」"
+                                contentDescription = dragReorderDescription
                                 val actions = buildList {
                                     if (canMoveUp && onMoveUp != null) {
-                                        add(CustomAccessibilityAction("上移一格") { onMoveUp(); true })
+                                        add(CustomAccessibilityAction(moveUpActionLabel) { onMoveUp(); true })
                                     }
                                     if (canMoveDown && onMoveDown != null) {
-                                        add(CustomAccessibilityAction("下移一格") { onMoveDown(); true })
+                                        add(CustomAccessibilityAction(moveDownActionLabel) { onMoveDown(); true })
                                     }
                                 }
                                 if (actions.isNotEmpty()) {

@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
@@ -58,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.ui.theme.LocalReducedMotion
@@ -66,16 +69,6 @@ private val DARK_BLOCK_COLOR = Color.White.copy(alpha = 0.06f)
 private val DARK_SHEEN_COLOR = Color.White.copy(alpha = 0.10f)
 private val LIGHT_BLOCK_COLOR = Color(9, 11, 16).copy(alpha = 0.09f)
 private val LIGHT_SHEEN_COLOR = Color.White.copy(alpha = 0.20f)
-
-private val FALLBACK_TAB_LABELS = listOf("隨身包 (4)", "實驗室 (4)", "返鄉行李 (4)")
-private val FALLBACK_ITEM_LABELS = listOf(
-    "鑰匙與門禁卡",
-    "行動電源 (10000mAh)",
-    "Type-C 充電線",
-    "抗噪耳機",
-    "錢包與悠遊卡",
-    "摺疊傘"
-)
 
 @Composable
 fun TotalCheckSkeletonShimmer(
@@ -113,110 +106,121 @@ fun TotalCheckSkeletonShimmer(
     val tabLabelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
     val borderColor = colorScheme.outlineVariant
 
-    val resolvedTabLabels = remember(checklists, itemsByChecklist) {
+    val carryOnName = stringResource(R.string.seed_checklist_carry_on)
+    val labName = stringResource(R.string.seed_checklist_lab)
+    val travelName = stringResource(R.string.seed_checklist_travel)
+    val fallbackTabLabels = remember(carryOnName, labName, travelName) {
+        listOf("$carryOnName (4)", "$labName (4)", "$travelName (4)")
+    }
+    val fallbackItemLabels = stringArrayResource(R.array.seed_items_carry_on).toList()
+
+    val resolvedTabLabels = remember(checklists, itemsByChecklist, fallbackTabLabels) {
         if (checklists.isNotEmpty()) {
             checklists.map { checklist ->
                 val unchecked = itemsByChecklist[checklist.id].orEmpty().count { !it.isChecked }
                 if (unchecked > 0) "${checklist.name} ($unchecked)" else checklist.name
             }
         } else {
-            FALLBACK_TAB_LABELS
+            fallbackTabLabels
         }
     }
 
     val firstChecklist = checklists.firstOrNull()
     val hasRealFirstChecklistItems = firstChecklist != null && itemsByChecklist.containsKey(firstChecklist.id)
-    val resolvedItemLabels = remember(firstChecklist?.id, itemsByChecklist, showUncheckedOnly, hasRealFirstChecklistItems) {
+    val resolvedItemLabels = remember(
+        firstChecklist?.id,
+        itemsByChecklist,
+        showUncheckedOnly,
+        hasRealFirstChecklistItems,
+        fallbackItemLabels
+    ) {
         if (hasRealFirstChecklistItems && firstChecklist != null) {
             val raw = itemsByChecklist[firstChecklist.id].orEmpty()
             val visible = if (showUncheckedOnly) raw.filter { !it.isChecked } else raw
             visible.map { it.label }
         } else {
-            FALLBACK_ITEM_LABELS
+            fallbackItemLabels
         }
     }
 
+    val loadingDescription = stringResource(R.string.skeleton_loading_state)
     Column(
         modifier = modifier
             .fillMaxSize()
             .testTag("skeleton_shimmer_container")
             .semantics {
                 liveRegion = LiveRegionMode.Polite
-                stateDescription = "正在載入清單資料"
+                stateDescription = loadingDescription
             }
     ) {
-        // Blocks 0..1: 頂部膠囊分頁列骨架（1:1 對齊 CapsuleChecklistTabBar 的數量、字級寬高與 50% 圓角）
-        Row(
+        // Blocks 0..1: 頂部膠囊分頁列骨架（對齊 ExpandingChecklistTabBar 與尾端新增按鈕）
+        LazyRow(
+            userScrollEnabled = false,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 6.dp)
+                .padding(top = 4.dp, bottom = 6.dp)
                 .clearAndSetSemantics { },
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            LazyRow(
-                userScrollEnabled = false,
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                itemsIndexed(resolvedTabLabels) { index, labelText ->
-                    val tabBlockIndex = if (index == 0) 0 else 1
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .shimmerBlock(
-                                blockIndex = tabBlockIndex,
-                                blockColor = blockColor,
-                                sheenColor = sheenColor,
-                                isReducedMotion = isReducedMotion,
-                                elapsedMillisProvider = elapsedProvider,
-                                durationMillis = durationMillis,
-                                staggerMillis = staggerMillis,
-                                shape = RoundedCornerShape(50)
-                            )
-                            .drawBehind {
-                                val radius = size.height / 2f
-                                drawRoundRect(
-                                    color = borderColor,
-                                    cornerRadius = CornerRadius(radius, radius),
-                                    style = Stroke(width = 1.dp.toPx())
-                                )
-                            }
-                    ) {
-                        BasicText(
-                            text = labelText,
-                            style = tabLabelStyle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                                .alpha(0f)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = colorScheme.surfaceContainerHigh,
-                border = BorderStroke(1.dp, borderColor)
-            ) {
+            itemsIndexed(resolvedTabLabels) { index, labelText ->
+                val tabBlockIndex = if (index == 0) 0 else 1
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .clip(RoundedCornerShape(50))
                         .shimmerBlock(
-                            blockIndex = 1,
+                            blockIndex = tabBlockIndex,
                             blockColor = blockColor,
                             sheenColor = sheenColor,
                             isReducedMotion = isReducedMotion,
                             elapsedMillisProvider = elapsedProvider,
                             durationMillis = durationMillis,
                             staggerMillis = staggerMillis,
-                            shape = CircleShape
+                            shape = RoundedCornerShape(50)
                         )
-                )
+                        .drawBehind {
+                            val radius = size.height / 2f
+                            drawRoundRect(
+                                color = borderColor,
+                                cornerRadius = CornerRadius(radius, radius),
+                                style = Stroke(width = 1.dp.toPx())
+                            )
+                        }
+                ) {
+                    BasicText(
+                        text = labelText,
+                        style = tabLabelStyle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                            .alpha(0f)
+                    )
+                }
+            }
+
+            item {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, borderColor)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .shimmerBlock(
+                                blockIndex = 1,
+                                blockColor = blockColor,
+                                sheenColor = sheenColor,
+                                isReducedMotion = isReducedMotion,
+                                elapsedMillisProvider = elapsedProvider,
+                                durationMillis = durationMillis,
+                                staggerMillis = staggerMillis,
+                                shape = CircleShape
+                            )
+                    )
+                }
             }
         }
 
@@ -242,13 +246,13 @@ fun TotalCheckSkeletonShimmer(
                             modifier = Modifier.alpha(0f)
                         ) {
                             Text(
-                                text = "尚缺 4",
+                                text = stringResource(R.string.skeleton_sample_left),
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "/ 共 6 項",
+                                text = stringResource(R.string.skeleton_sample_total),
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
@@ -288,7 +292,7 @@ fun TotalCheckSkeletonShimmer(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = "一鍵重置", style = MaterialTheme.typography.labelLarge)
+                            Text(text = stringResource(R.string.action_reset_all), style = MaterialTheme.typography.labelLarge)
                         }
                         Box(
                             modifier = Modifier
@@ -312,7 +316,7 @@ fun TotalCheckSkeletonShimmer(
                             ) {
                                 Spacer(modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "一鍵重置", style = MaterialTheme.typography.labelLarge)
+                                Text(text = stringResource(R.string.action_reset_all), style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -351,7 +355,7 @@ fun TotalCheckSkeletonShimmer(
                             shape = RoundedCornerShape(50),
                             label = {
                                 Text(
-                                    text = "只看未帶",
+                                    text = stringResource(R.string.filter_unchecked_only),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -388,7 +392,7 @@ fun TotalCheckSkeletonShimmer(
                                 Spacer(modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "只看未帶",
+                                    text = stringResource(R.string.filter_unchecked_only),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -396,27 +400,26 @@ fun TotalCheckSkeletonShimmer(
                         }
                     }
 
-                    Box(contentAlignment = Alignment.CenterEnd) {
-                        Text(
-                            text = "顯示全部項目",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.alpha(0f)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(74.dp)
-                                .height(14.dp)
-                                .shimmerBlock(
-                                    blockIndex = 3,
-                                    blockColor = blockColor,
-                                    sheenColor = sheenColor,
-                                    isReducedMotion = isReducedMotion,
-                                    elapsedMillisProvider = elapsedProvider,
-                                    durationMillis = durationMillis,
-                                    staggerMillis = staggerMillis,
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        repeat(2) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .shimmerBlock(
+                                        blockIndex = 3,
+                                        blockColor = blockColor,
+                                        sheenColor = sheenColor,
+                                        isReducedMotion = isReducedMotion,
+                                        elapsedMillisProvider = elapsedProvider,
+                                        durationMillis = durationMillis,
+                                        staggerMillis = staggerMillis,
+                                        shape = CircleShape
+                                    )
+                            )
+                        }
                     }
                 }
             }
@@ -499,7 +502,7 @@ fun TotalCheckSkeletonShimmer(
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
-                                .width(76.dp)
+                                .width(80.dp)
                                 .height(28.dp)
                                 .shimmerBlock(
                                     blockIndex = blockIndex,
