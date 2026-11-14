@@ -6,10 +6,12 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -30,11 +32,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -383,14 +388,26 @@ internal fun ScopedModalHost(
                 }
         )
 
+        val isTopAnchoredModal = modalContent is ChecklistModalContent.CreateChecklist
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-                .graphicsLayer {
-                    translationY = -modalImeLiftAnim.value * 0.5f
-                },
-            contentAlignment = Alignment.Center
+                .then(
+                    if (isTopAnchoredModal) {
+                        Modifier
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                            .imePadding()
+                            .padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 16.dp)
+                    } else {
+                        Modifier
+                            .padding(horizontal = 24.dp, vertical = 16.dp)
+                            .graphicsLayer {
+                                translationY = -modalImeLiftAnim.value * 0.5f
+                            }
+                    }
+                ),
+            contentAlignment = if (isTopAnchoredModal) Alignment.TopCenter else Alignment.Center
         ) {
             when (modalContent) {
                 is ChecklistModalContent.CreateChecklist -> {
@@ -465,6 +482,7 @@ internal fun ScopedModalHost(
                         isReducedMotion = isReducedMotion,
                         hasTextInput = true,
                         confirmEnabled = confirmEnabled,
+                        animateSize = true,
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
                         confirmFocus = confirmFocus,
@@ -500,7 +518,10 @@ internal fun ScopedModalHost(
                         )
                         Spacer(modifier = Modifier.height(14.dp))
 
+                        val auxButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+
                         if (!isQuickImportMode) {
+                            // 第一層：主輸入框優先
                             OutlinedTextField(
                                 value = name,
                                 onValueChange = { name = it },
@@ -526,86 +547,26 @@ internal fun ScopedModalHost(
                                 )
                             )
                             Spacer(modifier = Modifier.height(10.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .slideOutCancelClickable(
-                                        shape = RoundedCornerShape(50),
-                                        role = Role.Button,
-                                        onClick = { switchToQuickImportWithClipboard(true) }
-                                    ),
-                                shape = RoundedCornerShape(50),
-                                color = colorScheme.secondaryContainer.copy(alpha = 0.72f),
-                                contentColor = colorScheme.onSecondaryContainer,
-                                border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.5f))
-                            ) {
-                                Box(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.action_import_from_clipboard_shortcut),
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(20.dp))
-                            ModalActionRow(
-                                cancelFocus = cancelFocus,
-                                confirmFocus = confirmFocus,
-                                confirmLabel = stringResource(R.string.action_create),
-                                confirmEnabled = confirmEnabled,
-                                isDestructive = false,
-                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
-                                onCancel = { if (isOpen) onRequestClose(true) },
-                                onConfirm = { if (isOpen) onConfirmCreate(name) }
-                            )
-                        } else {
-                            // 快速匯入來源列（貼上剪貼簿 + 選擇文檔）
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                TactileButton(
-                                    onClick = { switchToQuickImportWithClipboard(true) },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(50),
-                                    containerColor = colorScheme.secondaryContainer,
-                                    contentColor = colorScheme.onSecondaryContainer,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.action_paste_clipboard),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                TactileButton(
-                                    onClick = {
-                                        documentLauncher.launch(arrayOf("text/*", "application/octet-stream"))
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(50),
-                                    containerColor = colorScheme.tertiaryContainer,
-                                    contentColor = colorScheme.onTertiaryContainer,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.action_select_document),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(10.dp))
 
+                            // 第二層：統一膠囊輔助按鈕列
+                            TactileButton(
+                                onClick = { switchToQuickImportWithClipboard(true) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(50),
+                                containerColor = colorScheme.secondaryContainer,
+                                contentColor = colorScheme.onSecondaryContainer,
+                                contentPadding = auxButtonPadding
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.action_import_from_clipboard_shortcut),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
+                            // 第一層：主輸入框優先（單行起始高度與空白清單一致，可自動延展至 4 行）
                             OutlinedTextField(
                                 value = rawImportText,
                                 onValueChange = { newText ->
@@ -623,10 +584,52 @@ internal fun ScopedModalHost(
                                 placeholder = {
                                     Text(text = stringResource(R.string.import_raw_text_placeholder))
                                 },
-                                minLines = 2,
+                                minLines = 1,
                                 maxLines = 4,
                                 shape = RoundedCornerShape(16.dp)
                             )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 第二層：統一膠囊輔助按鈕列（貼上剪貼簿 + 選擇文檔）
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TactileButton(
+                                    onClick = { switchToQuickImportWithClipboard(true) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.secondaryContainer,
+                                    contentColor = colorScheme.onSecondaryContainer,
+                                    contentPadding = auxButtonPadding
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_paste_clipboard),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                TactileButton(
+                                    onClick = {
+                                        documentLauncher.launch(arrayOf("text/*", "application/octet-stream"))
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.tertiaryContainer,
+                                    contentColor = colorScheme.onTertiaryContainer,
+                                    contentPadding = auxButtonPadding
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_select_document),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
 
                             if (rawImportText.isBlank()) {
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -785,22 +788,32 @@ internal fun ScopedModalHost(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(18.dp))
-                            ModalActionRow(
-                                cancelFocus = cancelFocus,
-                                confirmFocus = confirmFocus,
-                                confirmLabel = stringResource(R.string.action_import_create_count, previewItems.size),
-                                confirmEnabled = confirmEnabled,
-                                isDestructive = false,
-                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
-                                onCancel = { if (isOpen) onRequestClose(true) },
-                                onConfirm = {
+                        }
+
+                        // 共用底部操作列（兩頁位置與間距完全統一）
+                        Spacer(modifier = Modifier.height(20.dp))
+                        ModalActionRow(
+                            cancelFocus = cancelFocus,
+                            confirmFocus = confirmFocus,
+                            confirmLabel = if (isQuickImportMode) {
+                                stringResource(R.string.action_import_create_count, previewItems.size)
+                            } else {
+                                stringResource(R.string.action_create)
+                            },
+                            confirmEnabled = confirmEnabled,
+                            isDestructive = false,
+                            onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                            onCancel = { if (isOpen) onRequestClose(true) },
+                            onConfirm = {
+                                if (isQuickImportMode) {
                                     if (isOpen && previewItems.isNotEmpty() && previewTitle.isNotBlank()) {
                                         onConfirmImport(previewTitle.trim(), previewItems)
                                     }
+                                } else {
+                                    if (isOpen) onConfirmCreate(name)
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
                 }
 
@@ -934,6 +947,7 @@ private fun ModalPanelContainer(
     cancelFocus: FocusRequester,
     confirmFocus: FocusRequester,
     onDismissRequest: () -> Unit,
+    animateSize: Boolean = false,
     content: @Composable (onFocusIndexChanged: (Int) -> Unit) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -1039,6 +1053,18 @@ private fun ModalPanelContainer(
     ) {
         Column(
             modifier = Modifier
+                .then(
+                    if (animateSize && !isReducedMotion) {
+                        Modifier.animateContentSize(
+                            animationSpec = spring(
+                                dampingRatio = 0.86f,
+                                stiffness = 420f
+                            )
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp)
         ) {
