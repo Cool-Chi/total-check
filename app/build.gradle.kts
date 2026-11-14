@@ -25,12 +25,16 @@ android {
     versionName = "1.0"
   }
 
+  val rootDebugKeystore = rootProject.file("debug.keystore")
+
   signingConfigs {
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+    if (rootDebugKeystore.exists()) {
+      create("debugConfig") {
+        storeFile = rootDebugKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
     if (keystorePropertiesFile.exists()) {
       create("release") {
@@ -47,7 +51,7 @@ android {
 
   buildTypes {
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
+      signingConfigs.findByName("debugConfig")?.let { signingConfig = it }
     }
     release {
       isMinifyEnabled = false
