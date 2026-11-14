@@ -187,6 +187,10 @@ class StackedCardListState {
     internal var originYsBuffer: FloatArray = FloatArray(32)
     internal var depthsBuffer: FloatArray = FloatArray(32)
     internal var visibleFlagsBuffer: BooleanArray = BooleanArray(32)
+    internal var isTopStackBuffer: BooleanArray = BooleanArray(32)
+    internal var isBottomStackBuffer: BooleanArray = BooleanArray(32)
+    internal var currentPlacedCount: Int = 0
+    private var lastReflowKeys: List<Any> = emptyList()
 
     internal var currentItemTops: FloatArray = FloatArray(0)
     internal var currentItemHeights: FloatArray = FloatArray(0)
@@ -200,8 +204,31 @@ class StackedCardListState {
     internal var currentPeekStepPx: Float = 0f
     internal var currentGapPx: Float = 0f
 
-    var placedItemsInfo: List<PlacedStackedItemInfo> = emptyList()
-        internal set
+    val placedItemsInfo: List<PlacedStackedItemInfo>
+        get() {
+            val n = currentPlacedCount
+            val keys = currentKeys
+            val heights = currentItemHeights
+            val count = minOf(n, minOf(keys.size, heights.size))
+            if (count <= 0) return emptyList()
+            val list = ArrayList<PlacedStackedItemInfo>(count)
+            for (i in 0 until count) {
+                if (!visibleFlagsBuffer[i]) continue
+                list.add(
+                    PlacedStackedItemInfo(
+                        index = i,
+                        key = keys[i],
+                        placedTopY = placedTopYsBuffer[i],
+                        heightPx = heights[i],
+                        scale = scalesBuffer[i],
+                        depth = depthsBuffer[i],
+                        isTopStack = isTopStackBuffer[i],
+                        isBottomStack = isBottomStackBuffer[i]
+                    )
+                )
+            }
+            return list
+        }
 
     internal fun ensureBufferCapacity(size: Int) {
         if (placeablesBuffer.size < size) {
@@ -214,6 +241,8 @@ class StackedCardListState {
             originYsBuffer = FloatArray(nextSize)
             depthsBuffer = FloatArray(nextSize)
             visibleFlagsBuffer = BooleanArray(nextSize)
+            isTopStackBuffer = BooleanArray(nextSize)
+            isBottomStackBuffer = BooleanArray(nextSize)
         }
     }
 
@@ -517,6 +546,13 @@ class StackedCardListState {
         naturalTops: FloatArray,
         isReducedMotion: Boolean
     ) {
+        val hadPreviousKeys = lastReflowKeys.isNotEmpty()
+        val keysChanged = lastReflowKeys != keys
+        if (keysChanged) {
+            lastReflowKeys = keys.toList()
+        }
+        val allowNewReflowSpring = hadPreviousKeys && keysChanged && !isReducedMotion
+
         for (i in keys.indices) {
             val k = keys[i]
             val naturalTopPx = naturalTops[i]
@@ -524,26 +560,24 @@ class StackedCardListState {
             val prevTop = entry.lastNaturalTopPx
             entry.lastNaturalTopPx = naturalTopPx
 
-            if (prevTop != null) {
+            if (prevTop != null && allowNewReflowSpring) {
                 val delta = prevTop - naturalTopPx
                 if (abs(delta) > 0.5f) {
-                    if (isReducedMotion) {
-                        entry.currentOffsetPx = 0f
-                        entry.activeAnim = null
-                        entry.startNanos = 0L
-                    } else {
-                        val startOffset = entry.currentOffsetPx + delta
-                        entry.currentOffsetPx = startOffset
-                        entry.activeAnim = TargetBasedAnimation(
-                            animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
-                            typeConverter = Float.VectorConverter,
-                            initialValue = startOffset,
-                            targetValue = 0f
-                        )
-                        entry.startNanos = 0L
-                        reflowSignal.tryEmit(Unit)
-                    }
+                    val startOffset = entry.currentOffsetPx + delta
+                    entry.currentOffsetPx = startOffset
+                    entry.activeAnim = TargetBasedAnimation(
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f),
+                        typeConverter = Float.VectorConverter,
+                        initialValue = startOffset,
+                        targetValue = 0f
+                    )
+                    entry.startNanos = 0L
+                    reflowSignal.tryEmit(Unit)
                 }
+            } else if (isReducedMotion) {
+                entry.currentOffsetPx = 0f
+                entry.activeAnim = null
+                entry.startNanos = 0L
             }
         }
     }
@@ -815,7 +849,7 @@ fun <T> BidirectionalStackedCardList(
                 state.maxScrollState.floatValue = 0f
                 state.scrollOffsetState.floatValue = 0f
                 state.clearOverscrollImmediate()
-                state.placedItemsInfo = emptyList()
+                state.currentPlacedCount = 0
                 state.currentKeys = emptyList()
                 state.currentTotalLinearHeight = 0f
                 return@Layout layout(width, height) {}
@@ -929,7 +963,8 @@ fun <T> BidirectionalStackedCardList(
                 val originYs = state.originYsBuffer
                 val depths = state.depthsBuffer
                 val visibleFlags = state.visibleFlagsBuffer
-                val newPlacedInfos = ArrayList<PlacedStackedItemInfo>(count)
+                val isTopFlags = state.isTopStackBuffer
+                val isBottomFlags = state.isBottomStackBuffer
 
                 for (i in 0 until count) {
                     val k = keys[i]
@@ -943,7 +978,10 @@ fun <T> BidirectionalStackedCardList(
                         val minY = effectiveTopBound
                         val maxY = (effectiveBottomBound - h).coerceAtLeast(minY)
                         val clampedY = rawTop.coerceIn(minY, maxY)
-                        state.getSlotState(k).depthState.floatValue = 0f
+                        val slotDepthState = state.getSlotState(k).depthState
+                        if (slotDepthState.floatValue != 0f) {
+                            slotDepthState.floatValue = 0f
+                        }
 
                         placedTopYs[i] = clampedY
                         scales[i] = 1f
@@ -952,19 +990,8 @@ fun <T> BidirectionalStackedCardList(
                         originYs[i] = 0.5f
                         depths[i] = 0f
                         visibleFlags[i] = true
-
-                        newPlacedInfos.add(
-                            PlacedStackedItemInfo(
-                                index = i,
-                                key = k,
-                                placedTopY = clampedY,
-                                heightPx = h,
-                                scale = 1f,
-                                depth = 0f,
-                                isTopStack = false,
-                                isBottomStack = false
-                            )
-                        )
+                        isTopFlags[i] = false
+                        isBottomFlags[i] = false
                         continue
                     }
 
@@ -984,7 +1011,14 @@ fun <T> BidirectionalStackedCardList(
                     val isBottomStack = !isTopStack && rawBottomDepth > 0f
                     val depth = if (isTopStack) rawTopDepth else if (isBottomStack) rawBottomDepth else 0f
 
-                    state.getSlotState(k).depthState.floatValue = depth
+                    val clampedSlotDepth = depth.coerceIn(0f, FADE_OUT_DEPTH + 0.15f)
+                    val slotDepthState = state.getSlotState(k).depthState
+                    val prevSlotDepth = slotDepthState.floatValue
+                    if ((clampedSlotDepth == 0f && prevSlotDepth != 0f) ||
+                        abs(prevSlotDepth - clampedSlotDepth) > 0.004f
+                    ) {
+                        slotDepthState.floatValue = clampedSlotDepth
+                    }
 
                     if (depth > FADE_OUT_DEPTH + 0.1f) {
                         visibleFlags[i] = false
@@ -1061,22 +1095,11 @@ fun <T> BidirectionalStackedCardList(
                     originYs[i] = originY
                     depths[i] = depth
                     visibleFlags[i] = true
-
-                    newPlacedInfos.add(
-                        PlacedStackedItemInfo(
-                            index = i,
-                            key = k,
-                            placedTopY = placedTopY,
-                            heightPx = h,
-                            scale = scale,
-                            depth = depth,
-                            isTopStack = isTopStack,
-                            isBottomStack = isBottomStack
-                        )
-                    )
+                    isTopFlags[i] = isTopStack
+                    isBottomFlags[i] = isBottomStack
                 }
 
-                state.placedItemsInfo = newPlacedInfos
+                state.currentPlacedCount = count
 
                 val rippleWaves = state.activeRippleWaves
                 val hasActiveRipple = !reducedMotion && rippleWaves.isNotEmpty()

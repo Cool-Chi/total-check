@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -90,7 +89,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -141,7 +139,7 @@ fun TotalCheckScreen(
     val renameFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val deleteFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     var editingItemId by remember { mutableStateOf<Long?>(null) }
-    var editingDraftText by remember { mutableStateOf("") }
+    val editingDraftHolder = remember { EditingDraftHolder() }
     val optimisticItemLabels = remember { mutableStateMapOf<Long, String>() }
     var suppressMainImeUntilClosed by remember { mutableStateOf(false) }
     val keyboardFocusController = remember { KeyboardFocusVisibleController() }
@@ -162,13 +160,13 @@ fun TotalCheckScreen(
     val commitActiveInlineEdit: () -> Unit = {
         val currentEditId = editingItemId
         if (currentEditId != null) {
-            val trimmed = editingDraftText.trim()
+            val trimmed = editingDraftHolder.text.trim()
             if (trimmed.isNotEmpty()) {
                 optimisticItemLabels[currentEditId] = trimmed
                 viewModel.renameItem(currentEditId, trimmed)
             }
             editingItemId = null
-            editingDraftText = ""
+            editingDraftHolder.text = ""
         }
     }
 
@@ -365,17 +363,27 @@ fun TotalCheckScreen(
         }
     }
 
+    val baseBottomOverlayInsetPxProvider: () -> Float = remember(
+        navBarInsets,
+        density,
+        quickBarBodyHeightHolder
+    ) {
+        {
+            navBarInsets.getBottom(density).toFloat() + quickBarBodyHeightHolder.value
+        }
+    }
+
     val onStartInlineEditStable = remember<(Long, String) -> Unit> {
         { itemId, label ->
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            editingDraftText = label
+            editingDraftHolder.text = label
             editingItemId = itemId
         }
     }
     val onEditDraftChangedStable = remember<(Long, String) -> Unit> {
         { itemId, draft ->
             if (editingItemId == itemId) {
-                editingDraftText = draft
+                editingDraftHolder.text = draft
             }
         }
     }
@@ -387,21 +395,21 @@ fun TotalCheckScreen(
                 viewModel.renameItem(itemId, trimmed)
             }
             editingItemId = null
-            editingDraftText = ""
+            editingDraftHolder.text = ""
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
     val onCancelInlineEditStable = remember<() -> Unit> {
         {
             editingItemId = null
-            editingDraftText = ""
+            editingDraftHolder.text = ""
         }
     }
     val onClearEditingIfMatchesStable = remember<(Long) -> Unit> {
         { itemId ->
             if (editingItemId == itemId) {
                 editingItemId = null
-                editingDraftText = ""
+                editingDraftHolder.text = ""
             }
         }
     }
@@ -630,10 +638,11 @@ fun TotalCheckScreen(
                                     HorizontalPager(
                                         state = pagerState,
                                         key = { page -> checklists.getOrNull(page)?.id ?: page },
-                                        beyondViewportPageCount = (checklists.size - 1).coerceAtLeast(1),
+                                        beyondViewportPageCount = 1,
                                         modifier = Modifier.fillMaxSize()
                                     ) { pageIndex ->
                                         val checklist = checklists.getOrNull(pageIndex) ?: return@HorizontalPager
+                                        val isActivePage = pageIndex == pagerState.currentPage || pageIndex == pagerState.targetPage
                                         val rawItems = itemsByChecklist[checklist.id].orEmpty()
                                         val items = if (optimisticItemLabels.isEmpty()) {
                                             rawItems
@@ -664,11 +673,13 @@ fun TotalCheckScreen(
                                             canDeleteChecklist = checklists.size > 1,
                                             showUncheckedOnly = showUncheckedOnly,
                                             editingItemId = pageEditingItemId,
+                                            isActivePage = isActivePage,
                                             isReducedMotion = isReducedMotion,
                                             viewModel = viewModel,
                                             snackbarHostState = snackbarHostState,
                                             progressCollapseFractionProvider = progressCollapseFractionProvider,
                                             bottomOverlayInsetPxProvider = bottomOverlayInsetPxProvider,
+                                            baseBottomOverlayInsetPxProvider = baseBottomOverlayInsetPxProvider,
                                             renameButtonFocusRequester = renameBtnFocus,
                                             deleteButtonFocusRequester = deleteBtnFocus,
                                             onStartEdit = onStartInlineEditStable,
@@ -881,11 +892,13 @@ private fun ChecklistPageContent(
     canDeleteChecklist: Boolean,
     showUncheckedOnly: Boolean,
     editingItemId: Long?,
+    isActivePage: Boolean,
     isReducedMotion: Boolean,
     viewModel: MainViewModel,
     snackbarHostState: SnackbarHostState,
     progressCollapseFractionProvider: () -> Float,
     bottomOverlayInsetPxProvider: () -> Float,
+    baseBottomOverlayInsetPxProvider: () -> Float,
     renameButtonFocusRequester: FocusRequester,
     deleteButtonFocusRequester: FocusRequester,
     onStartEdit: (Long, String) -> Unit,
@@ -901,6 +914,29 @@ private fun ChecklistPageContent(
     val scope = rememberCoroutineScope()
     val imeInsets = WindowInsets.ime
     val navBarInsets = WindowInsets.navigationBars
+    val isActivePageState = rememberUpdatedState(isActivePage)
+
+    val pageCollapseProvider: () -> Float = remember(
+        checklist.id,
+        progressCollapseFractionProvider
+    ) {
+        {
+            if (isActivePageState.value) progressCollapseFractionProvider() else 0f
+        }
+    }
+    val pageBottomOverlayInsetPxProvider: () -> Float = remember(
+        checklist.id,
+        bottomOverlayInsetPxProvider,
+        baseBottomOverlayInsetPxProvider
+    ) {
+        {
+            if (isActivePageState.value) {
+                bottomOverlayInsetPxProvider()
+            } else {
+                baseBottomOverlayInsetPxProvider()
+            }
+        }
+    }
 
     val stackedListState = remember(checklist.id) { StackedCardListState() }
     val totalCount = items.size
@@ -983,10 +1019,10 @@ private fun ChecklistPageContent(
     val topOverlayInsetPxProvider: () -> Float = remember(
         checklist.id,
         progressCardHeightHolder,
-        progressCollapseFractionProvider
+        pageCollapseProvider
     ) {
         {
-            progressCardHeightHolder.value * (1f - progressCollapseFractionProvider())
+            progressCardHeightHolder.value * (1f - pageCollapseProvider())
         }
     }
 
@@ -1090,7 +1126,7 @@ private fun ChecklistPageContent(
                     lastFrameNanos = frameNanos
                     if (dtSec > 0f && containerHeightPx > 0f) {
                         val topBound = topOverlayInsetPxProvider().coerceAtLeast(0f)
-                        val bottomBound = (containerHeightPx - bottomOverlayInsetPxProvider())
+                        val bottomBound = (containerHeightPx - pageBottomOverlayInsetPxProvider())
                             .coerceAtLeast(topBound + 1f)
                         val activeSpan = (bottomBound - topBound).coerceAtLeast(1f)
                         val edgeZonePx = maxEdgeZonePx
@@ -1181,7 +1217,19 @@ private fun ChecklistPageContent(
                     )
                 },
                 renameButtonFocusRequester = renameButtonFocusRequester,
-                deleteButtonFocusRequester = deleteButtonFocusRequester
+                deleteButtonFocusRequester = deleteButtonFocusRequester,
+                modifier = Modifier
+                    .zIndex(20f)
+                    .graphicsLayer {
+                        val collapse = pageCollapseProvider()
+                        val h = size.height
+                        translationY = if (collapse >= 0.99f) {
+                            -h - 200f
+                        } else {
+                            -h * collapse
+                        }
+                        alpha = (1f - collapse * 1.4f).coerceIn(0f, 1f)
+                    }
             )
 
             Box(
@@ -1232,7 +1280,7 @@ private fun ChecklistPageContent(
                             val rowHeightPx = matchedInfo.heightPx.coerceAtLeast(1f)
                             val grabOffsetY = down.position.y - rowTopInContainer
                             val minOverlayY = topOverlayInsetPxProvider().coerceAtLeast(0f)
-                            val maxOverlayY = (containerHeightPx - bottomOverlayInsetPxProvider() - rowHeightPx)
+                            val maxOverlayY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - rowHeightPx)
                                 .coerceAtLeast(minOverlayY)
 
                             draggedItemHeightPx = rowHeightPx
@@ -1254,7 +1302,7 @@ private fun ChecklistPageContent(
                                     val newPointerY = change.position.y
                                     pointerYInContainerState.floatValue = newPointerY
                                     val minY = topOverlayInsetPxProvider().coerceAtLeast(0f)
-                                    val maxY = (containerHeightPx - bottomOverlayInsetPxProvider() - draggedItemHeightPx)
+                                    val maxY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - draggedItemHeightPx)
                                         .coerceAtLeast(minY)
                                     dragOverlayY = (newPointerY - grabOffsetY).coerceIn(minY, maxY)
                                     recalculateInsertionSlot()
@@ -1306,7 +1354,7 @@ private fun ChecklistPageContent(
                     key = { it.id },
                     state = stackedListState,
                     topInsetPxProvider = topOverlayInsetPxProvider,
-                    bottomInsetPxProvider = bottomOverlayInsetPxProvider,
+                    bottomInsetPxProvider = pageBottomOverlayInsetPxProvider,
                     pinnedExpandedKeyProvider = { currentEditingItemIdState.value },
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalSpacing = 10.dp,
@@ -1428,19 +1476,7 @@ private fun ChecklistPageContent(
 
         layout(pageConstraints.maxWidth, pageConstraints.maxHeight) {
             listBoxPlaceable.placeRelative(0, 0)
-            val collapse = progressCollapseFractionProvider()
-            val yOffset = if (collapse >= 0.99f) {
-                -progressPlaceable.height - 200
-            } else {
-                -(progressPlaceable.height * collapse).roundToInt()
-            }
-            progressPlaceable.placeRelativeWithLayer(
-                x = 0,
-                y = yOffset,
-                zIndex = 20f
-            ) {
-                alpha = (1f - collapse * 1.4f).coerceIn(0f, 1f)
-            }
+            progressPlaceable.placeRelative(0, 0)
         }
     }
 }
@@ -1460,27 +1496,25 @@ private fun QuickInputBar(
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val density = LocalDensity.current
     val bodyHeightHolder = remember { FloatValueHolder(0f) }
 
-    // 將導覽列靜態底部留白維持於 Surface 內，並於 Placement 階段以 offset 直接讀取 IME 高度，確保 1:1 上移與返回下移歸位，且 Surface 永不隨鍵盤高度膨脹
+    // 將導覽列靜態底部留白維持於 Surface 內，並於 GPU graphicsLayer 階段讀取 IME 高度，確保 1:1 上移與返回下移歸位且 0 Layout Placement
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .offset {
+            .graphicsLayer {
                 val imePx = if (shouldFreezeImeProvider()) {
                     0
                 } else {
-                    imeInsets.getBottom(this)
+                    imeInsets.getBottom(density)
                 }
-                val navPx = navBarInsets.getBottom(this)
-                val imeLiftPx = (imePx - navPx).coerceAtLeast(0)
-                IntOffset(x = 0, y = -imeLiftPx)
-            }
-            .graphicsLayer {
+                val navPx = navBarInsets.getBottom(density)
+                val imeLiftPx = (imePx - navPx).coerceAtLeast(0).toFloat()
                 val hideFraction = hideProgressProvider().coerceIn(0f, 1f)
                 val hideDropPx = bodyHeightHolder.value * hideFraction +
                     if (hideFraction >= 0.99f) 2000f else 0f
-                translationY = hideDropPx
+                translationY = hideDropPx - imeLiftPx
                 alpha = (1f - hideFraction * 1.4f).coerceIn(0f, 1f)
             },
         color = colorScheme.surfaceContainer,
@@ -1552,4 +1586,6 @@ private data class ResetWaveState(
 )
 
 private class FloatValueHolder(var value: Float)
+
+private class EditingDraftHolder(var text: String = "")
 

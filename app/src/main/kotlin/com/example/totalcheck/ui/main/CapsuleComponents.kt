@@ -67,6 +67,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
@@ -644,7 +645,6 @@ fun CapsuleCheckItemRow(
                         Modifier
                     }
                 )
-                .clip(RoundedCornerShape(24.dp))
                 .drawBehind {
                     val t = checkedProgress.value.coerceIn(0f, 1f)
                     val ringProgress = holdRingProgress.value.coerceIn(0f, 1f)
@@ -708,20 +708,6 @@ fun CapsuleCheckItemRow(
                                 )
                             )
                         }
-                    }
-                }
-                .drawWithContent {
-                    drawContent()
-                    val depth = stackDepthProvider().coerceIn(0f, 4f)
-                    if (depth > 0.01f && !isFloatingDragged) {
-                        val maxDim = if (isDarkSurface) 0.42f else 0.22f
-                        val stepDim = if (isDarkSurface) 0.11f else 0.055f
-                        val dimAlpha = (depth * stepDim).coerceIn(0f, maxDim)
-                        val corner = CornerRadius(cornerRadiusPx, cornerRadiusPx)
-                        drawRoundRect(
-                            color = Color.Black.copy(alpha = dimAlpha),
-                            cornerRadius = corner
-                        )
                     }
                 }
                 .onFocusChanged { isCardFocused = it.isFocused }
@@ -853,7 +839,10 @@ fun CapsuleCheckItemRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)
-                    .graphicsLayer { alpha = lerp(1f, 0.45f, checkedProgress.value.coerceIn(0f, 1f)) },
+                    .graphicsLayer {
+                        alpha = lerp(1f, 0.45f, checkedProgress.value.coerceIn(0f, 1f))
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                    },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
@@ -954,24 +943,24 @@ fun CapsuleCheckItemRow(
                             }
                         },
                         enabled = editValue.text.isNotBlank(),
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(34.dp),
                         contentColor = colorScheme.primary
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Check,
                             contentDescription = stringResource(R.string.cd_save_name),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                     TactileIconButton(
                         onClick = onCancelEdit,
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(34.dp),
                         contentColor = colorScheme.onSurfaceVariant
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
                             contentDescription = stringResource(R.string.cd_cancel_edit),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 } else {
@@ -1126,6 +1115,26 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 }
+            }
+
+            if (!isFloatingDragged) {
+                Spacer(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer {
+                            val depth = stackDepthProvider().coerceIn(0f, 4f)
+                            val maxDim = if (isDarkSurface) 0.42f else 0.22f
+                            val stepDim = if (isDarkSurface) 0.11f else 0.055f
+                            alpha = if (depth > 0.005f) (depth * stepDim).coerceIn(0f, maxDim) else 0f
+                        }
+                        .drawBehind {
+                            val corner = CornerRadius(cornerRadiusPx, cornerRadiusPx)
+                            drawRoundRect(
+                                color = Color.Black,
+                                cornerRadius = corner
+                            )
+                        }
+                )
             }
         }
     }
