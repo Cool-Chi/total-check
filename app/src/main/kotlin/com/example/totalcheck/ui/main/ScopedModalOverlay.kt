@@ -478,36 +478,26 @@ internal fun ScopedModalHost(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Style C Segmented Toggle: 空白清單 vs 快速匯入
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(50))
-                                .background(colorScheme.surfaceContainerHighest)
-                                .padding(4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            SegmentedModePill(
-                                label = stringResource(R.string.modal_tab_blank_list),
-                                selected = !isQuickImportMode,
-                                onClick = {
+                        // Liquid Tab Indicator: 空白清單 vs 快速匯入
+                        LiquidTabBar(
+                            labels = listOf(
+                                stringResource(R.string.modal_tab_blank_list),
+                                stringResource(R.string.modal_tab_quick_import)
+                            ),
+                            selectedIndex = if (isQuickImportMode) 1 else 0,
+                            onSelect = { index ->
+                                if (index == 0) {
                                     isQuickImportMode = false
                                     expectImeForModal = true
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                            SegmentedModePill(
-                                label = stringResource(R.string.modal_tab_quick_import),
-                                selected = isQuickImportMode,
-                                onClick = {
+                                } else {
                                     isQuickImportMode = true
                                     expectImeForModal = false
                                     keyboardController?.hide()
                                     focusManager.clearFocus()
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Spacer(modifier = Modifier.height(14.dp))
 
                         if (!isQuickImportMode) {
@@ -1053,40 +1043,6 @@ private fun ModalPanelContainer(
                 .padding(24.dp)
         ) {
             content { idx -> focusedCycleIndex = idx }
-        }
-    }
-}
-
-@Composable
-private fun SegmentedModePill(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier
-            .slideOutCancelClickable(
-                shape = RoundedCornerShape(50),
-                role = Role.Tab,
-                onClick = onClick
-            ),
-        shape = RoundedCornerShape(50),
-        color = if (selected) colorScheme.primary else Color.Transparent,
-        contentColor = if (selected) colorScheme.onPrimary else colorScheme.onSurfaceVariant
-    ) {
-        Box(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
