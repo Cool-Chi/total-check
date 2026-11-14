@@ -482,7 +482,6 @@ internal fun ScopedModalHost(
                         }
                     }
 
-                    val isKeyboardOpen = isImeVisible || currentImeExtraPx > with(density) { 40.dp.toPx() }
                     LaunchedEffect(rawImportText.isBlank()) {
                         if (rawImportText.isBlank()) {
                             isTitleInputFocused = false
@@ -658,7 +657,7 @@ internal fun ScopedModalHost(
                                 )
                             }
                         } else {
-                            // 第一層：主輸入框優先（單行起始高度與空白清單一致，鍵盤展開時收斂為 2 行）
+                            // 第一層：主輸入框優先（單行起始高度與空白清單一致，可自動延展至 4 行）
                             OutlinedTextField(
                                 value = rawImportText,
                                 onValueChange = { newText ->
@@ -679,7 +678,7 @@ internal fun ScopedModalHost(
                                     Text(text = stringResource(R.string.import_raw_text_placeholder))
                                 },
                                 minLines = 1,
-                                maxLines = if (isKeyboardOpen) 2 else 4,
+                                maxLines = 4,
                                 shape = RoundedCornerShape(16.dp)
                             )
                             Spacer(modifier = Modifier.height(10.dp))
@@ -863,7 +862,7 @@ internal fun ScopedModalHost(
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(max = if (isKeyboardOpen) 88.dp else 188.dp)
+                                            .heightIn(max = 188.dp)
                                             .verticalScroll(rememberScrollState()),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
