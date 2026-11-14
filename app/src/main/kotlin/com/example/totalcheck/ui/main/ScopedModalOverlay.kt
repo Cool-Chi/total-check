@@ -48,6 +48,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -91,6 +92,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -629,15 +631,79 @@ internal fun ScopedModalHost(
                                         }
                                     },
                                 placeholder = {
-                                    Text(
-                                        text = stringResource(R.string.import_raw_text_placeholder),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
+                                    Text(text = stringResource(R.string.import_raw_text_placeholder))
                                 },
                                 minLines = 2,
                                 maxLines = 4,
                                 shape = RoundedCornerShape(16.dp)
                             )
+
+                            if (rawImportText.isBlank()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                val aiPromptText = stringResource(R.string.import_ai_prompt_text)
+                                var promptCopied by remember(sessionKey) { mutableStateOf(false) }
+                                LaunchedEffect(promptCopied) {
+                                    if (promptCopied) {
+                                        delay(1500L)
+                                        promptCopied = false
+                                    }
+                                }
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = colorScheme.surfaceContainer,
+                                    border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = stringResource(R.string.import_ai_prompt_title),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = aiPromptText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        TactileIconButton(
+                                            onClick = {
+                                                clipboardManager.setText(AnnotatedString(aiPromptText))
+                                                promptCopied = true
+                                            },
+                                            modifier = Modifier.size(34.dp),
+                                            shape = CircleShape,
+                                            containerColor = if (promptCopied) {
+                                                colorScheme.primaryContainer
+                                            } else {
+                                                colorScheme.surfaceContainerHighest
+                                            },
+                                            contentColor = if (promptCopied) {
+                                                colorScheme.onPrimaryContainer
+                                            } else {
+                                                colorScheme.onSurfaceVariant
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = if (promptCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                                contentDescription = stringResource(
+                                                    if (promptCopied) R.string.import_ai_prompt_copied else R.string.cd_copy_ai_prompt
+                                                ),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
 
                             if (rawImportText.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(10.dp))

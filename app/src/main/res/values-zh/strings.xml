@@ -65,7 +65,11 @@
     <string name="action_import_from_clipboard_shortcut">📋 从剪贴板导入</string>
     <string name="action_paste_clipboard">📋 粘贴剪贴板</string>
     <string name="action_select_document">📄 选择文档 (.txt/.md/.csv)</string>
-    <string name="import_raw_text_placeholder">例如：实验工具: 电表, 焊锡, 连接线\n或多行 - [ ] 项目</string>
+    <string name="import_raw_text_placeholder">例如：露营装备：帐篷, 睡袋, 手电筒\n或每行一项直接粘贴</string>
+    <string name="import_ai_prompt_title">AI 生成提示词范例</string>
+    <string name="import_ai_prompt_text">请只输出一行：「清单名称：项目1, 项目2, 项目3」，不要其他说明。</string>
+    <string name="cd_copy_ai_prompt">复制提示词</string>
+    <string name="import_ai_prompt_copied">已复制</string>
     <string name="import_default_checklist_title">导入清单</string>
     <string name="import_preview_stats_single_line">已识别 %1$d 个项目（单行模式）</string>
     <string name="import_preview_stats_multiline">已识别 %1$d 个项目（Markdown 模式）</string>
