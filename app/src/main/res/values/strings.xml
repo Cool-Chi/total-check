@@ -78,6 +78,23 @@
     <string name="action_import_create_count">Import &amp; Create (%1$d)</string>
     <string name="snackbar_imported_checklist">Imported \"%1$s\" (%2$d items)</string>
 
+    <!-- Desktop Widget (M8) -->
+    <string name="widget_name">TotalCheck</string>
+    <string name="widget_description">Quickly check off items and switch checklists from your home screen.</string>
+    <string name="widget_left_count">%1$d left</string>
+    <string name="widget_left_filtered">%1$d left · Unchecked</string>
+    <string name="widget_all_set_short">✓ All set</string>
+    <string name="widget_all_set_with_count">✓ All set (%1$d items)</string>
+    <string name="widget_reset_icon">↺</string>
+    <string name="widget_reset_confirm">Sure?</string>
+    <string name="widget_action_recheck">↺ Recheck</string>
+    <string name="widget_action_show_all">Show All Items</string>
+    <string name="widget_empty_checklist_hint">No items yet, tap to add</string>
+    <string name="widget_action_add_short">+ Add</string>
+    <string name="widget_progress_ratio">%1$d/%2$d ready</string>
+    <string name="widget_prev_checklist">&lt;</string>
+    <string name="widget_next_checklist">&gt;</string>
+
     <!-- Skeleton -->
     <string name="skeleton_loading_state">Loading checklists</string>
     <string name="skeleton_sample_left">4 left</string>
