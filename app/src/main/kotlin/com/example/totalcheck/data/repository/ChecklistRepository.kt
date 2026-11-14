@@ -5,6 +5,7 @@ import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistDao
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.parser.ParsedItemDraft
 import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.flow.Flow
 
@@ -26,6 +27,25 @@ class ChecklistRepository(
         val id = dao.insertChecklist(ChecklistEntity(name = name, sortOrder = nextSortOrder))
         WidgetSyncManager.notifyDataChanged(appContext)
         return id
+    }
+
+    suspend fun createChecklistWithItems(
+        name: String,
+        items: List<ParsedItemDraft>
+    ): Long {
+        val nextSortOrder = (dao.getMaxChecklistSortOrder() ?: -1) + 1
+        val checklist = ChecklistEntity(name = name, sortOrder = nextSortOrder)
+        val entities = items.mapIndexed { index, draft ->
+            CheckItemEntity(
+                checklistId = 0L,
+                label = draft.label,
+                isChecked = draft.isChecked,
+                sortOrder = index
+            )
+        }
+        val newId = dao.createChecklistWithItems(checklist = checklist, items = entities)
+        WidgetSyncManager.notifyDataChanged(appContext)
+        return newId
     }
 
     suspend fun renameChecklist(id: Long, newName: String) {

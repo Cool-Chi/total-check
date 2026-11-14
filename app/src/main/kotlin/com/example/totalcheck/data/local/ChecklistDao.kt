@@ -64,6 +64,18 @@ interface ChecklistDao {
         }
     }
 
+    @Transaction
+    suspend fun createChecklistWithItems(
+        checklist: ChecklistEntity,
+        items: List<CheckItemEntity>
+    ): Long {
+        val newChecklistId = insertChecklist(checklist)
+        if (items.isNotEmpty()) {
+            insertItems(items.map { it.copy(checklistId = newChecklistId) })
+        }
+        return newChecklistId
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItem(item: CheckItemEntity): Long
 

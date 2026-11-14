@@ -171,6 +171,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun importChecklist(
+        title: String,
+        items: List<com.example.totalcheck.data.parser.ParsedItemDraft>,
+        onImported: (ChecklistEntity, Int) -> Unit = { _, _ -> }
+    ) {
+        val trimmedTitle = title.trim()
+        val validItems = items.mapNotNull { draft ->
+            val cleanLabel = draft.label.trim()
+            if (cleanLabel.isEmpty()) null else draft.copy(label = cleanLabel)
+        }
+        if (trimmedTitle.isEmpty() || validItems.isEmpty()) return
+        viewModelScope.launch {
+            val newId = repository.createChecklistWithItems(
+                name = trimmedTitle,
+                items = validItems
+            )
+            _pendingScrollToChecklistId.value = newId
+            onImported(ChecklistEntity(id = newId, name = trimmedTitle), validItems.size)
+        }
+    }
+
     fun clearPendingScroll() {
         _pendingScrollToChecklistId.value = null
     }
