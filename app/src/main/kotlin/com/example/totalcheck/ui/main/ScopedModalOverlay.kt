@@ -1,12 +1,18 @@
 package com.example.totalcheck.ui.main
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,17 +28,27 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -49,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -63,22 +81,30 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.example.totalcheck.R
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.parser.ChecklistTextParser
+import com.example.totalcheck.data.parser.ImportFormatMode
+import com.example.totalcheck.data.parser.ParsedItemDraft
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -112,6 +138,7 @@ internal fun ScopedModalHost(
     sessionKey: Int,
     onRequestClose: (restoreFocus: Boolean) -> Unit,
     onConfirmCreate: (String) -> Unit,
+    onConfirmImport: (title: String, items: List<ParsedItemDraft>) -> Unit = { _, _ -> },
     onConfirmRename: (ChecklistEntity, String) -> Unit,
     onConfirmDelete: (ChecklistEntity) -> Unit,
     onExited: () -> Unit,
@@ -141,6 +168,9 @@ internal fun ScopedModalHost(
     if (modalContent == null) return
 
     val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    @Suppress("DEPRECATION")
+    val clipboardManager = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isReducedMotion = LocalReducedMotion.current
@@ -362,8 +392,71 @@ internal fun ScopedModalHost(
         ) {
             when (modalContent) {
                 is ChecklistModalContent.CreateChecklist -> {
+                    val defaultImportTitle = stringResource(R.string.import_default_checklist_title)
+                    var isQuickImportMode by remember(sessionKey) { mutableStateOf(false) }
                     var name by remember(sessionKey) { mutableStateOf("") }
-                    val confirmEnabled = name.isNotBlank()
+                    var rawImportText by remember(sessionKey) { mutableStateOf("") }
+                    var fileFallbackTitle by remember(sessionKey) { mutableStateOf<String?>(null) }
+                    var previewTitle by remember(sessionKey) { mutableStateOf("") }
+                    var hasEditedTitleManually by remember(sessionKey) { mutableStateOf(false) }
+                    var previewItems by remember(sessionKey) { mutableStateOf<List<ParsedItemDraft>>(emptyList()) }
+
+                    val parsedDraft = remember(rawImportText) {
+                        ChecklistTextParser.parse(rawImportText)
+                    }
+
+                    val applyImportSource: (newText: String, fallbackDocTitle: String?) -> Unit = { newText, fallbackDocTitle ->
+                        rawImportText = newText
+                        fileFallbackTitle = fallbackDocTitle
+                        val parsed = ChecklistTextParser.parse(newText)
+                        previewItems = parsed.items
+                        if (!hasEditedTitleManually || previewTitle.isBlank()) {
+                            previewTitle = parsed.title.ifBlank {
+                                fallbackDocTitle?.takeIf { it.isNotBlank() } ?: defaultImportTitle
+                            }
+                        }
+                    }
+
+                    val documentLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocument()
+                    ) { uri: Uri? ->
+                        if (uri != null) {
+                            val loaded = readImportDocumentFromUri(context, uri)
+                            if (loaded != null) {
+                                isQuickImportMode = true
+                                expectImeForModal = false
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                                hasEditedTitleManually = false
+                                applyImportSource(loaded.content, loaded.titleFallback)
+                            }
+                        }
+                    }
+
+                    val switchToQuickImportWithClipboard: (hideImeWhenClipboardHasText: Boolean) -> Unit = { hideOnHit ->
+                        isQuickImportMode = true
+                        val clipText = clipboardManager.getText()?.text.orEmpty()
+                        if (clipText.isNotBlank()) {
+                            hasEditedTitleManually = false
+                            applyImportSource(clipText, fileFallbackTitle)
+                            if (hideOnHit) {
+                                expectImeForModal = false
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            }
+                        } else {
+                            expectImeForModal = false
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                        }
+                    }
+
+                    val confirmEnabled = if (isQuickImportMode) {
+                        previewItems.isNotEmpty() && previewTitle.isNotBlank()
+                    } else {
+                        name.isNotBlank()
+                    }
+
                     ModalPanelContainer(
                         panelProgressProvider = { panelProgress.value },
                         translateYPx = translateYPx,
@@ -381,42 +474,277 @@ internal fun ScopedModalHost(
                             fontWeight = FontWeight.Bold,
                             color = colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Style C Segmented Toggle: 空白清單 vs 快速匯入
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .focusRequester(primaryFocus)
-                                .onFocusChanged {
-                                    if (it.isFocused) {
-                                        onFocusIndexChanged(0)
-                                        expectImeForModal = true
-                                    }
+                                .clip(RoundedCornerShape(50))
+                                .background(colorScheme.surfaceContainerHighest)
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            SegmentedModePill(
+                                label = stringResource(R.string.modal_tab_blank_list),
+                                selected = !isQuickImportMode,
+                                onClick = {
+                                    isQuickImportMode = false
+                                    expectImeForModal = true
                                 },
-                            placeholder = {
-                                Text(stringResource(R.string.dialog_create_checklist_placeholder))
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    if (isOpen && name.isNotBlank()) onConfirmCreate(name)
+                                modifier = Modifier.weight(1f)
+                            )
+                            SegmentedModePill(
+                                label = stringResource(R.string.modal_tab_quick_import),
+                                selected = isQuickImportMode,
+                                onClick = {
+                                    isQuickImportMode = true
+                                    expectImeForModal = false
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        if (!isQuickImportMode) {
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(primaryFocus)
+                                    .onFocusChanged {
+                                        if (it.isFocused) {
+                                            onFocusIndexChanged(0)
+                                            expectImeForModal = true
+                                        }
+                                    },
+                                placeholder = {
+                                    Text(stringResource(R.string.dialog_create_checklist_placeholder))
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(
+                                    onDone = {
+                                        if (isOpen && name.isNotBlank()) onConfirmCreate(name)
+                                    }
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .slideOutCancelClickable(
+                                        shape = RoundedCornerShape(50),
+                                        role = Role.Button,
+                                        onClick = { switchToQuickImportWithClipboard(true) }
+                                    ),
+                                shape = RoundedCornerShape(50),
+                                color = colorScheme.secondaryContainer.copy(alpha = 0.72f),
+                                contentColor = colorScheme.onSecondaryContainer,
+                                border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_import_from_clipboard_shortcut),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(20.dp))
+                            ModalActionRow(
+                                cancelFocus = cancelFocus,
+                                confirmFocus = confirmFocus,
+                                confirmLabel = stringResource(R.string.action_create),
+                                confirmEnabled = confirmEnabled,
+                                isDestructive = false,
+                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                                onCancel = { if (isOpen) onRequestClose(true) },
+                                onConfirm = { if (isOpen) onConfirmCreate(name) }
+                            )
+                        } else {
+                            // 快速匯入來源列（貼上剪貼簿 + 選擇文檔）
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TactileButton(
+                                    onClick = { switchToQuickImportWithClipboard(true) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.secondaryContainer,
+                                    contentColor = colorScheme.onSecondaryContainer,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_paste_clipboard),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                TactileButton(
+                                    onClick = {
+                                        documentLauncher.launch(arrayOf("text/*", "application/octet-stream"))
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.tertiaryContainer,
+                                    contentColor = colorScheme.onTertiaryContainer,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_select_document),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = rawImportText,
+                                onValueChange = { newText ->
+                                    applyImportSource(newText, fileFallbackTitle)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(primaryFocus)
+                                    .onFocusChanged {
+                                        if (it.isFocused) {
+                                            onFocusIndexChanged(0)
+                                            expectImeForModal = true
+                                        }
+                                    },
+                                placeholder = {
+                                    Text(
+                                        text = stringResource(R.string.import_raw_text_placeholder),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                },
+                                minLines = 2,
+                                maxLines = 4,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+
+                            if (rawImportText.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                OutlinedTextField(
+                                    value = previewTitle,
+                                    onValueChange = { updatedTitle ->
+                                        hasEditedTitleManually = true
+                                        previewTitle = updatedTitle
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onFocusChanged {
+                                            if (it.isFocused) {
+                                                expectImeForModal = true
+                                            }
+                                        },
+                                    label = { Text(stringResource(R.string.dialog_checklist_name_label)) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(16.dp),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = {
+                                            expectImeForModal = false
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                        }
+                                    )
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                val statsText = when {
+                                    previewItems.isEmpty() || parsedDraft.detectedMode == ImportFormatMode.EMPTY ->
+                                        stringResource(R.string.import_preview_empty_hint)
+                                    parsedDraft.detectedMode == ImportFormatMode.SINGLE_LINE ->
+                                        stringResource(R.string.import_preview_stats_single_line, previewItems.size)
+                                    else ->
+                                        stringResource(R.string.import_preview_stats_multiline, previewItems.size)
+                                }
+                                val statsContainer = if (previewItems.isNotEmpty()) {
+                                    colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                } else {
+                                    colorScheme.errorContainer.copy(alpha = 0.65f)
+                                }
+                                val statsColor = if (previewItems.isNotEmpty()) {
+                                    colorScheme.onPrimaryContainer
+                                } else {
+                                    colorScheme.onErrorContainer
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = statsContainer
+                                ) {
+                                    Text(
+                                        text = statsText,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = statsColor,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                if (previewItems.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = if (expectImeForModal) 112.dp else 188.dp)
+                                            .verticalScroll(rememberScrollState()),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        previewItems.forEachIndexed { idx, draft ->
+                                            PreviewDraftCapsuleRow(
+                                                draft = draft,
+                                                onToggleChecked = {
+                                                    previewItems = previewItems.toMutableList().also { list ->
+                                                        list[idx] = list[idx].copy(isChecked = !list[idx].isChecked)
+                                                    }
+                                                },
+                                                onRemove = {
+                                                    previewItems = previewItems.toMutableList().also { list ->
+                                                        list.removeAt(idx)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(18.dp))
+                            ModalActionRow(
+                                cancelFocus = cancelFocus,
+                                confirmFocus = confirmFocus,
+                                confirmLabel = stringResource(R.string.action_import_create_count, previewItems.size),
+                                confirmEnabled = confirmEnabled,
+                                isDestructive = false,
+                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                                onCancel = { if (isOpen) onRequestClose(true) },
+                                onConfirm = {
+                                    if (isOpen && previewItems.isNotEmpty() && previewTitle.isNotBlank()) {
+                                        onConfirmImport(previewTitle.trim(), previewItems)
+                                    }
                                 }
                             )
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        ModalActionRow(
-                            cancelFocus = cancelFocus,
-                            confirmFocus = confirmFocus,
-                            confirmLabel = stringResource(R.string.action_create),
-                            confirmEnabled = confirmEnabled,
-                            isDestructive = false,
-                            onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
-                            onCancel = { if (isOpen) onRequestClose(true) },
-                            onConfirm = { if (isOpen) onConfirmCreate(name) }
-                        )
+                        }
                     }
                 }
 
@@ -653,10 +981,191 @@ private fun ModalPanelContainer(
         shadowElevation = 12.dp,
         border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.7f))
     ) {
-        Column(modifier = Modifier.padding(24.dp)) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp)
+        ) {
             content { idx -> focusedCycleIndex = idx }
         }
     }
+}
+
+@Composable
+private fun SegmentedModePill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier
+            .slideOutCancelClickable(
+                shape = RoundedCornerShape(50),
+                role = Role.Tab,
+                onClick = onClick
+            ),
+        shape = RoundedCornerShape(50),
+        color = if (selected) colorScheme.primary else Color.Transparent,
+        contentColor = if (selected) colorScheme.onPrimary else colorScheme.onSurfaceVariant
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreviewDraftCapsuleRow(
+    draft: ParsedItemDraft,
+    onToggleChecked: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val containerColor = if (draft.isChecked) {
+        colorScheme.surfaceContainerLow
+    } else {
+        colorScheme.surfaceContainer
+    }
+    val borderColor = if (draft.isChecked) {
+        colorScheme.outlineVariant.copy(alpha = 0.45f)
+    } else {
+        colorScheme.tertiary.copy(alpha = 0.5f)
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .slideOutCancelClickable(
+                shape = RoundedCornerShape(16.dp),
+                role = Role.Checkbox,
+                onClick = onToggleChecked
+            ),
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (draft.isChecked) {
+                    colorScheme.surfaceContainerHighest
+                } else {
+                    colorScheme.tertiaryContainer
+                }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (draft.isChecked) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = stringResource(R.string.status_checked),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = stringResource(R.string.status_unchecked),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = draft.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (draft.isChecked) {
+                    colorScheme.onSurface.copy(alpha = 0.5f)
+                } else {
+                    colorScheme.onSurface
+                },
+                textDecoration = if (draft.isChecked) TextDecoration.LineThrough else null,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            TactileIconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(28.dp),
+                shape = CircleShape,
+                contentColor = colorScheme.onSurfaceVariant
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.cd_remove_preview_item, draft.label),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+private data class LoadedDocument(
+    val titleFallback: String?,
+    val content: String
+)
+
+private fun readImportDocumentFromUri(context: Context, uri: Uri): LoadedDocument? {
+    val content = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            stream.bufferedReader(Charsets.UTF_8).readText()
+        }
+    }.getOrNull() ?: return null
+
+    var displayName: String? = null
+    runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) {
+                    displayName = cursor.getString(idx)
+                }
+            }
+        }
+    }
+    val rawName = displayName ?: uri.lastPathSegment?.substringAfterLast('/')
+    val baseTitle = rawName
+        ?.substringBeforeLast('.')
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+    return LoadedDocument(
+        titleFallback = baseTitle,
+        content = content
+    )
 }
 
 @Composable

@@ -59,6 +59,21 @@
     <string name="quick_add_placeholder">快速新增清點項目...</string>
     <string name="cd_add_item">新增項目</string>
 
+    <!-- Quick Import -->
+    <string name="modal_tab_blank_list">空白清單</string>
+    <string name="modal_tab_quick_import">快速匯入</string>
+    <string name="action_import_from_clipboard_shortcut">📋 從剪貼簿匯入</string>
+    <string name="action_paste_clipboard">📋 貼上剪貼簿</string>
+    <string name="action_select_document">📄 選擇文檔 (.txt/.md/.csv)</string>
+    <string name="import_raw_text_placeholder">例如：實驗工具: 電表, 焊錫, 連接線\n或多行 - [ ] 項目</string>
+    <string name="import_default_checklist_title">匯入清單</string>
+    <string name="import_preview_stats_single_line">已識別 %1$d 個項目（單行模式）</string>
+    <string name="import_preview_stats_multiline">已識別 %1$d 個項目（Markdown 模式）</string>
+    <string name="import_preview_empty_hint">尚未識別出有效清點項目</string>
+    <string name="cd_remove_preview_item">移除預覽項目「%1$s」</string>
+    <string name="action_import_create_count">匯入並建立 (%1$d 項)</string>
+    <string name="snackbar_imported_checklist">已匯入「%1$s」（共 %2$d 項）</string>
+
     <!-- Skeleton -->
     <string name="skeleton_loading_state">正在載入清單資料</string>
     <string name="skeleton_sample_left">尚缺 4</string>

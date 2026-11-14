@@ -738,6 +738,22 @@ fun TotalCheckScreen(
                         closeModal(restoreFocus = true)
                         viewModel.createChecklist(name)
                     },
+                    onConfirmImport = { title, items ->
+                        closeModal(restoreFocus = false)
+                        viewModel.importChecklist(title, items) { createdChecklist, count ->
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(
+                                        R.string.snackbar_imported_checklist,
+                                        createdChecklist.name,
+                                        count
+                                    ),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
+                        }
+                    },
                     onConfirmRename = { target, newName ->
                         closeModal(restoreFocus = true)
                         viewModel.renameChecklist(target.id, newName)
