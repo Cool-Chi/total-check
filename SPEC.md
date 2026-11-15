@@ -18,7 +18,7 @@
 - [x] **雙軌色彩與主題引擎**：內建專為 HyperOS / 非標準 Monet 系統調校的高對比亮/暗色盤、原生 Material 3 Dynamic Color 切換開關、`ThemeConfig?` 冷啟動零閃爍初始化，以及啟動骨架屏（`TotalCheckSkeletonShimmer`）。
 - [x] **桌面 Widget（M8+，原生 Direct RemoteViews 雙形態自適應桌面小工具群）**：
   - **工具清單網格（`TotalCheckWidgetReceiver` / `widget_info_checklist_grid.xml`，`2x2` 以上）**：鎖定 `minWidth="140dp"` / `minHeight="110dp"`，依據宿主寬高自適應三級版型（`Compact` 1 欄、`Standard` 2 欄、`Expanded` 雙層頂欄 + 3 欄），於雙槽位 `<ViewFlipper>` 內以 `<ListView>` 承載純 `<TextView>` Bento 膠囊列（API 31+ 使用 `RemoteCollectionItems` 搭配 `hasStableIds = true` 與 `PendingIntentTemplate` + `FillInIntent`；API 26–30 回退至 `TotalCheckWidgetViewsService`），同時保留 `85ms` 水波紋綻放延遲、`↺ ⇄ 確認?` 兩段式防誤觸重置、鎖定寬度之 `尚缺 X` 篩選 `<ViewFlipper>`、全部備齊完成徽章、`WidgetSyncManager` 跨進程即時同步與點擊標題/進度列帶 `EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位主畫面分頁。
-  - **清單極簡計數條（`TotalCheckCounterWidgetReceiver` / `widget_info_counter_bar.xml`，`2x1` ~ `4x1`）**：嚴格遵守 Android 1 格高（`40dp`~`85dp`）水平縮放限制；`2x1` 顯示清單標題、`尚缺 X` / `✓ 全部備齊` 膠囊與 `< >` 切換（搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡），寬度 `>= 220dp`（`3x1` / `4x1`）時自動展開膠囊進度條（`ProgressBar`）與兩段式 `↺ ⇄ 確認?` 重置鈕，與網格小工具共用 `WidgetSyncManager` 即時雙向同步。
+  - **清單極簡計數條（`TotalCheckCounterWidgetReceiver` / `widget_info_counter_bar.xml`，`2x1` ~ `4x1`）**：嚴格遵守 Android 1 格高（`40dp`~`85dp`）水平縮放限制；左側內容區於 `2x1 ~ 4x1` 全尺寸常駐「上層（標題 + 右側精簡計數 `尚缺 X` / `✓ checked/total`）+ 下層圓角 `ProgressBar`」雙層結構，搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡；右側操作區於 `2x1`（`< 220dp`）僅顯示 `< >` 切換，寬度 `>= 220dp`（`3x1` / `4x1`）時自動展開兩段式 `↺ ⇄ 確認?` 重置鈕，與網格小工具共用 `WidgetSyncManager` 即時雙向同步。
   - **動態預覽與動態色彩**：兩款小工具皆具備三語系命名描述、Android 12–16/17 純靜態高擬真 `previewLayout`（`widget_preview_checklist_grid.xml`、`widget_preview_counter_bar.xml`）、API < 31 風格 C 向量預覽圖（`*_fallback.xml`）及系統日夜模式動態色票（`values-v31` / `values-night-v31`）。
 
 ### 擴充功能（M7+ 迭代，底層欄位已預埋）
@@ -77,7 +77,7 @@ data class CheckItemEntity(
 ### 3.3 主程式與 Widget 解耦機制
 
 * `AppDatabase` 必須採用 Double-Checked Locking Singleton 模式，確保未來主程式與 Widget 跨進程讀寫不發生 Lock 衝突。
-* 在 `ChecklistRepository` 每次完成寫入（新增、勾選、刪除、重置）後，統一呼叫 `WidgetSyncManager.notifyDataChanged(context)` 透過 `DirectWidgetRenderer.renderAll()` 即時刷新桌面小工具；而在桌面 Widget 點擊項目（`CMD_TOGGLE_ITEM`）時，由 `WidgetSyncManager.tryHandleFastCommand()` 採記憶體樂觀快取與 `toggleGeneration` 合併並給予 `85ms`（`TOGGLE_RIPPLE_DELAY_MS`）讓 `<ripple>` 水波紋完整綻放後，執行單一全量 `updateAppWidget`（於不觸發 `ViewFlipper.setDisplayedChild` 的前提下以 `hasStableIds = true` 原地更新 `<ListView>` 項目，維持捲動位置且零跳動）。由 Widget 點擊標題列／進度區啟動主程式時，透過 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 與 `MainViewModel.selectAndScrollToChecklist()` 精準定位至對應清單。
+* `UserPreferencesRepository` 與 `WidgetSyncManager` 以 `appWidgetId` 為主鍵隔離每個桌上小工具實例的狀態（`widget_selected_checklist_$appWidgetId`、`widget_show_unchecked_$appWidgetId`、`widget_reset_confirm_until_$appWidgetId`），所有 `PendingIntent` 均綁定專屬 `appWidgetId`、`requestCode` 與 URI，並於 `onDeleted` 清理已刪除實例偏好。切換清單、篩選或第一段重置僅透過 `DirectWidgetRenderer.renderSingleWidgetById()` 更新單一目標實例；在 `ChecklistRepository` 每次完成寫入（新增、勾選、刪除、重置）後，統一呼叫 `WidgetSyncManager.notifyDataChanged(context)` 透過 `DirectWidgetRenderer.renderAll()` 同步所有小工具並保留各自獨立的面板狀態。而在桌面 Widget 點擊項目（`CMD_TOGGLE_ITEM`）時，由 `WidgetSyncManager.tryHandleFastCommand()` 採記憶體樂觀快取與 `toggleGeneration` 合併並給予 `85ms`（`TOGGLE_RIPPLE_DELAY_MS`）讓 `<ripple>` 水波紋完整綻放後，執行單一全量 `updateAppWidget`（於不觸發 `ViewFlipper.setDisplayedChild` 的前提下以 `hasStableIds = true` 原地更新 `<ListView>` 項目，維持捲動位置且零跳動）。由 Widget 點擊標題列／進度區啟動主程式時，透過 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 與 `MainViewModel.selectAndScrollToChecklist()` 精準定位至對應清單。
 
 ---
 

@@ -6,7 +6,7 @@
 - **Language**: Kotlin
 - **UI**: Jetpack Compose + Material 3（雙軌色彩引擎、自訂 `StackedCardScrollLayout` 堆疊捲動與物理彈簧動效）
 - **資料層**: Room Database + DataStore Preferences
-- **Widget**: Jetpack Glance（架構已解耦，待 M8 接入）
+- **Widget**: 原生 `DirectWidgetRenderer` 雙桌面小工具（`工具清單網格 2x2+` 與 `清單極簡計數條 2x1~4x1`，按 `appWidgetId` 實例解耦並即時雙向同步）
 - **目標平台**: Android 16 / 17（`minSdk = 26` / `targetSdk = 36`）
 
 ## 開發環境

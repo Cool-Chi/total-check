@@ -26,7 +26,8 @@
 | `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析引擎與即時預覽快速匯入）** | 新增高容錯雙模式解析器 `ChecklistTextParser`、`ChecklistDao.createChecklistWithItems` 批次匯入交易、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（含 `LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調與 Sticky Header/Footer 防遮擋）及應用程式圖標 |
 | `v0.13.0` ~ `v0.13.5` | **M8（桌面小工具 Native Direct RemoteViews + Polish & Scroll Fix）** | 以原生 `DirectWidgetRenderer` 取代 Jetpack Glance 達成毫秒級響應，採用「雙槽位 `<ViewFlipper>` 內嵌原生 `<ListView>` + 純 `<TextView>` Bento 膠囊列」（API 31+ `RemoteCollectionItems` + API 26–30 `TotalCheckWidgetViewsService`）解決 Launcher 攔截垂直滑動手勢並徹底消滅重繪閃爍；整合 `85ms` ripple 綻放延遲、`toggleGeneration` 連點合併、`↺ ⇄ 確認?` 兩段式 `animateLayoutChanges` 過渡、鎖定寬度 `尚缺 X` 篩選 `<ViewFlipper>`、`WidgetSyncManager` 雙向同步與 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位 |
 | `v0.14.0` | **M8 Extension（動態預覽佈局 `previewLayout` 與多 Widget 命名規範）** | 新增 Android 12–16/17 純靜態高擬真 `widget_preview_checklist_grid.xml`（呈現 3x2 雙欄雙態對比）與 API < 31 風格 C 向量備援圖 `widget_preview_checklist_grid_fallback.xml`；將 Provider Metadata 結構化升級為 `widget_info_checklist_grid.xml`，並於三語系補齊 `widget_checklist_grid_name`、`widget_checklist_grid_description` 及 `widget_preview_*` 資源（保留 `TotalCheckWidgetReceiver` 類別路徑確保已釘選小工具無縫升級） |
-| `v0.15.0`（待提交） | **M8 Refactor（雙 Widget 拆分：網格 `2x2+` 與極簡計數條 `2x1~4x1`）** | 將單行 1 格高版型正式拆分為第二款獨立小工具「清單極簡計數條」（`TotalCheckCounterWidgetReceiver` + `widget_info_counter_bar.xml` + `widget_counter_bar.xml`，鎖定 `40dp~85dp` 單行高度並依寬度 `>= 220dp` 自動展開進度條與兩段式 `↺ ⇄ 確認?` 重置），同時將原「工具清單網格」鎖定為 `2x2` 以上（`minWidth="140dp"`、`minHeight="110dp"`）並移除 `DirectWidgetRenderer` 的 `MICRO` 分支，雙 Widget 由 `DirectWidgetRenderer.renderAll()` 統一同步 |
+| `v0.15.0` | **M8 Refactor（雙 Widget 拆分：網格 `2x2+` 與極簡計數條 `2x1~4x1`）** | 將單行 1 格高版型正式拆分為第二款獨立小工具「清單極簡計數條」（`TotalCheckCounterWidgetReceiver` + `widget_info_counter_bar.xml` + `widget_counter_bar.xml`，鎖定 `40dp~85dp` 單行高度並依寬度 `>= 220dp` 自動展開進度條與兩段式 `↺ ⇄ 確認?` 重置），同時將原「工具清單網格」鎖定為 `2x2` 以上（`minWidth="140dp"`、`minHeight="110dp"`）並移除 `DirectWidgetRenderer` 的 `MICRO` 分支，雙 Widget 由 `DirectWidgetRenderer.renderAll()` 統一同步 |
+| `v0.15.1` | **M8 Polish III（計數條 2x1 佈局重構與多實例 `appWidgetId` 解耦）** | 重構 `widget_counter_bar.xml` 與 `widget_preview_counter_bar.xml`：移除獨立「尚缺 X」膠囊，左側改為 `2x1 ~ 4x1` 全尺寸常駐「上標題 + 右側精簡計數（`尚缺 X` / `✓ checked/total`）+ 下進度條」雙層結構，`2x1`（`< 220dp`）右側僅保留 `< >` 切換、`3x1/4x1`（`>= 220dp`）展開 `↺ ⇄ 確認?`；`UserPreferencesRepository`、`WidgetSyncManager`、`DirectWidgetRenderer` 與 `PendingIntent` 全面改以 `appWidgetId` 隔離各小工具實例的清單選擇、過濾與重置確認狀態（並於 `onDeleted` 清理），同步 `app/build.gradle.kts` 版號（`versionCode = 4` / `versionName = "0.15.1"`）與 `AGENT.md` 版號規範 |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -35,7 +36,7 @@ app/src/main/kotlin/com/example/totalcheck/
 ├── data/
 │   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ChecklistDao
 │   ├── parser/ChecklistTextParser.kt      # 單行與多行 Markdown/表格/CSV/TSV/JSON 高容錯清單解析引擎
-│   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + Widget 狀態: widgetSelectedChecklistId, widgetShowUncheckedOnly, widgetResetConfirmUntilMillis)
+│   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + 按 appWidgetId 隔離之 Widget 狀態與 onDeleted 清理)
 │   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次匯入與排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
 │   └── widget/
 │       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + 85ms ripple 延遲與 toggleGeneration 合併 + 5 秒重置超時恢復
@@ -58,11 +59,11 @@ app/src/main/kotlin/com/example/totalcheck/
   - **Tier 2 (`Standard`, 寬 `>= 240.dp` 且 非 Expanded, 對應 `3x2` / `4x2`)**：完整頂欄（清單名 + `尚缺 X` 過濾切換 + 兩段式防誤觸重置 `↺` + `< >`）+ 雙欄可捲動 `<ListView>` Bento 膠囊網格。
   - **Tier 3 (`Expanded`, 寬 `>= 320.dp` 且 高 `>= 220.dp`, 對應 `4x3` / `4x4`+)**：雙層頂欄（額外展開視覺化 `ProgressBar` 膠囊進度條與 `+ 新增` 快速入口）+ 3 欄高密度可捲動 Bento 膠囊網格。
 - **Widget 2：清單極簡計數條（`TotalCheckCounterWidgetReceiver`，`2x1` ~ `4x1` 水平自適應）**：
-  - **基礎 `2x1` 版型（寬 `< 220.dp`）**：單行膠囊條（`40dp`~`85dp`），左側清單名稱點擊進入 App 並定位清單，中間狀態計數膠囊 `尚缺 X` / `✓ 全部備齊` 搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡，右側 `< >` 切換清單。
-  - **拉寬 `3x1 / 4x1` 版型（寬 `>= 220.dp`）**：於標題下方額外展開水平 `ProgressBar` 與進度比例（`已備 X/Y`），右側並展開兩段式防誤觸重置鈕 `↺ ⇄ 確認?`（`animateLayoutChanges="true"`）。
+  - **左側全尺寸雙層結構（`2x1` ~ `4x1` 常駐）**：上層為清單名稱（`layout_weight="1"`，點擊進入 App 並定位清單）與右側精簡計數文字（`尚缺 X` 或全備時 `✓ checked/total`），下層常駐圓角水平 `ProgressBar`，並搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡。
+  - **右側操作區自適應**：`2x1`（寬 `< 220.dp`）隱藏重置鈕僅顯示 `< >` 切換清單；`3x1 / 4x1`（寬 `>= 220.dp`）於 `< >` 左側自動展開兩段式防誤觸重置鈕 `↺ ⇄ 確認?`（`animateLayoutChanges="true"`）。
 - **互動、捲動與動效規範**：
   - **原生 `<ListView>` 捲動容器 + 純 `<TextView>` 膠囊列**：透過 `AdapterView` 攔截桌面垂直滑動手勢（避免 Pixel Launcher 誤觸通知欄/抽屜），API 31+ 使用 `RemoteCollectionItems`（`hasStableIds = true`、`viewTypeCount = 3`）搭配 `PendingIntentTemplate` + `FillInIntent`；一般勾選維持 `ORDER BY sortOrder ASC, id DESC` 原始順序，等待 `85ms` ripple 綻放後原地全量刷新（不呼叫 `ViewFlipper.setDisplayedChild`）以保持捲動位置與鄰居方塊穩定。
   - **雙槽位 `<ViewFlipper>` 切換轉場**：僅於 `<` / `>` 切換清單或點擊 `尚缺 X` 篩選時翻轉 `checklistFlipSlot`（`0 ⇄ 1`），呈現 180ms 淡入微縮放轉場；且 `尚缺 X` 膠囊鎖定精簡計數寬度，避免切換時擠壓左側清單標題。
   - **兩段式防誤觸重置（`↺`）**：頂欄右側按鈕區以獨立 `LinearLayout` 啟用 `android:animateLayoutChanges="true"`，點擊 `↺` 後切換為紅底（`errorContainer`）`確認?` 並維持 5 秒有效期限，超時自動復原。
   - **空面板與全部備齊徽章**：當清單無項目時顯示「尚無清點項目，點擊新增」入口；當 `尚缺 0` 且開啟「只看未帶」時，中央顯示 `✓ 全部備齊 (共 N 項)` 膠囊徽章與 `[ ↺ 重新清點 ]` / `[ 顯示全部項目 ]` 快捷鈕。
-  - **色彩與點擊連動**：採用 Android 系統日夜模式色盤（`values-v31` / `values-night-v31` 支援 Material You 動態取色）；平時獨立記憶 `widgetSelectedChecklistId`，直接點擊 Widget 標題／進度列進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`。
+  - **色彩與多實例解耦連動**：採用 Android 系統日夜模式色盤（`values-v31` / `values-night-v31` 支援 Material You 動態取色）；每個桌面 Widget 實例按 `appWidgetId` 獨立記憶選中清單、篩選與重置確認狀態（互不干擾，於 `onDeleted` 自動清理），面板控制僅刷新目標 `appWidgetId`、資料寫入則同步全體實例；直接點擊 Widget 標題／進度列進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`。
