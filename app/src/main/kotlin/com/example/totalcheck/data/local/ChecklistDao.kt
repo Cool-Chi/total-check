@@ -18,6 +18,12 @@ interface ChecklistDao {
     @Query("SELECT * FROM checklists ORDER BY sortOrder ASC, id ASC")
     suspend fun getAllChecklists(): List<ChecklistEntity>
 
+    @Query("SELECT * FROM checklists WHERE id = :id LIMIT 1")
+    suspend fun getChecklistById(id: Long): ChecklistEntity?
+
+    @Query("SELECT * FROM check_items WHERE id = :itemId LIMIT 1")
+    suspend fun getItemById(itemId: Long): CheckItemEntity?
+
     // Keep original item order when toggling checked state so cards stay in place.
     @Query("SELECT * FROM check_items ORDER BY sortOrder ASC, id DESC")
     fun observeAllItems(): Flow<List<CheckItemEntity>>
@@ -112,6 +118,9 @@ interface ChecklistDao {
 
     @Query("UPDATE check_items SET isChecked = 0 WHERE checklistId = :checklistId")
     suspend fun resetChecklistItems(checklistId: Long)
+
+    @Query("UPDATE check_items SET isChecked = 1 WHERE checklistId = :checklistId")
+    suspend fun checkAllChecklistItems(checklistId: Long)
 
     @Query("UPDATE check_items SET isChecked = 1 WHERE id IN (:itemIds)")
     suspend fun restoreCheckedStates(itemIds: List<Long>)
