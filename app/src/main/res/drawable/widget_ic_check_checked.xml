@@ -6,7 +6,7 @@
     android:viewportHeight="24">
     <path
         android:pathData="M5.5,12.5 L10,17 L18.5,8"
-        android:strokeColor="@color/widget_on_surface_variant"
+        android:strokeColor="@color/widget_primary"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="2.8" />

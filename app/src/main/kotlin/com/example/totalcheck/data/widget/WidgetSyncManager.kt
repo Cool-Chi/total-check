@@ -75,6 +75,7 @@ object WidgetSyncManager {
                     seedIfEmpty = false,
                     preserveResetState = true,
                 )
+                var isChecklistSwitch = false
                 val finalSnapshot = synchronized(snapshotLock) {
                     val previous = _snapshotFlow.value
                     val activeId = refreshed.activeChecklist?.id
@@ -85,57 +86,26 @@ object WidgetSyncManager {
                     if (!stillConfirming) {
                         clearResetConfirmLocked()
                     }
+                    isChecklistSwitch = previous?.activeChecklist?.id != null &&
+                        activeId != null &&
+                        previous.activeChecklist.id != activeId
+                    val nextFlipSlot = if (isChecklistSwitch) {
+                        1 - ((previous?.checklistFlipSlot ?: 0) and 1)
+                    } else {
+                        previous?.checklistFlipSlot ?: 0
+                    }
                     refreshed.copy(
                         isResetConfirmActive = stillConfirming,
-                        checklistFlipSlot = previous?.checklistFlipSlot ?: 0,
+                        checklistFlipSlot = nextFlipSlot,
                     ).also {
                         _snapshotFlow.value = it
                     }
                 }
-                DirectWidgetRenderer.renderAllWidgets(appContext, finalSnapshot)
-            }
-        }
-    }
-
-    /**
-     * Partially updates only the header bar via AppWidgetManager.partiallyUpdateAppWidget,
-     * leaving tile slots and ViewFlipper untouched.
-     */
-    fun notifyHeaderOnlyChanged(context: Context) {
-        val appContext = context.applicationContext
-        val warmSnapshot = _snapshotFlow.value
-        if (warmSnapshot != null) {
-            DirectWidgetRenderer.updateHeaderOnly(appContext, warmSnapshot)
-            return
-        }
-        scope.launch {
-            runCatching {
-                val loaded = ensureInitialized(appContext)
-                DirectWidgetRenderer.updateHeaderOnly(appContext, loaded)
-            }
-        }
-    }
-
-    /**
-     * Partially updates only the header bar and the single toggled `<CheckBox>` slot
-     * (`widget_tile_k`) via `AppWidgetManager.partiallyUpdateAppWidget`, keeping sibling
-     * tiles and ViewFlipper completely untouched.
-     */
-    fun notifySingleTileChanged(
-        context: Context,
-        itemId: Long,
-        newChecked: Boolean,
-    ) {
-        val appContext = context.applicationContext
-        val warmSnapshot = _snapshotFlow.value
-        if (warmSnapshot != null) {
-            DirectWidgetRenderer.updateSingleTileInPlace(appContext, itemId, newChecked)
-            return
-        }
-        scope.launch {
-            runCatching {
-                ensureInitialized(appContext)
-                DirectWidgetRenderer.updateSingleTileInPlace(appContext, itemId, newChecked)
+                DirectWidgetRenderer.renderAll(
+                    context = appContext,
+                    snapshot = finalSnapshot,
+                    isChecklistSwitch = isChecklistSwitch,
+                )
             }
         }
     }
@@ -151,7 +121,6 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
-        targetChecked: Boolean? = null,
         onSchedulePersist: (suspend (Context) -> Unit) -> Unit,
     ): Boolean {
         val appContext = context.applicationContext
@@ -163,16 +132,15 @@ object WidgetSyncManager {
                 itemId = itemId,
                 checklistId = checklistId,
                 direction = direction,
-                targetChecked = targetChecked,
             )
         } ?: return true // Command is a valid no-op on warm snapshot.
 
         // Render & push RemoteViews immediately before BroadcastReceiver.onReceive() returns.
-        if (step.singleTileItemId > 0L) {
-            notifySingleTileChanged(appContext, step.singleTileItemId, step.singleTileNewChecked)
-        } else {
-            DirectWidgetRenderer.renderAllWidgets(appContext, step.nextSnapshot)
-        }
+        DirectWidgetRenderer.renderAll(
+            context = appContext,
+            snapshot = step.nextSnapshot,
+            isChecklistSwitch = step.isChecklistSwitch,
+        )
 
         if (step.stage1Generation != 0L) {
             synchronized(snapshotLock) {
@@ -203,7 +171,6 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
-        targetChecked: Boolean? = null,
     ) {
         val appContext = context.applicationContext
         ensureInitialized(appContext)
@@ -214,7 +181,6 @@ object WidgetSyncManager {
             itemId = itemId,
             checklistId = checklistId,
             direction = direction,
-            targetChecked = targetChecked,
             onSchedulePersist = { persist -> pendingPersist = persist },
         )
         if (didRunFast) {
@@ -249,7 +215,6 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
-        targetChecked: Boolean? = null,
     ): FastCommandStep? {
         return when (command) {
             TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM -> {
@@ -259,17 +224,14 @@ object WidgetSyncManager {
                 var resolvedChecked: Boolean? = null
                 val updatedList = listItems.map { item ->
                     if (item.id == itemId) {
-                        val next = targetChecked ?: !item.isChecked
+                        val next = !item.isChecked
                         resolvedChecked = next
                         item.copy(isChecked = next)
                     } else {
                         item
                     }
                 }
-                val finalTargetChecked = resolvedChecked ?: return null
-                val isSingleTileInPlace = !current.showUncheckedOnly &&
-                    listItems.isNotEmpty() &&
-                    updatedList.isNotEmpty()
+                val finalChecked = resolvedChecked ?: return null
                 clearResetConfirmLocked()
                 val nextMap = current.itemsByChecklist.toMutableMap().apply {
                     put(activeId, updatedList)
@@ -281,11 +243,9 @@ object WidgetSyncManager {
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
-                    singleTileItemId = if (isSingleTileInPlace) itemId else -1L,
-                    singleTileNewChecked = finalTargetChecked,
                     persistAction = { ctx ->
                         AppDatabase.getInstance(ctx).checklistDao()
-                            .updateItemChecked(itemId = itemId, isChecked = finalTargetChecked)
+                            .updateItemChecked(itemId = itemId, isChecked = finalChecked)
                     },
                 )
             }
@@ -330,16 +290,23 @@ object WidgetSyncManager {
                 }
                 val nextIdx = Math.floorMod(currentIdx + direction, checklists.size)
                 val targetChecklist = checklists[nextIdx]
+                val didSwitch = targetChecklist.id != current.activeChecklist?.id
                 clearResetConfirmLocked()
+                val nextFlipSlot = if (didSwitch) {
+                    1 - (current.checklistFlipSlot and 1)
+                } else {
+                    current.checklistFlipSlot and 1
+                }
                 val nextSnapshot = current.copy(
                     activeChecklist = targetChecklist,
                     activeChecklistIndex = nextIdx,
                     isResetConfirmActive = false,
-                    checklistFlipSlot = 1 - (current.checklistFlipSlot and 1),
+                    checklistFlipSlot = nextFlipSlot,
                 )
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
+                    isChecklistSwitch = didSwitch,
                     persistAction = { ctx ->
                         UserPreferencesRepository(ctx)
                             .setWidgetSelectedChecklistId(targetChecklist.id)
@@ -428,7 +395,7 @@ object WidgetSyncManager {
                 _snapshotFlow.value = it
             }
         }
-        DirectWidgetRenderer.updateHeaderOnly(appContext, nextSnapshot)
+        DirectWidgetRenderer.renderAll(appContext, nextSnapshot, isChecklistSwitch = false)
     }
 
     private fun clearResetConfirmLocked() {
@@ -479,8 +446,7 @@ object WidgetSyncManager {
 
     private data class FastCommandStep(
         val nextSnapshot: WidgetUiSnapshot,
-        val singleTileItemId: Long = -1L,
-        val singleTileNewChecked: Boolean = false,
+        val isChecklistSwitch: Boolean = false,
         val persistAction: (suspend (Context) -> Unit)? = null,
         val stage1Generation: Long = 0L,
         val stage1ChecklistId: Long = 0L,

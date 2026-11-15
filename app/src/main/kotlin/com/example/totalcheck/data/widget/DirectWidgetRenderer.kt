@@ -106,9 +106,15 @@ object DirectWidgetRenderer {
         btnShowAllId = R.id.widget_btn_show_all_1,
     )
 
-    fun renderAllWidgets(
+    fun renderAll(context: Context) {
+        val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
+        renderAll(context, snapshot, isChecklistSwitch = false)
+    }
+
+    fun renderAll(
         context: Context,
-        snapshot: WidgetUiSnapshot
+        snapshot: WidgetUiSnapshot,
+        isChecklistSwitch: Boolean = false
     ) {
         val appContext = context.applicationContext
         val manager = AppWidgetManager.getInstance(appContext)
@@ -121,7 +127,8 @@ object DirectWidgetRenderer {
                 context = appContext,
                 manager = manager,
                 appWidgetId = appWidgetId,
-                snapshot = snapshot
+                snapshot = snapshot,
+                isChecklistSwitch = isChecklistSwitch,
             )
         }
     }
@@ -139,137 +146,9 @@ object DirectWidgetRenderer {
                 context = appContext,
                 manager = manager,
                 appWidgetId = appWidgetId,
-                snapshot = snapshot
+                snapshot = snapshot,
+                isChecklistSwitch = false,
             )
-        }
-    }
-
-    /**
-     * Partially updates only the widget header (title, remaining badge, reset button, switch buttons,
-     * and Tier 4 progress bar) without touching ViewFlipper or any tile slots.
-     */
-    fun updateHeaderOnly(context: Context) {
-        val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
-        updateHeaderOnly(context, snapshot)
-    }
-
-    internal fun updateHeaderOnly(
-        context: Context,
-        snapshot: WidgetUiSnapshot
-    ) {
-        updatePartial(context = context, snapshot = snapshot, targetTile = null)
-    }
-
-    /**
-     * Partially updates only the header and the single tapped `<CheckBox>` slot (`widget_tile_k`)
-     * via `partiallyUpdateAppWidget`, keeping sibling tiles, grid structure, and ViewFlipper untouched.
-     */
-    fun updateSingleTileInPlace(
-        context: Context,
-        itemId: Long,
-        newChecked: Boolean
-    ) {
-        val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
-        updatePartial(
-            context = context,
-            snapshot = snapshot,
-            targetTile = itemId to newChecked,
-        )
-    }
-
-    private fun updatePartial(
-        context: Context,
-        snapshot: WidgetUiSnapshot,
-        targetTile: Pair<Long, Boolean>?,
-    ) {
-        val activeChecklist = snapshot.activeChecklist ?: return
-        val appContext = context.applicationContext
-        val manager = AppWidgetManager.getInstance(appContext)
-        val provider = ComponentName(appContext, TotalCheckWidgetReceiver::class.java)
-        val appWidgetIds = manager.getAppWidgetIds(provider)
-        if (appWidgetIds.isEmpty()) return
-
-        val checklistItems = snapshot.activeChecklistItems
-        val totalCount = checklistItems.size
-        val uncheckedCount = checklistItems.count { !it.isChecked }
-        val checkedCount = totalCount - uncheckedCount
-        val hasMultipleChecklists = snapshot.checklists.size > 1
-        val visibleItems = if (snapshot.showUncheckedOnly) {
-            checklistItems.filter { !it.isChecked }
-        } else {
-            checklistItems
-        }
-
-        var slotIndex = -1
-        var targetItem: CheckItemEntity? = null
-        var newChecked = false
-        if (targetTile != null) {
-            val (itemId, checked) = targetTile
-            slotIndex = visibleItems.indexOfFirst { it.id == itemId }
-            targetItem = visibleItems.getOrNull(slotIndex)
-            if (slotIndex < 0 || targetItem == null) {
-                renderAllWidgets(appContext, snapshot)
-                return
-            }
-            newChecked = checked
-        }
-
-        val flipSlot = snapshot.checklistFlipSlot and 1
-        val slotIds = if (flipSlot == 0) SLOT_0_IDS else SLOT_1_IDS
-
-        for (appWidgetId in appWidgetIds) {
-            val options = manager.getAppWidgetOptions(appWidgetId)
-            val (widthDp, heightDp) = resolveDimensionsDp(appContext, options)
-            val tier = resolveSizeTier(widthDp, heightDp)
-
-            if (tier == WidgetSizeTier.MICRO) {
-                val microRv = RemoteViews(appContext.packageName, R.layout.widget_micro).also { rv ->
-                    bindMicroHeaderViews(
-                        context = appContext,
-                        rv = rv,
-                        checklist = activeChecklist,
-                        totalCount = totalCount,
-                        uncheckedCount = uncheckedCount,
-                        hasMultipleChecklists = hasMultipleChecklists,
-                    )
-                }
-                manager.partiallyUpdateAppWidget(appWidgetId, microRv)
-                continue
-            }
-
-            val showResetButton = tier == WidgetSizeTier.STANDARD || tier == WidgetSizeTier.EXPANDED
-            val showExpandedBar = tier == WidgetSizeTier.EXPANDED
-            val columnCount = resolveColumnCount(tier, widthDp)
-
-            val partialViews = RemoteViews(appContext.packageName, R.layout.widget_full).also { rv ->
-                bindFullHeaderViews(
-                    context = appContext,
-                    rv = rv,
-                    checklist = activeChecklist,
-                    totalCount = totalCount,
-                    checkedCount = checkedCount,
-                    uncheckedCount = uncheckedCount,
-                    showUncheckedOnly = snapshot.showUncheckedOnly,
-                    isResetConfirmActive = snapshot.isResetConfirmActive,
-                    hasMultipleChecklists = hasMultipleChecklists,
-                    showResetButton = showResetButton,
-                    showExpandedBar = showExpandedBar,
-                )
-                if (targetItem != null && slotIndex >= 0) {
-                    val activeTileIds = resolveActiveTileSlots(slotIds, columnCount)
-                    if (slotIndex < activeTileIds.size) {
-                        bindTileCheckedAndLabel(
-                            context = appContext,
-                            rv = rv,
-                            tileId = activeTileIds[slotIndex],
-                            itemId = targetItem.id,
-                            label = targetItem.label,
-                            isChecked = newChecked,
-                        )
-                    }
-                }
-            }
-            manager.partiallyUpdateAppWidget(appWidgetId, partialViews)
         }
     }
 
@@ -279,27 +158,12 @@ object DirectWidgetRenderer {
         else -> 2
     }
 
-    private fun resolveActiveTileSlots(slotIds: FlipSlotViewIds, columnCount: Int): List<Int> {
-        return if (columnCount <= 1) {
-            slotIds.rowTileMatrix.map { it[0] }
-        } else {
-            val cols = columnCount.coerceAtMost(3)
-            buildList(5 * cols) {
-                for (rowIdx in 0 until 5) {
-                    val rowTiles = slotIds.rowTileMatrix[rowIdx]
-                    for (colIdx in 0 until cols) {
-                        add(rowTiles[colIdx])
-                    }
-                }
-            }
-        }
-    }
-
     private fun renderSingleWidget(
         context: Context,
         manager: AppWidgetManager,
         appWidgetId: Int,
-        snapshot: WidgetUiSnapshot
+        snapshot: WidgetUiSnapshot,
+        isChecklistSwitch: Boolean,
     ) {
         val options = manager.getAppWidgetOptions(appWidgetId)
         val (widthDp, heightDp) = resolveDimensionsDp(context, options)
@@ -344,7 +208,6 @@ object DirectWidgetRenderer {
         val showExpandedBar = tier == WidgetSizeTier.EXPANDED
         val columnCount = resolveColumnCount(tier, widthDp)
         val flipSlot = snapshot.checklistFlipSlot and 1
-        val slotIds = if (flipSlot == 0) SLOT_0_IDS else SLOT_1_IDS
 
         val fullRv = buildFullRemoteViews(
             context = context,
@@ -360,7 +223,7 @@ object DirectWidgetRenderer {
             showExpandedBar = showExpandedBar,
             columnCount = columnCount,
             flipSlot = flipSlot,
-            slotIds = slotIds,
+            isChecklistSwitch = isChecklistSwitch,
         )
 
         manager.updateAppWidget(appWidgetId, fullRv)
@@ -563,7 +426,7 @@ object DirectWidgetRenderer {
         showExpandedBar: Boolean,
         columnCount: Int,
         flipSlot: Int,
-        slotIds: FlipSlotViewIds,
+        isChecklistSwitch: Boolean,
     ): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_full)
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
@@ -582,9 +445,45 @@ object DirectWidgetRenderer {
             showExpandedBar = showExpandedBar,
         )
 
-        // Bind only the active ViewFlipper slot so switching < > crossfades old slot -> new slot cleanly.
-        rv.setDisplayedChild(R.id.widget_content_flipper, flipSlot)
+        // Keep both ViewFlipper slots in sync so in-place updates never depend on slot index,
+        // and only call setDisplayedChild when switching checklists so tile taps never replay flip animations.
+        bindFlipSlotContent(
+            context = context,
+            rv = rv,
+            slotIds = SLOT_0_IDS,
+            checklist = checklist,
+            totalCount = totalCount,
+            visibleItems = visibleItems,
+            columnCount = columnCount,
+            openAppIntent = openAppIntent,
+        )
+        bindFlipSlotContent(
+            context = context,
+            rv = rv,
+            slotIds = SLOT_1_IDS,
+            checklist = checklist,
+            totalCount = totalCount,
+            visibleItems = visibleItems,
+            columnCount = columnCount,
+            openAppIntent = openAppIntent,
+        )
+        if (isChecklistSwitch) {
+            rv.setDisplayedChild(R.id.widget_content_flipper, flipSlot)
+        }
 
+        return rv
+    }
+
+    private fun bindFlipSlotContent(
+        context: Context,
+        rv: RemoteViews,
+        slotIds: FlipSlotViewIds,
+        checklist: ChecklistEntity,
+        totalCount: Int,
+        visibleItems: List<CheckItemEntity>,
+        columnCount: Int,
+        openAppIntent: PendingIntent,
+    ) {
         when {
             totalCount == 0 -> {
                 rv.setViewVisibility(slotIds.gridContainerId, View.GONE)
@@ -634,8 +533,6 @@ object DirectWidgetRenderer {
                 )
             }
         }
-
-        return rv
     }
 
     private fun bindStaticGridSlots(
@@ -696,39 +593,46 @@ object DirectWidgetRenderer {
     ) {
         if (item == null) {
             rv.setViewVisibility(tileId, View.INVISIBLE)
+            rv.setOnClickPendingIntent(tileId, null)
             return
         }
         rv.setViewVisibility(tileId, View.VISIBLE)
-        bindTileCheckedAndLabel(
+        rv.setInt(
+            tileId,
+            "setBackgroundResource",
+            if (item.isChecked) {
+                R.drawable.widget_pill_surface_low
+            } else {
+                R.drawable.widget_pill_surface_high
+            }
+        )
+        rv.setTextViewCompoundDrawablesRelative(
+            tileId,
+            if (item.isChecked) {
+                R.drawable.widget_ic_check_checked
+            } else {
+                R.drawable.widget_ic_dot_unchecked
+            },
+            0,
+            0,
+            0
+        )
+        applyTextColor(
             context = context,
             rv = rv,
-            tileId = tileId,
-            itemId = item.id,
-            label = item.label,
-            isChecked = item.isChecked,
+            viewId = tileId,
+            colorRes = if (item.isChecked) {
+                R.color.widget_on_surface_variant
+            } else {
+                R.color.widget_on_surface
+            }
         )
-    }
-
-    private fun bindTileCheckedAndLabel(
-        context: Context,
-        rv: RemoteViews,
-        tileId: Int,
-        itemId: Long,
-        label: String,
-        isChecked: Boolean,
-    ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            rv.setCompoundButtonChecked(tileId, isChecked)
-        } else {
-            rv.setBoolean(tileId, "setChecked", isChecked)
-        }
-        rv.setTextViewText(tileId, buildStyledLabel(label, isChecked))
+        rv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked))
         rv.setOnClickPendingIntent(
             tileId,
             buildToggleItemPendingIntent(
                 context = context,
-                itemId = itemId,
-                targetChecked = !isChecked,
+                itemId = item.id,
             )
         )
     }
@@ -746,13 +650,11 @@ object DirectWidgetRenderer {
     private fun buildToggleItemPendingIntent(
         context: Context,
         itemId: Long,
-        targetChecked: Boolean,
     ): PendingIntent {
         val intent = Intent(context, TotalCheckWidgetReceiver::class.java).apply {
             action = TotalCheckWidgetReceiver.ACTION_WIDGET_COMMAND
             putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM)
             putExtra(TotalCheckWidgetReceiver.EXTRA_ITEM_ID, itemId)
-            putExtra(TotalCheckWidgetReceiver.EXTRA_TARGET_CHECKED, targetChecked)
             data = Uri.parse("totalcheck://widget/cmd/toggle_item/$itemId")
         }
         val requestCode = REQ_TOGGLE_ITEM_BASE + (itemId.toInt() and 0xFFFF)

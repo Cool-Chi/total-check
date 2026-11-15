@@ -19,11 +19,6 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
             val itemId = intent.getLongExtra(EXTRA_ITEM_ID, -1L)
             val checklistId = intent.getLongExtra(EXTRA_CHECKLIST_ID, -1L)
             val direction = intent.getIntExtra(EXTRA_DIRECTION, 1)
-            val targetChecked = if (intent.hasExtra(EXTRA_TARGET_CHECKED)) {
-                intent.getBooleanExtra(EXTRA_TARGET_CHECKED, false)
-            } else {
-                null
-            }
 
             val handledFast = WidgetSyncManager.tryHandleFastCommand(
                 context = appContext,
@@ -31,7 +26,6 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
                 itemId = itemId,
                 checklistId = checklistId,
                 direction = direction,
-                targetChecked = targetChecked,
                 onSchedulePersist = { persist ->
                     val pendingResult = goAsync()
                     WidgetSyncManager.launchPersistWithPendingResult(
@@ -52,7 +46,6 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
                             itemId = itemId,
                             checklistId = checklistId,
                             direction = direction,
-                            targetChecked = targetChecked,
                         )
                     } finally {
                         pendingResult.finish()
@@ -134,7 +127,6 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
         const val EXTRA_ITEM_ID = "extra_widget_item_id"
         const val EXTRA_CHECKLIST_ID = "extra_widget_checklist_id"
         const val EXTRA_DIRECTION = "extra_widget_direction"
-        const val EXTRA_TARGET_CHECKED = "extra_widget_target_checked"
 
         const val CMD_TOGGLE_ITEM = "toggle_item"
         const val CMD_TOGGLE_FILTER = "toggle_filter"
