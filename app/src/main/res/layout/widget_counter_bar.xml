@@ -49,6 +49,17 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/widget_counter_reminder_0"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:maxLines="1"
+                    android:textColor="@color/widget_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
                     android:id="@+id/widget_counter_count_0"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -172,6 +183,17 @@
                     android:textColor="@color/widget_on_surface"
                     android:textSize="13.5sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_counter_reminder_1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:maxLines="1"
+                    android:textColor="@color/widget_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/widget_counter_count_1"

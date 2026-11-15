@@ -26,6 +26,7 @@ private class TotalCheckViewsFactory(
 
     private var rows: List<List<CheckItemEntity>> = emptyList()
     private var activeChecklistId: Long = -1L
+    private var activeItemReminderIds: Set<Long> = emptySet()
     private var columnCount: Int = 2
     private var hasBlankRows: Boolean = false
     private var style: WidgetThemeStyle = resolveWidgetStyle(
@@ -42,6 +43,9 @@ private class TotalCheckViewsFactory(
         style = resolveWidgetStyle(context, snapshot.themeConfig)
         val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
         activeChecklistId = activeChecklist?.id ?: -1L
+        activeItemReminderIds = activeChecklist?.let {
+            snapshot.reminderSummaryForChecklist(it.id).activeItemRemindersByItemId.keys
+        }.orEmpty()
         val items = activeChecklist?.let { snapshot.itemsForChecklist(it.id) }.orEmpty()
         val visibleItems = if (snapshot.stateForWidget(appWidgetId).showUncheckedOnly) {
             items.filter { !it.isChecked }
@@ -59,6 +63,7 @@ private class TotalCheckViewsFactory(
 
     override fun onDestroy() {
         rows = emptyList()
+        activeItemReminderIds = emptySet()
         hasBlankRows = false
     }
 
@@ -72,6 +77,7 @@ private class TotalCheckViewsFactory(
                 columnCount = columnCount,
                 style = style,
                 checklistId = activeChecklistId,
+                activeItemReminderIds = activeItemReminderIds,
             )
         }
         if (hasBlankRows && position < getCount()) {

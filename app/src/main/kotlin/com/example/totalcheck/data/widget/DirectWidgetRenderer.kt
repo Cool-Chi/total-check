@@ -59,6 +59,7 @@ private data class ProgressBarGroupIds(
 private data class CounterFlipSlotViewIds(
     val openAppId: Int,
     val titleId: Int,
+    val reminderBadgeId: Int,
     val countId: Int,
     val progressGroupIds: ProgressBarGroupIds,
 )
@@ -119,6 +120,7 @@ object DirectWidgetRenderer {
     private val COUNTER_SLOT_0_IDS = CounterFlipSlotViewIds(
         openAppId = R.id.widget_counter_open_app_0,
         titleId = R.id.widget_counter_title_0,
+        reminderBadgeId = R.id.widget_counter_reminder_0,
         countId = R.id.widget_counter_count_0,
         progressGroupIds = ProgressBarGroupIds(
             activeCuratedDarkId = R.id.widget_counter_progress_active_curated_dark_0,
@@ -135,6 +137,7 @@ object DirectWidgetRenderer {
     private val COUNTER_SLOT_1_IDS = CounterFlipSlotViewIds(
         openAppId = R.id.widget_counter_open_app_1,
         titleId = R.id.widget_counter_title_1,
+        reminderBadgeId = R.id.widget_counter_reminder_1,
         countId = R.id.widget_counter_count_1,
         progressGroupIds = ProgressBarGroupIds(
             activeCuratedDarkId = R.id.widget_counter_progress_active_curated_dark_1,
@@ -273,6 +276,7 @@ object DirectWidgetRenderer {
         columnCount: Int,
         style: WidgetThemeStyle,
         checklistId: Long,
+        activeItemReminderIds: Set<Long> = emptySet(),
     ): RemoteViews {
         val rowLayoutRes = when {
             columnCount <= 1 -> R.layout.widget_row_1col
@@ -280,29 +284,35 @@ object DirectWidgetRenderer {
             else -> R.layout.widget_row_2col
         }
         val rowRv = RemoteViews(context.packageName, rowLayoutRes)
+        val item0 = rowItems.getOrNull(0)
         bindTileSlot(
             rowRv = rowRv,
             tileId = R.id.tile_0,
-            item = rowItems.getOrNull(0),
+            item = item0,
             style = style,
             checklistId = checklistId,
+            hasItemReminder = item0 != null && item0.id in activeItemReminderIds,
         )
         if (columnCount >= 2) {
+            val item1 = rowItems.getOrNull(1)
             bindTileSlot(
                 rowRv = rowRv,
                 tileId = R.id.tile_1,
-                item = rowItems.getOrNull(1),
+                item = item1,
                 style = style,
                 checklistId = checklistId,
+                hasItemReminder = item1 != null && item1.id in activeItemReminderIds,
             )
         }
         if (columnCount >= 3) {
+            val item2 = rowItems.getOrNull(2)
             bindTileSlot(
                 rowRv = rowRv,
                 tileId = R.id.tile_2,
-                item = rowItems.getOrNull(2),
+                item = item2,
                 style = style,
                 checklistId = checklistId,
+                hasItemReminder = item2 != null && item2.id in activeItemReminderIds,
             )
         }
         return rowRv
@@ -349,6 +359,7 @@ object DirectWidgetRenderer {
         }
 
         val checklistItems = snapshot.itemsForChecklist(activeChecklist.id)
+        val reminderSummary = snapshot.reminderSummaryForChecklist(activeChecklist.id)
         val totalCount = checklistItems.size
         val uncheckedCount = checklistItems.count { !it.isChecked }
         val checkedCount = totalCount - uncheckedCount
@@ -370,7 +381,9 @@ object DirectWidgetRenderer {
             context = context,
             appWidgetId = appWidgetId,
             style = style,
+            tier = tier,
             checklist = activeChecklist,
+            reminderSummary = reminderSummary,
             totalCount = totalCount,
             checkedCount = checkedCount,
             uncheckedCount = uncheckedCount,
@@ -421,6 +434,7 @@ object DirectWidgetRenderer {
         val isWide = widthDp >= 220f
 
         val checklistItems = snapshot.itemsForChecklist(activeChecklist.id)
+        val reminderSummary = snapshot.reminderSummaryForChecklist(activeChecklist.id)
         val totalCount = checklistItems.size
         val uncheckedCount = checklistItems.count { !it.isChecked }
         val checkedCount = totalCount - uncheckedCount
@@ -434,6 +448,7 @@ object DirectWidgetRenderer {
             appWidgetId = appWidgetId,
             style = style,
             checklist = activeChecklist,
+            reminderSummary = reminderSummary,
             totalCount = totalCount,
             checkedCount = checkedCount,
             uncheckedCount = uncheckedCount,
@@ -473,6 +488,7 @@ object DirectWidgetRenderer {
         appWidgetId: Int,
         style: WidgetThemeStyle,
         checklist: ChecklistEntity,
+        reminderSummary: WidgetReminderSummary,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
@@ -494,6 +510,8 @@ object DirectWidgetRenderer {
                 rv = rv,
                 slotIds = activeSlotIds,
                 checklist = checklist,
+                reminderSummary = reminderSummary,
+                isWide = isWide,
                 totalCount = totalCount,
                 checkedCount = checkedCount,
                 uncheckedCount = uncheckedCount,
@@ -509,6 +527,8 @@ object DirectWidgetRenderer {
                     rv = rv,
                     slotIds = inactiveSlotIds,
                     checklist = checklist,
+                    reminderSummary = reminderSummary,
+                    isWide = isWide,
                     totalCount = totalCount,
                     checkedCount = checkedCount,
                     uncheckedCount = uncheckedCount,
@@ -547,6 +567,8 @@ object DirectWidgetRenderer {
         rv: RemoteViews,
         slotIds: CounterFlipSlotViewIds,
         checklist: ChecklistEntity,
+        reminderSummary: WidgetReminderSummary,
+        isWide: Boolean,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
@@ -557,6 +579,20 @@ object DirectWidgetRenderer {
         rv.setTextViewText(slotIds.titleId, checklist.name)
         rv.setTextColor(slotIds.titleId, style.textPrimary)
         rv.setOnClickPendingIntent(slotIds.openAppId, openAppIntent)
+
+        if (reminderSummary.hasAnyActiveReminder) {
+            val timeText = reminderSummary.primaryTimeText
+            val badgeText = if (isWide && timeText != null) {
+                "\uD83D\uDD14 $timeText"
+            } else {
+                "\uD83D\uDD14"
+            }
+            rv.setViewVisibility(slotIds.reminderBadgeId, View.VISIBLE)
+            rv.setTextViewText(slotIds.reminderBadgeId, badgeText)
+            rv.setTextColor(slotIds.reminderBadgeId, style.accentPrimary)
+        } else {
+            rv.setViewVisibility(slotIds.reminderBadgeId, View.GONE)
+        }
 
         val countText = if (isAllDone) {
             "\u2713 $checkedCount/$totalCount"
@@ -586,7 +622,9 @@ object DirectWidgetRenderer {
         rv: RemoteViews,
         appWidgetId: Int,
         style: WidgetThemeStyle,
+        tier: WidgetSizeTier,
         checklist: ChecklistEntity,
+        reminderSummary: WidgetReminderSummary,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
@@ -604,6 +642,22 @@ object DirectWidgetRenderer {
         rv.setTextViewText(R.id.widget_header_title, checklist.name)
         rv.setTextColor(R.id.widget_header_title, style.textPrimary)
         rv.setOnClickPendingIntent(R.id.widget_header_title, openAppIntent)
+
+        if (reminderSummary.hasAnyActiveReminder) {
+            val timeText = reminderSummary.primaryTimeText
+            val badgeText = if (tier != WidgetSizeTier.COMPACT && timeText != null) {
+                "\uD83D\uDD14 $timeText"
+            } else {
+                "\uD83D\uDD14"
+            }
+            rv.setViewVisibility(R.id.widget_header_reminder_badge, View.VISIBLE)
+            rv.setTextViewText(R.id.widget_header_reminder_badge, badgeText)
+            rv.setInt(R.id.widget_header_reminder_badge, "setBackgroundResource", style.surfacePillBgRes)
+            rv.setTextColor(R.id.widget_header_reminder_badge, style.accentPrimary)
+            rv.setOnClickPendingIntent(R.id.widget_header_reminder_badge, openAppIntent)
+        } else {
+            rv.setViewVisibility(R.id.widget_header_reminder_badge, View.GONE)
+        }
 
         // Lock pill label to concise count so toggling filter never squeezes the checklist title.
         val filterLabel = if (isAllDone && !showUncheckedOnly) {
@@ -699,7 +753,9 @@ object DirectWidgetRenderer {
         context: Context,
         appWidgetId: Int,
         style: WidgetThemeStyle,
+        tier: WidgetSizeTier,
         checklist: ChecklistEntity,
+        reminderSummary: WidgetReminderSummary,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
@@ -730,7 +786,9 @@ object DirectWidgetRenderer {
             rv = rv,
             appWidgetId = appWidgetId,
             style = style,
+            tier = tier,
             checklist = checklist,
+            reminderSummary = reminderSummary,
             totalCount = totalCount,
             checkedCount = checkedCount,
             uncheckedCount = uncheckedCount,
@@ -742,6 +800,8 @@ object DirectWidgetRenderer {
             isFilterFlip = isFilterFlip,
         )
 
+        val activeItemReminderIds = reminderSummary.activeItemRemindersByItemId.keys
+
         bindFlipSlotContent(
             context = context,
             rv = rv,
@@ -751,6 +811,7 @@ object DirectWidgetRenderer {
             checklist = checklist,
             totalCount = totalCount,
             visibleItems = visibleItems,
+            activeItemReminderIds = activeItemReminderIds,
             columnCount = columnCount,
             openAppAddIntent = openAppAddIntent,
         )
@@ -769,6 +830,7 @@ object DirectWidgetRenderer {
                 checklist = checklist,
                 totalCount = totalCount,
                 visibleItems = visibleItems,
+                activeItemReminderIds = activeItemReminderIds,
                 columnCount = columnCount,
                 openAppAddIntent = openAppAddIntent,
             )
@@ -786,6 +848,7 @@ object DirectWidgetRenderer {
         checklist: ChecklistEntity,
         totalCount: Int,
         visibleItems: List<CheckItemEntity>,
+        activeItemReminderIds: Set<Long>,
         columnCount: Int,
         openAppAddIntent: PendingIntent,
     ) {
@@ -863,6 +926,7 @@ object DirectWidgetRenderer {
                         rv = rv,
                         listViewId = slotIds.listViewId,
                         visibleItems = visibleItems,
+                        activeItemReminderIds = activeItemReminderIds,
                         columnCount = columnCount,
                         style = style,
                         checklistId = checklist.id,
@@ -886,6 +950,7 @@ object DirectWidgetRenderer {
         rv: RemoteViews,
         listViewId: Int,
         visibleItems: List<CheckItemEntity>,
+        activeItemReminderIds: Set<Long>,
         columnCount: Int,
         style: WidgetThemeStyle,
         checklistId: Long,
@@ -898,7 +963,14 @@ object DirectWidgetRenderer {
             for (item in visibleItems) {
                 builder.addItem(
                     item.id,
-                    buildRowRemoteViews(context, listOf(item), 1, style, checklistId)
+                    buildRowRemoteViews(
+                        context = context,
+                        rowItems = listOf(item),
+                        columnCount = 1,
+                        style = style,
+                        checklistId = checklistId,
+                        activeItemReminderIds = activeItemReminderIds,
+                    )
                 )
             }
         } else {
@@ -909,7 +981,14 @@ object DirectWidgetRenderer {
                 val rowItems = visibleItems.subList(idx, end)
                 builder.addItem(
                     rowItems[0].id,
-                    buildRowRemoteViews(context, rowItems, columnCount, style, checklistId)
+                    buildRowRemoteViews(
+                        context = context,
+                        rowItems = rowItems,
+                        columnCount = columnCount,
+                        style = style,
+                        checklistId = checklistId,
+                        activeItemReminderIds = activeItemReminderIds,
+                    )
                 )
                 idx = end
             }
@@ -929,6 +1008,7 @@ object DirectWidgetRenderer {
         item: CheckItemEntity?,
         style: WidgetThemeStyle,
         checklistId: Long,
+        hasItemReminder: Boolean = false,
     ) {
         if (item == null) {
             rowRv.setViewVisibility(tileId, View.VISIBLE)
@@ -959,7 +1039,7 @@ object DirectWidgetRenderer {
             tileId,
             if (item.isChecked) style.textMuted else style.textPrimary
         )
-        rowRv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked))
+        rowRv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked, hasItemReminder))
         val fillInIntent = Intent().apply {
             putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM)
             putExtra(TotalCheckWidgetReceiver.EXTRA_ITEM_ID, item.id)
@@ -967,13 +1047,18 @@ object DirectWidgetRenderer {
         rowRv.setOnClickFillInIntent(tileId, fillInIntent)
     }
 
-    private fun buildStyledLabel(label: String, isChecked: Boolean): CharSequence {
+    private fun buildStyledLabel(
+        label: String,
+        isChecked: Boolean,
+        hasItemReminder: Boolean,
+    ): CharSequence {
+        val displayLabel = if (hasItemReminder) "$label \uD83D\uDD14" else label
         return if (isChecked) {
-            SpannableString(label).apply {
-                setSpan(StrikethroughSpan(), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            SpannableString(displayLabel).apply {
+                setSpan(StrikethroughSpan(), 0, label.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         } else {
-            label
+            displayLabel
         }
     }
 

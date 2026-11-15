@@ -8,9 +8,11 @@ import android.os.SystemClock
 import com.example.totalcheck.data.local.AppDatabase
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.preferences.WidgetPreferences
+import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.data.repository.ChecklistRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,11 +36,28 @@ data class WidgetInstanceState(
     val lastToggledItemId: Long? = null,
 )
 
+data class WidgetReminderSummary(
+    val checklistReminder: ReminderEntity? = null,
+    val activeItemRemindersByItemId: Map<Long, ReminderEntity> = emptyMap(),
+) {
+    val hasAnyActiveReminder: Boolean
+        get() = (checklistReminder != null && checklistReminder.isEnabled) ||
+            activeItemRemindersByItemId.isNotEmpty()
+
+    val primaryTimeText: String?
+        get() = checklistReminder?.takeIf { it.isEnabled }?.let {
+            ReminderFormatter.formatTime(it.hour, it.minute)
+        } ?: activeItemRemindersByItemId.values.firstOrNull()?.let {
+            ReminderFormatter.formatTime(it.hour, it.minute)
+        }
+}
+
 data class WidgetUiSnapshot(
     val checklists: List<ChecklistEntity>,
     val itemsByChecklist: Map<Long, List<CheckItemEntity>>,
     val widgetStates: Map<Int, WidgetInstanceState> = emptyMap(),
     val themeConfig: ThemeConfig = ThemeConfig(isDarkMode = true, useDynamicColor = false),
+    val remindersByChecklist: Map<Long, WidgetReminderSummary> = emptyMap(),
 ) {
     fun stateForWidget(appWidgetId: Int): WidgetInstanceState =
         widgetStates[appWidgetId] ?: WidgetInstanceState()
@@ -50,6 +69,9 @@ data class WidgetUiSnapshot(
 
     fun itemsForChecklist(checklistId: Long): List<CheckItemEntity> =
         itemsByChecklist[checklistId].orEmpty()
+
+    fun reminderSummaryForChecklist(checklistId: Long): WidgetReminderSummary =
+        remindersByChecklist[checklistId] ?: WidgetReminderSummary()
 }
 
 object WidgetSyncManager {
@@ -126,41 +148,46 @@ object WidgetSyncManager {
     fun notifyDataChanged(context: Context) {
         val appContext = context.applicationContext
         scope.launch {
-            runCatching {
-                val refreshed = loadSnapshotFromStorage(
-                    appContext = appContext,
-                    seedIfEmpty = false,
-                    preserveResetState = true,
-                )
-                val finalSnapshot = synchronized(snapshotLock) {
-                    val previous = _snapshotFlow.value
-                    val now = SystemClock.elapsedRealtime()
-                    val mergedStates = refreshed.widgetStates.mapValues { (widgetId, state) ->
-                        val prevState = previous?.stateForWidget(widgetId)
-                        val activeId = refreshed.resolveActiveChecklist(widgetId)?.id
-                        val stillConfirming = activeId != null &&
-                            resetConfirmChecklistByWidget[widgetId] == activeId &&
-                            now < (resetConfirmDeadlineByWidget[widgetId] ?: 0L) &&
-                            (prevState?.isResetConfirmActive == true)
-                        if (!stillConfirming) {
-                            clearResetConfirmLocked(widgetId)
-                        }
-                        state.copy(
-                            isResetConfirmActive = stillConfirming,
-                            checklistFlipSlot = prevState?.checklistFlipSlot ?: 0,
-                        )
+            notifyDataChangedNow(appContext)
+        }
+    }
+
+    suspend fun notifyDataChangedNow(context: Context) {
+        val appContext = context.applicationContext
+        runCatching {
+            val refreshed = loadSnapshotFromStorage(
+                appContext = appContext,
+                seedIfEmpty = false,
+                preserveResetState = true,
+            )
+            val finalSnapshot = synchronized(snapshotLock) {
+                val previous = _snapshotFlow.value
+                val now = SystemClock.elapsedRealtime()
+                val mergedStates = refreshed.widgetStates.mapValues { (widgetId, state) ->
+                    val prevState = previous?.stateForWidget(widgetId)
+                    val activeId = refreshed.resolveActiveChecklist(widgetId)?.id
+                    val stillConfirming = activeId != null &&
+                        resetConfirmChecklistByWidget[widgetId] == activeId &&
+                        now < (resetConfirmDeadlineByWidget[widgetId] ?: 0L) &&
+                        (prevState?.isResetConfirmActive == true)
+                    if (!stillConfirming) {
+                        clearResetConfirmLocked(widgetId)
                     }
-                    refreshed.copy(widgetStates = mergedStates).also {
-                        _snapshotFlow.value = it
-                    }
+                    state.copy(
+                        isResetConfirmActive = stillConfirming,
+                        checklistFlipSlot = prevState?.checklistFlipSlot ?: 0,
+                    )
                 }
-                DirectWidgetRenderer.renderAll(
-                    context = appContext,
-                    snapshot = finalSnapshot,
-                    isContentFlip = false,
-                    isFilterFlip = false,
-                )
+                refreshed.copy(widgetStates = mergedStates).also {
+                    _snapshotFlow.value = it
+                }
             }
+            DirectWidgetRenderer.renderAll(
+                context = appContext,
+                snapshot = finalSnapshot,
+                isContentFlip = false,
+                isFilterFlip = false,
+            )
         }
     }
 
@@ -612,18 +639,21 @@ object WidgetSyncManager {
         seedIfEmpty: Boolean,
         preserveResetState: Boolean,
     ): WidgetUiSnapshot = withContext(Dispatchers.IO) {
-        val dao = AppDatabase.getInstance(appContext).checklistDao()
+        val db = AppDatabase.getInstance(appContext)
+        val dao = db.checklistDao()
+        val reminderDao = db.reminderDao()
         val prefsRepo = UserPreferencesRepository(appContext)
         if (seedIfEmpty && dao.getChecklistCount() == 0) {
-            ChecklistRepository(appContext, dao).seedInitialDataIfNeeded()
+            ChecklistRepository(appContext, dao, reminderDao).seedInitialDataIfNeeded()
         }
         val activeWidgetIds = getAllActiveWidgetIds(appContext)
-        val (checklists, prefsByWidget, allItems, loadedThemeConfig) = dbWriteMutex.withLock {
+        val (checklists, prefsByWidget, allItems, loadedThemeConfig, enabledReminders) = dbWriteMutex.withLock {
             val loadedChecklists = dao.getAllChecklists()
             val loadedPrefs = prefsRepo.readAllWidgetStates(activeWidgetIds)
             val loadedItems = dao.getAllItems()
             val diskThemeConfig = prefsRepo.themeConfig.first()
-            SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems, diskThemeConfig)
+            val loadedReminders = reminderDao.getEnabledReminders()
+            SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems, diskThemeConfig, loadedReminders)
         }
         val pendingOverride = overrideThemeConfig
         val effectiveThemeConfig = if (pendingOverride != null) {
@@ -635,6 +665,18 @@ object WidgetSyncManager {
             loadedThemeConfig
         }
         val itemsByChecklist = allItems.groupBy { it.checklistId }
+        val remindersByChecklist = enabledReminders
+            .groupBy { it.checklistId }
+            .mapValues { (_, list) ->
+                val checklistReminder = list.firstOrNull { it.itemId == null }
+                val itemReminders = list.mapNotNull { r ->
+                    r.itemId?.let { itemId -> itemId to r }
+                }.toMap()
+                WidgetReminderSummary(
+                    checklistReminder = checklistReminder,
+                    activeItemRemindersByItemId = itemReminders,
+                )
+            }
         val now = SystemClock.elapsedRealtime()
         val states = prefsByWidget.mapValues { (widgetId, prefs) ->
             val resolvedChecklist = checklists.firstOrNull { it.id == prefs.selectedChecklistId }
@@ -654,6 +696,7 @@ object WidgetSyncManager {
             itemsByChecklist = itemsByChecklist,
             widgetStates = states,
             themeConfig = effectiveThemeConfig,
+            remindersByChecklist = remindersByChecklist,
         )
     }
 
@@ -674,5 +717,6 @@ object WidgetSyncManager {
         val prefsByWidget: Map<Int, WidgetPreferences>,
         val allItems: List<CheckItemEntity>,
         val themeConfig: ThemeConfig,
+        val enabledReminders: List<ReminderEntity>,
     )
 }
