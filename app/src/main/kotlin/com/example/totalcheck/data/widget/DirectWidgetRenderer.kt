@@ -16,6 +16,7 @@ import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
 import androidx.annotation.ColorRes
+import androidx.annotation.RequiresApi
 import com.example.totalcheck.MainActivity
 import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
@@ -29,10 +30,7 @@ private enum class WidgetSizeTier {
 }
 
 private data class FlipSlotViewIds(
-    val gridContainerId: Int,
-    val rowIds: IntArray,
-    val rowTileMatrix: Array<IntArray>,
-    val overflowPillId: Int,
+    val listViewId: Int,
     val emptyStateId: Int,
     val emptyStatePillId: Int,
     val allSetStateId: Int,
@@ -43,6 +41,7 @@ private data class FlipSlotViewIds(
 
 object DirectWidgetRenderer {
 
+    private const val REQ_LIST_TEMPLATE = 1001
     private const val REQ_TOGGLE_FILTER = 2001
     private const val REQ_RESET_STAGE = 2002
     private const val REQ_PREV_CHECKLIST = 2003
@@ -50,27 +49,9 @@ object DirectWidgetRenderer {
     private const val REQ_FORCE_RESET = 2005
     private const val REQ_SHOW_ALL = 2006
     private const val REQ_OPEN_APP = 3001
-    private const val REQ_TOGGLE_ITEM_BASE = 10_000
 
     private val SLOT_0_IDS = FlipSlotViewIds(
-        gridContainerId = R.id.widget_grid_container_0,
-        rowIds = intArrayOf(
-            R.id.widget_row_0,
-            R.id.widget_row_1,
-            R.id.widget_row_2,
-            R.id.widget_row_3,
-            R.id.widget_row_4,
-            R.id.widget_row_5,
-        ),
-        rowTileMatrix = arrayOf(
-            intArrayOf(R.id.widget_tile_0, R.id.widget_tile_1, R.id.widget_tile_2),
-            intArrayOf(R.id.widget_tile_3, R.id.widget_tile_4, R.id.widget_tile_5),
-            intArrayOf(R.id.widget_tile_6, R.id.widget_tile_7, R.id.widget_tile_8),
-            intArrayOf(R.id.widget_tile_9, R.id.widget_tile_10, R.id.widget_tile_11),
-            intArrayOf(R.id.widget_tile_12, R.id.widget_tile_13, R.id.widget_tile_14),
-            intArrayOf(R.id.widget_tile_15),
-        ),
-        overflowPillId = R.id.widget_overflow_pill,
+        listViewId = R.id.widget_list_s0,
         emptyStateId = R.id.widget_empty_state_0,
         emptyStatePillId = R.id.widget_empty_state_pill_0,
         allSetStateId = R.id.widget_all_set_state_0,
@@ -80,24 +61,7 @@ object DirectWidgetRenderer {
     )
 
     private val SLOT_1_IDS = FlipSlotViewIds(
-        gridContainerId = R.id.widget_grid_container_1,
-        rowIds = intArrayOf(
-            R.id.widget_s1_row_0,
-            R.id.widget_s1_row_1,
-            R.id.widget_s1_row_2,
-            R.id.widget_s1_row_3,
-            R.id.widget_s1_row_4,
-            R.id.widget_s1_row_5,
-        ),
-        rowTileMatrix = arrayOf(
-            intArrayOf(R.id.widget_s1_tile_0, R.id.widget_s1_tile_1, R.id.widget_s1_tile_2),
-            intArrayOf(R.id.widget_s1_tile_3, R.id.widget_s1_tile_4, R.id.widget_s1_tile_5),
-            intArrayOf(R.id.widget_s1_tile_6, R.id.widget_s1_tile_7, R.id.widget_s1_tile_8),
-            intArrayOf(R.id.widget_s1_tile_9, R.id.widget_s1_tile_10, R.id.widget_s1_tile_11),
-            intArrayOf(R.id.widget_s1_tile_12, R.id.widget_s1_tile_13, R.id.widget_s1_tile_14),
-            intArrayOf(R.id.widget_s1_tile_15),
-        ),
-        overflowPillId = R.id.widget_s1_overflow_pill,
+        listViewId = R.id.widget_list_s1,
         emptyStateId = R.id.widget_empty_state_1,
         emptyStatePillId = R.id.widget_empty_state_pill_1,
         allSetStateId = R.id.widget_all_set_state_1,
@@ -153,6 +117,50 @@ object DirectWidgetRenderer {
                 isFilterFlip = snapshot.showUncheckedOnly,
             )
         }
+    }
+
+    fun resolveColumnCountForWidget(context: Context, appWidgetId: Int): Int {
+        val manager = AppWidgetManager.getInstance(context.applicationContext)
+        val options = manager.getAppWidgetOptions(appWidgetId)
+        val (widthDp, heightDp) = resolveDimensionsDp(context, options)
+        val tier = resolveSizeTier(widthDp, heightDp)
+        return resolveColumnCount(tier, widthDp)
+    }
+
+    internal fun buildRowRemoteViews(
+        context: Context,
+        rowItems: List<CheckItemEntity>,
+        columnCount: Int,
+    ): RemoteViews {
+        val rowLayoutRes = when {
+            columnCount <= 1 -> R.layout.widget_row_1col
+            columnCount >= 3 -> R.layout.widget_row_3col
+            else -> R.layout.widget_row_2col
+        }
+        val rowRv = RemoteViews(context.packageName, rowLayoutRes)
+        bindTileSlot(
+            context = context,
+            rowRv = rowRv,
+            tileId = R.id.tile_0,
+            item = rowItems.getOrNull(0),
+        )
+        if (columnCount >= 2) {
+            bindTileSlot(
+                context = context,
+                rowRv = rowRv,
+                tileId = R.id.tile_1,
+                item = rowItems.getOrNull(1),
+            )
+        }
+        if (columnCount >= 3) {
+            bindTileSlot(
+                context = context,
+                rowRv = rowRv,
+                tileId = R.id.tile_2,
+                item = rowItems.getOrNull(2),
+            )
+        }
+        return rowRv
     }
 
     private fun resolveColumnCount(tier: WidgetSizeTier, widthDp: Float): Int = when (tier) {
@@ -212,9 +220,12 @@ object DirectWidgetRenderer {
         val showExpandedBar = tier == WidgetSizeTier.EXPANDED
         val columnCount = resolveColumnCount(tier, widthDp)
         val flipSlot = snapshot.checklistFlipSlot and 1
+        val activeSlotIds = if (flipSlot == 0) SLOT_0_IDS else SLOT_1_IDS
+        val inactiveSlotIds = if (flipSlot == 0) SLOT_1_IDS else SLOT_0_IDS
 
         val fullRv = buildFullRemoteViews(
             context = context,
+            appWidgetId = appWidgetId,
             checklist = activeChecklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
@@ -227,11 +238,22 @@ object DirectWidgetRenderer {
             showExpandedBar = showExpandedBar,
             columnCount = columnCount,
             flipSlot = flipSlot,
+            activeSlotIds = activeSlotIds,
+            inactiveSlotIds = inactiveSlotIds,
             isContentFlip = isContentFlip,
             isFilterFlip = isFilterFlip,
         )
 
         manager.updateAppWidget(appWidgetId, fullRv)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && visibleItems.isNotEmpty()) {
+            @Suppress("DEPRECATION")
+            manager.notifyAppWidgetViewDataChanged(appWidgetId, activeSlotIds.listViewId)
+            if (!isContentFlip) {
+                @Suppress("DEPRECATION")
+                manager.notifyAppWidgetViewDataChanged(appWidgetId, inactiveSlotIds.listViewId)
+            }
+        }
     }
 
     private fun buildMicroRemoteViews(
@@ -404,6 +426,7 @@ object DirectWidgetRenderer {
 
     private fun buildFullRemoteViews(
         context: Context,
+        appWidgetId: Int,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -416,6 +439,8 @@ object DirectWidgetRenderer {
         showExpandedBar: Boolean,
         columnCount: Int,
         flipSlot: Int,
+        activeSlotIds: FlipSlotViewIds,
+        inactiveSlotIds: FlipSlotViewIds,
         isContentFlip: Boolean,
         isFilterFlip: Boolean,
     ): RemoteViews {
@@ -437,30 +462,34 @@ object DirectWidgetRenderer {
             isFilterFlip = isFilterFlip,
         )
 
-        // Keep both ViewFlipper slots in sync so in-place updates never depend on slot index,
-        // and only call setDisplayedChild when switching checklists or toggling the filter.
         bindFlipSlotContent(
             context = context,
             rv = rv,
-            slotIds = SLOT_0_IDS,
+            appWidgetId = appWidgetId,
+            slotIds = activeSlotIds,
             checklist = checklist,
             totalCount = totalCount,
             visibleItems = visibleItems,
             columnCount = columnCount,
             openAppIntent = openAppIntent,
         )
-        bindFlipSlotContent(
-            context = context,
-            rv = rv,
-            slotIds = SLOT_1_IDS,
-            checklist = checklist,
-            totalCount = totalCount,
-            visibleItems = visibleItems,
-            columnCount = columnCount,
-            openAppIntent = openAppIntent,
-        )
+
         if (isContentFlip) {
+            // Preserve the outgoing slot's existing ListView content during the 140ms fade-out.
             rv.setDisplayedChild(R.id.widget_content_flipper, flipSlot)
+        } else {
+            // Keep the hidden slot synced for Launcher cold restarts (which default ViewFlipper to child 0).
+            bindFlipSlotContent(
+                context = context,
+                rv = rv,
+                appWidgetId = appWidgetId,
+                slotIds = inactiveSlotIds,
+                checklist = checklist,
+                totalCount = totalCount,
+                visibleItems = visibleItems,
+                columnCount = columnCount,
+                openAppIntent = openAppIntent,
+            )
         }
 
         return rv
@@ -469,6 +498,7 @@ object DirectWidgetRenderer {
     private fun bindFlipSlotContent(
         context: Context,
         rv: RemoteViews,
+        appWidgetId: Int,
         slotIds: FlipSlotViewIds,
         checklist: ChecklistEntity,
         totalCount: Int,
@@ -478,14 +508,14 @@ object DirectWidgetRenderer {
     ) {
         when {
             totalCount == 0 -> {
-                rv.setViewVisibility(slotIds.gridContainerId, View.GONE)
+                rv.setViewVisibility(slotIds.listViewId, View.GONE)
                 rv.setViewVisibility(slotIds.allSetStateId, View.GONE)
                 rv.setViewVisibility(slotIds.emptyStateId, View.VISIBLE)
                 rv.setOnClickPendingIntent(slotIds.emptyStatePillId, openAppIntent)
             }
 
             visibleItems.isEmpty() -> {
-                rv.setViewVisibility(slotIds.gridContainerId, View.GONE)
+                rv.setViewVisibility(slotIds.listViewId, View.GONE)
                 rv.setViewVisibility(slotIds.emptyStateId, View.GONE)
                 rv.setViewVisibility(slotIds.allSetStateId, View.VISIBLE)
                 rv.setTextViewText(
@@ -514,82 +544,94 @@ object DirectWidgetRenderer {
             else -> {
                 rv.setViewVisibility(slotIds.emptyStateId, View.GONE)
                 rv.setViewVisibility(slotIds.allSetStateId, View.GONE)
-                rv.setViewVisibility(slotIds.gridContainerId, View.VISIBLE)
-                bindStaticGridSlots(
-                    context = context,
-                    rv = rv,
-                    slotIds = slotIds,
-                    visibleItems = visibleItems,
-                    columnCount = columnCount,
-                    openAppIntent = openAppIntent,
+                rv.setViewVisibility(slotIds.listViewId, View.VISIBLE)
+
+                val templateIntent = Intent(context, TotalCheckWidgetReceiver::class.java).apply {
+                    action = TotalCheckWidgetReceiver.ACTION_WIDGET_COMMAND
+                }
+                val templateFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val templatePendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    REQ_LIST_TEMPLATE,
+                    templateIntent,
+                    templateFlags
                 )
+                rv.setPendingIntentTemplate(slotIds.listViewId, templatePendingIntent)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    bindCollectionItemsApi31(
+                        context = context,
+                        rv = rv,
+                        listViewId = slotIds.listViewId,
+                        visibleItems = visibleItems,
+                        columnCount = columnCount,
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    val serviceIntent = Intent(context, TotalCheckWidgetViewsService::class.java).apply {
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                        data = Uri.parse("${toUri(Intent.URI_INTENT_SCHEME)}#slot_${slotIds.listViewId}")
+                    }
+                    @Suppress("DEPRECATION")
+                    rv.setRemoteAdapter(slotIds.listViewId, serviceIntent)
+                }
             }
         }
     }
 
-    private fun bindStaticGridSlots(
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun bindCollectionItemsApi31(
         context: Context,
         rv: RemoteViews,
-        slotIds: FlipSlotViewIds,
+        listViewId: Int,
         visibleItems: List<CheckItemEntity>,
         columnCount: Int,
-        openAppIntent: PendingIntent,
     ) {
-        val maxRowCount = if (columnCount <= 1) 6 else 5
-        val maxSlots = maxRowCount * columnCount
-        val displayedItems = visibleItems.take(maxSlots)
+        val builder = RemoteViews.RemoteCollectionItems.Builder()
+            .setHasStableIds(true)
+            .setViewTypeCount(3)
 
-        for (rowIndex in slotIds.rowIds.indices) {
-            val rowViewId = slotIds.rowIds[rowIndex]
-            val rowTiles = slotIds.rowTileMatrix[rowIndex]
-            val rowStartItemIdx = rowIndex * columnCount
-            if (rowIndex >= maxRowCount || rowStartItemIdx >= displayedItems.size) {
-                rv.setViewVisibility(rowViewId, View.GONE)
-            } else {
-                rv.setViewVisibility(rowViewId, View.VISIBLE)
-                for (colIndex in rowTiles.indices) {
-                    val tileViewId = rowTiles[colIndex]
-                    if (colIndex >= columnCount) {
-                        rv.setViewVisibility(tileViewId, View.GONE)
-                    } else {
-                        val item = displayedItems.getOrNull(rowStartItemIdx + colIndex)
-                        bindTileSlot(
-                            context = context,
-                            rv = rv,
-                            tileId = tileViewId,
-                            item = item,
-                        )
-                    }
-                }
+        if (columnCount <= 1) {
+            for (item in visibleItems) {
+                builder.addItem(
+                    item.id,
+                    buildRowRemoteViews(context, listOf(item), 1)
+                )
+            }
+        } else {
+            val size = visibleItems.size
+            var idx = 0
+            while (idx < size) {
+                val end = (idx + columnCount).coerceAtMost(size)
+                val rowItems = visibleItems.subList(idx, end)
+                builder.addItem(
+                    rowItems[0].id,
+                    buildRowRemoteViews(context, rowItems, columnCount)
+                )
+                idx = end
             }
         }
 
-        val overflowCount = (visibleItems.size - maxSlots).coerceAtLeast(0)
-        if (overflowCount > 0) {
-            rv.setViewVisibility(slotIds.overflowPillId, View.VISIBLE)
-            rv.setTextViewText(
-                slotIds.overflowPillId,
-                context.getString(R.string.widget_overflow_more, overflowCount)
-            )
-            rv.setOnClickPendingIntent(slotIds.overflowPillId, openAppIntent)
-        } else {
-            rv.setViewVisibility(slotIds.overflowPillId, View.GONE)
-        }
+        rv.setRemoteAdapter(listViewId, builder.build())
     }
 
     private fun bindTileSlot(
         context: Context,
-        rv: RemoteViews,
+        rowRv: RemoteViews,
         tileId: Int,
-        item: CheckItemEntity?
+        item: CheckItemEntity?,
     ) {
         if (item == null) {
-            rv.setViewVisibility(tileId, View.INVISIBLE)
-            rv.setOnClickPendingIntent(tileId, null)
+            rowRv.setViewVisibility(tileId, View.INVISIBLE)
+            rowRv.setOnClickFillInIntent(tileId, Intent())
             return
         }
-        rv.setViewVisibility(tileId, View.VISIBLE)
-        rv.setInt(
+        rowRv.setViewVisibility(tileId, View.VISIBLE)
+        rowRv.setInt(
             tileId,
             "setBackgroundResource",
             if (item.isChecked) {
@@ -598,7 +640,7 @@ object DirectWidgetRenderer {
                 R.drawable.widget_pill_surface_high
             }
         )
-        rv.setTextViewCompoundDrawablesRelative(
+        rowRv.setTextViewCompoundDrawablesRelative(
             tileId,
             if (item.isChecked) {
                 R.drawable.widget_ic_check_checked
@@ -611,7 +653,7 @@ object DirectWidgetRenderer {
         )
         applyTextColor(
             context = context,
-            rv = rv,
+            rv = rowRv,
             viewId = tileId,
             colorRes = if (item.isChecked) {
                 R.color.widget_on_surface_variant
@@ -619,14 +661,12 @@ object DirectWidgetRenderer {
                 R.color.widget_on_surface
             }
         )
-        rv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked))
-        rv.setOnClickPendingIntent(
-            tileId,
-            buildToggleItemPendingIntent(
-                context = context,
-                itemId = item.id,
-            )
-        )
+        rowRv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked))
+        val fillInIntent = Intent().apply {
+            putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM)
+            putExtra(TotalCheckWidgetReceiver.EXTRA_ITEM_ID, item.id)
+        }
+        rowRv.setOnClickFillInIntent(tileId, fillInIntent)
     }
 
     private fun buildStyledLabel(label: String, isChecked: Boolean): CharSequence {
@@ -637,25 +677,6 @@ object DirectWidgetRenderer {
         } else {
             label
         }
-    }
-
-    private fun buildToggleItemPendingIntent(
-        context: Context,
-        itemId: Long,
-    ): PendingIntent {
-        val intent = Intent(context, TotalCheckWidgetReceiver::class.java).apply {
-            action = TotalCheckWidgetReceiver.ACTION_WIDGET_COMMAND
-            putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM)
-            putExtra(TotalCheckWidgetReceiver.EXTRA_ITEM_ID, itemId)
-            data = Uri.parse("totalcheck://widget/cmd/toggle_item/$itemId")
-        }
-        val requestCode = REQ_TOGGLE_ITEM_BASE + (itemId.toInt() and 0xFFFF)
-        return PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
     }
 
     private fun bindSwitchButtons(
