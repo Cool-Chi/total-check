@@ -28,6 +28,7 @@
 | `v0.14.0` | **M8 Extension（動態預覽佈局 `previewLayout` 與多 Widget 命名規範）** | 新增 Android 12–16/17 純靜態高擬真 `widget_preview_checklist_grid.xml`（呈現 3x2 雙欄雙態對比）與 API < 31 風格 C 向量備援圖 `widget_preview_checklist_grid_fallback.xml`；將 Provider Metadata 結構化升級為 `widget_info_checklist_grid.xml`，並於三語系補齊 `widget_checklist_grid_name`、`widget_checklist_grid_description` 及 `widget_preview_*` 資源（保留 `TotalCheckWidgetReceiver` 類別路徑確保已釘選小工具無縫升級） |
 | `v0.15.0` | **M8 Refactor（雙 Widget 拆分：網格 `2x2+` 與極簡計數條 `2x1~4x1`）** | 將單行 1 格高版型正式拆分為第二款獨立小工具「清單極簡計數條」（`TotalCheckCounterWidgetReceiver` + `widget_info_counter_bar.xml` + `widget_counter_bar.xml`，鎖定 `40dp~85dp` 單行高度並依寬度 `>= 220dp` 自動展開進度條與兩段式 `↺ ⇄ 確認?` 重置），同時將原「工具清單網格」鎖定為 `2x2` 以上（`minWidth="140dp"`、`minHeight="110dp"`）並移除 `DirectWidgetRenderer` 的 `MICRO` 分支，雙 Widget 由 `DirectWidgetRenderer.renderAll()` 統一同步 |
 | `v0.15.1` | **M8 Polish III（計數條 2x1 佈局重構與多實例 `appWidgetId` 解耦）** | 重構 `widget_counter_bar.xml` 與 `widget_preview_counter_bar.xml`：移除獨立「尚缺 X」膠囊，左側改為 `2x1 ~ 4x1` 全尺寸常駐「上標題 + 右側精簡計數（`尚缺 X` / `✓ checked/total`）+ 下進度條」雙層結構，`2x1`（`< 220dp`）右側僅保留 `< >` 切換、`3x1/4x1`（`>= 220dp`）展開 `↺ ⇄ 確認?`；`UserPreferencesRepository`、`WidgetSyncManager`、`DirectWidgetRenderer` 與 `PendingIntent` 全面改以 `appWidgetId` 隔離各小工具實例的清單選擇、過濾與重置確認狀態（並於 `onDeleted` 清理），同步 `app/build.gradle.kts` 版號（`versionCode = 4` / `versionName = "0.15.1"`）與 `AGENT.md` 版號規範 |
+| `v0.16.0` | **M8 Theme Sync & Final Polish（雙軌主題同步、關鍵熱修與最終體驗打磨）** | 1. **App 雙軌主題同步**：新增 `WidgetThemePalette.kt`，將 App `ThemeConfig(isDarkMode, useDynamicColor)` 精調色盤與動態取色映射至原生 `<ripple>` Drawable 與四象限多槽位 `ProgressBar`，全面移除 `setColorStateList` 反射呼叫徹底根除 `RemoteViews.ActionException` 並以 `WidgetSyncManager.notifyThemeChanged()` 消除切換競態。<br>2. **Final Polish 四項體驗優化**：`<ListView>` 同行未填滿空槽位與新增 2 列底部透明列（`widget_row_blank_space.xml`，`viewTypeCount = 4`）綁定 `CMD_OPEN_APP` 點擊入 App；`TOGGLE_RIPPLE_DELAY_MS` 延長至 `260ms` 並強化水波紋對比；Widget `+ 新增`／空清單入口透過 `MainActivity.EXTRA_AUTO_FOCUS_INPUT` 自動聚焦 `QuickInputBar` 並彈出軟鍵盤；`ExpandingChecklistTabBar` 將「`+`」固定最右側並於左側頁籤列施加 `32.dp` `BlendMode.DstIn` 右緣漸層淡化；更新 `versionCode = 5` / `versionName = "0.16.0"` |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -39,11 +40,12 @@ app/src/main/kotlin/com/example/totalcheck/
 │   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + 按 appWidgetId 隔離之 Widget 狀態與 onDeleted 清理)
 │   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次匯入與排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
 │   └── widget/
-│       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + 85ms ripple 延遲與 toggleGeneration 合併 + 5 秒重置超時恢復
+│       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + ThemeConfig 同步 + 260ms ripple 延遲與 toggleGeneration 合併 + 5 秒重置超時恢復
+│       ├── WidgetThemePalette.kt          # Curated Dark/Light 與 Dynamic Color (Android 12+) 四象限原生 Drawable / ProgressBar 色票解析器
 │       ├── DirectWidgetRenderer.kt        # 原生 RemoteViews 雙 Widget 渲染器（工具清單網格 Compact/Standard/Expanded + 清單極簡計數條）
 │       ├── TotalCheckWidgetViewsService.kt # API 26-30 RemoteViewsService 捲動列回退工廠
 │       ├── TotalCheckCounterWidgetReceiver.kt # Widget 2：清單極簡計數條 Receiver（2x1 ~ 4x1）
-│       └── TotalCheckWidgetReceiver.kt    # Widget 1：工具清單網格 Receiver 與全域指令派發器
+│       └── TotalCheckWidgetReceiver.kt    # Widget 1：工具清單網格 Receiver 與全域指令派發器（含 CMD_OPEN_APP）
 └── ui/
     ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
@@ -62,8 +64,8 @@ app/src/main/kotlin/com/example/totalcheck/
   - **左側全尺寸雙層結構（`2x1` ~ `4x1` 常駐）**：上層為清單名稱（`layout_weight="1"`，點擊進入 App 並定位清單）與右側精簡計數文字（`尚缺 X` 或全備時 `✓ checked/total`），下層常駐圓角水平 `ProgressBar`，並搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡。
   - **右側操作區自適應**：`2x1`（寬 `< 220.dp`）隱藏重置鈕僅顯示 `< >` 切換清單；`3x1 / 4x1`（寬 `>= 220.dp`）於 `< >` 左側自動展開兩段式防誤觸重置鈕 `↺ ⇄ 確認?`（`animateLayoutChanges="true"`）。
 - **互動、捲動與動效規範**：
-  - **原生 `<ListView>` 捲動容器 + 純 `<TextView>` 膠囊列**：透過 `AdapterView` 攔截桌面垂直滑動手勢（避免 Pixel Launcher 誤觸通知欄/抽屜），API 31+ 使用 `RemoteCollectionItems`（`hasStableIds = true`、`viewTypeCount = 3`）搭配 `PendingIntentTemplate` + `FillInIntent`；一般勾選維持 `ORDER BY sortOrder ASC, id DESC` 原始順序，等待 `85ms` ripple 綻放後原地全量刷新（不呼叫 `ViewFlipper.setDisplayedChild`）以保持捲動位置與鄰居方塊穩定。
+  - **原生 `<ListView>` 捲動容器 + 純 `<TextView>` 膠囊列**：透過 `AdapterView` 攔截桌面垂直滑動手勢（避免 Pixel Launcher 誤觸通知欄/抽屜），API 31+ 使用 `RemoteCollectionItems`（`hasStableIds = true`、`viewTypeCount = 4`）搭配 `PendingIntentTemplate` + `FillInIntent`；未填滿之同行空槽位與 2 列底部 `72dp` 透明空白列（`widget_row_blank_space.xml`）綁定 `CMD_OPEN_APP`，利用 `<ListView>` 原生 Touch Slop 確保僅於輕點時跳轉進 App 而不與捲動手勢衝突。一般勾選維持 `ORDER BY sortOrder ASC, id DESC` 原始順序，等待 `260ms` `<ripple>` 綻放後原地全量刷新（不呼叫 `ViewFlipper.setDisplayedChild`）以保持捲動位置與鄰居方塊穩定。
   - **雙槽位 `<ViewFlipper>` 切換轉場**：僅於 `<` / `>` 切換清單或點擊 `尚缺 X` 篩選時翻轉 `checklistFlipSlot`（`0 ⇄ 1`），呈現 180ms 淡入微縮放轉場；且 `尚缺 X` 膠囊鎖定精簡計數寬度，避免切換時擠壓左側清單標題。
   - **兩段式防誤觸重置（`↺`）**：頂欄右側按鈕區以獨立 `LinearLayout` 啟用 `android:animateLayoutChanges="true"`，點擊 `↺` 後切換為紅底（`errorContainer`）`確認?` 並維持 5 秒有效期限，超時自動復原。
   - **空面板與全部備齊徽章**：當清單無項目時顯示「尚無清點項目，點擊新增」入口；當 `尚缺 0` 且開啟「只看未帶」時，中央顯示 `✓ 全部備齊 (共 N 項)` 膠囊徽章與 `[ ↺ 重新清點 ]` / `[ 顯示全部項目 ]` 快捷鈕。
-  - **色彩與多實例解耦連動**：採用 Android 系統日夜模式色盤（`values-v31` / `values-night-v31` 支援 Material You 動態取色）；每個桌面 Widget 實例按 `appWidgetId` 獨立記憶選中清單、篩選與重置確認狀態（互不干擾，於 `onDeleted` 自動清理），面板控制僅刷新目標 `appWidgetId`、資料寫入則同步全體實例；直接點擊 Widget 標題／進度列進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`。
+  - **色彩與多實例解耦連動**：透過 `WidgetThemePalette` + `WidgetSyncManager.notifyThemeChanged()` 讓桌面小工具 100% 同步套用 App 內 `ThemeConfig(isDarkMode, useDynamicColor)` 雙軌色彩（精調色盤 / Android 12+ 動態取色），嚴格採用靜態安全 Drawable 切換（0 `setColorStateList` 反射）消除 `ActionException`；每個桌面 Widget 實例按 `appWidgetId` 獨立記憶選中清單、篩選與重置確認狀態（互不干擾，於 `onDeleted` 自動清理），面板控制僅刷新目標 `appWidgetId`、資料寫入則同步全體實例；直接點擊 Widget 標題／進度列／空白區進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`，點擊 `+ 新增` 或空清單入口則進一步透過 `EXTRA_AUTO_FOCUS_INPUT` 自動展開聚焦 `QuickInputBar` 與軟鍵盤。
