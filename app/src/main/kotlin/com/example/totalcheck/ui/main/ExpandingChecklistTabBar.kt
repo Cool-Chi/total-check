@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -53,7 +54,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -540,50 +544,77 @@ internal fun ExpandingChecklistTabBar(
         }
     }
 
-    Box(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 2.dp, bottom = 4.dp)
-            .onSizeChanged {
-                viewportWidthPx = it.width
-                viewportHeightPx = it.height
-            }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false,
-                        pass = PointerEventPass.Initial
-                    )
-                    latestPointerXRef.floatValue = down.position.x
-                    while (true) {
-                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                        if (change == null || !change.pressed) {
-                            if (draggedChecklistId != null && !isSettlingDrop) {
-                                finishDragSettle()
+            .padding(top = 2.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .onSizeChanged {
+                    viewportWidthPx = it.width
+                    viewportHeightPx = it.height
+                }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(
+                            requireUnconsumed = false,
+                            pass = PointerEventPass.Initial
+                        )
+                        latestPointerXRef.floatValue = down.position.x
+                        while (true) {
+                            val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed) {
+                                if (draggedChecklistId != null && !isSettlingDrop) {
+                                    finishDragSettle()
+                                }
+                                break
                             }
-                            break
-                        }
-                        latestPointerXRef.floatValue = change.position.x
-                        if (draggedChecklistId != null && !isSettlingDrop) {
-                            change.consume()
-                            pointerXInViewportState.floatValue = change.position.x
-                            val minX = overlayHorizontalPadPx
-                            val maxX = (viewportWidthPx.toFloat() - draggedVisualWidthPx - overlayHorizontalPadPx)
-                                .coerceAtLeast(minX)
-                            dragOverlayX = (change.position.x - dragGrabOffsetX).coerceIn(minX, maxX)
-                            recalculateInsertionSlot()
+                            latestPointerXRef.floatValue = change.position.x
+                            if (draggedChecklistId != null && !isSettlingDrop) {
+                                change.consume()
+                                pointerXInViewportState.floatValue = change.position.x
+                                val minX = overlayHorizontalPadPx
+                                val maxX = (viewportWidthPx.toFloat() - draggedVisualWidthPx - overlayHorizontalPadPx)
+                                    .coerceAtLeast(minX)
+                                dragOverlayX = (change.position.x - dragGrabOffsetX).coerceIn(minX, maxX)
+                                recalculateInsertionSlot()
+                            }
                         }
                     }
                 }
-            }
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrollState),
-            verticalAlignment = Alignment.CenterVertically
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        if (scrollState.value < scrollState.maxValue) {
+                            val fadeWidthPx = 32.dp.toPx().coerceAtMost(size.width)
+                            if (fadeWidthPx > 0f) {
+                                val fadeStartX = size.width - fadeWidthPx
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Black, Color.Transparent),
+                                        startX = fadeStartX,
+                                        endX = size.width
+                                    ),
+                                    topLeft = Offset(fadeStartX, 0f),
+                                    size = Size(fadeWidthPx, size.height),
+                                    blendMode = BlendMode.DstIn
+                                )
+                            }
+                        }
+                    }
+                    .horizontalScroll(scrollState),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             Spacer(modifier = Modifier.width(12.dp))
 
             Layout(
@@ -803,27 +834,7 @@ internal fun ExpandingChecklistTabBar(
                 }
             }
 
-            Spacer(modifier = Modifier.width(4.dp))
-
-            TactileIconButton(
-                onClick = onAddChecklist,
-                modifier = Modifier
-                    .size(40.dp)
-                    .focusRequester(addButtonFocusRequester)
-                    .testTag("add_checklist_button"),
-                shape = RoundedCornerShape(50),
-                containerColor = colorScheme.surfaceContainerHigh,
-                contentColor = colorScheme.primary,
-                border = BorderStroke(1.dp, colorScheme.outlineVariant)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = stringResource(R.string.cd_add_checklist),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(12.dp))
         }
 
         val floatingChecklist = draggedChecklistId?.let { id ->
@@ -859,6 +870,28 @@ internal fun ExpandingChecklistTabBar(
                     isSelected = floatingSelected
                 )
             }
+        }
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        TactileIconButton(
+            onClick = onAddChecklist,
+            modifier = Modifier
+                .padding(end = 12.dp)
+                .size(40.dp)
+                .focusRequester(addButtonFocusRequester)
+                .testTag("add_checklist_button"),
+            shape = RoundedCornerShape(50),
+            containerColor = colorScheme.surfaceContainerHigh,
+            contentColor = colorScheme.primary,
+            border = BorderStroke(1.dp, colorScheme.outlineVariant)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Add,
+                contentDescription = stringResource(R.string.cd_add_checklist),
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }
