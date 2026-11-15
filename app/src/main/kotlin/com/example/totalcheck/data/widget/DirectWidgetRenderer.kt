@@ -108,13 +108,14 @@ object DirectWidgetRenderer {
 
     fun renderAll(context: Context) {
         val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
-        renderAll(context, snapshot, isChecklistSwitch = false)
+        renderAll(context, snapshot, isContentFlip = false, isFilterFlip = false)
     }
 
     fun renderAll(
         context: Context,
         snapshot: WidgetUiSnapshot,
-        isChecklistSwitch: Boolean = false
+        isContentFlip: Boolean = false,
+        isFilterFlip: Boolean = false,
     ) {
         val appContext = context.applicationContext
         val manager = AppWidgetManager.getInstance(appContext)
@@ -128,7 +129,8 @@ object DirectWidgetRenderer {
                 manager = manager,
                 appWidgetId = appWidgetId,
                 snapshot = snapshot,
-                isChecklistSwitch = isChecklistSwitch,
+                isContentFlip = isContentFlip,
+                isFilterFlip = isFilterFlip,
             )
         }
     }
@@ -147,7 +149,8 @@ object DirectWidgetRenderer {
                 manager = manager,
                 appWidgetId = appWidgetId,
                 snapshot = snapshot,
-                isChecklistSwitch = false,
+                isContentFlip = false,
+                isFilterFlip = snapshot.showUncheckedOnly,
             )
         }
     }
@@ -163,7 +166,8 @@ object DirectWidgetRenderer {
         manager: AppWidgetManager,
         appWidgetId: Int,
         snapshot: WidgetUiSnapshot,
-        isChecklistSwitch: Boolean,
+        isContentFlip: Boolean,
+        isFilterFlip: Boolean,
     ) {
         val options = manager.getAppWidgetOptions(appWidgetId)
         val (widthDp, heightDp) = resolveDimensionsDp(context, options)
@@ -223,7 +227,8 @@ object DirectWidgetRenderer {
             showExpandedBar = showExpandedBar,
             columnCount = columnCount,
             flipSlot = flipSlot,
-            isChecklistSwitch = isChecklistSwitch,
+            isContentFlip = isContentFlip,
+            isFilterFlip = isFilterFlip,
         )
 
         manager.updateAppWidget(appWidgetId, fullRv)
@@ -300,6 +305,7 @@ object DirectWidgetRenderer {
         hasMultipleChecklists: Boolean,
         showResetButton: Boolean,
         showExpandedBar: Boolean,
+        isFilterFlip: Boolean,
     ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
@@ -308,73 +314,57 @@ object DirectWidgetRenderer {
         rv.setTextViewText(R.id.widget_header_title, checklist.name)
         rv.setOnClickPendingIntent(R.id.widget_header_title, openAppIntent)
 
-        val filterLabel = when {
-            showUncheckedOnly -> context.getString(R.string.widget_left_filtered, uncheckedCount)
-            isAllDone -> context.getString(R.string.widget_all_set_short)
-            else -> context.getString(R.string.widget_left_count, uncheckedCount)
+        // Lock pill label to concise count so toggling filter never squeezes the checklist title.
+        val filterLabel = if (isAllDone && !showUncheckedOnly) {
+            context.getString(R.string.widget_all_set_short)
+        } else {
+            context.getString(R.string.widget_left_count, uncheckedCount)
         }
-        val filterBg = when {
-            showUncheckedOnly -> R.drawable.widget_pill_tertiary
-            isAllDone -> R.drawable.widget_pill_primary_container
-            else -> R.drawable.widget_pill_secondary_container
-        }
-        val filterTextColor = when {
-            showUncheckedOnly -> R.color.widget_on_tertiary
-            isAllDone -> R.color.widget_on_primary_container
-            else -> R.color.widget_on_secondary_container
-        }
-        rv.setTextViewText(R.id.widget_btn_filter, filterLabel)
-        rv.setInt(R.id.widget_btn_filter, "setBackgroundResource", filterBg)
-        applyTextColor(context, rv, R.id.widget_btn_filter, filterTextColor)
-        rv.setOnClickPendingIntent(
-            R.id.widget_btn_filter,
-            buildBroadcastPendingIntent(
-                context = context,
-                requestCode = REQ_TOGGLE_FILTER,
-                command = TotalCheckWidgetReceiver.CMD_TOGGLE_FILTER
-            )
+        val filterIntent = buildBroadcastPendingIntent(
+            context = context,
+            requestCode = REQ_TOGGLE_FILTER,
+            command = TotalCheckWidgetReceiver.CMD_TOGGLE_FILTER
         )
+        rv.setTextViewText(R.id.widget_btn_filter_normal, filterLabel)
+        rv.setInt(
+            R.id.widget_btn_filter_normal,
+            "setBackgroundResource",
+            if (isAllDone) R.drawable.widget_pill_primary_container else R.drawable.widget_pill_secondary_container
+        )
+        applyTextColor(
+            context,
+            rv,
+            R.id.widget_btn_filter_normal,
+            if (isAllDone) R.color.widget_on_primary_container else R.color.widget_on_secondary_container
+        )
+        rv.setOnClickPendingIntent(R.id.widget_btn_filter_normal, filterIntent)
+
+        rv.setTextViewText(R.id.widget_btn_filter_active, filterLabel)
+        rv.setOnClickPendingIntent(R.id.widget_btn_filter_active, filterIntent)
+
+        if (isFilterFlip) {
+            rv.setDisplayedChild(R.id.widget_filter_pill_flipper, if (showUncheckedOnly) 1 else 0)
+        }
 
         if (showResetButton && totalCount > 0) {
-            rv.setViewVisibility(R.id.widget_btn_reset, View.VISIBLE)
-            rv.setTextViewText(
-                R.id.widget_btn_reset,
-                if (isResetConfirmActive) {
-                    context.getString(R.string.widget_reset_confirm)
-                } else {
-                    context.getString(R.string.widget_reset_icon)
-                }
-            )
-            rv.setInt(
-                R.id.widget_btn_reset,
-                "setBackgroundResource",
-                if (isResetConfirmActive) {
-                    R.drawable.widget_pill_error_container
-                } else {
-                    R.drawable.widget_pill_surface_variant
-                }
-            )
-            applyTextColor(
+            val resetIntent = buildBroadcastPendingIntent(
                 context = context,
-                rv = rv,
-                viewId = R.id.widget_btn_reset,
-                colorRes = if (isResetConfirmActive) {
-                    R.color.widget_on_error_container
-                } else {
-                    R.color.widget_on_surface_variant
-                }
+                requestCode = REQ_RESET_STAGE,
+                command = TotalCheckWidgetReceiver.CMD_RESET_STAGE,
+                checklistId = checklist.id
             )
-            rv.setOnClickPendingIntent(
-                R.id.widget_btn_reset,
-                buildBroadcastPendingIntent(
-                    context = context,
-                    requestCode = REQ_RESET_STAGE,
-                    command = TotalCheckWidgetReceiver.CMD_RESET_STAGE,
-                    checklistId = checklist.id
-                )
-            )
+            if (isResetConfirmActive) {
+                rv.setViewVisibility(R.id.widget_btn_reset, View.GONE)
+                rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.VISIBLE)
+                rv.setOnClickPendingIntent(R.id.widget_btn_reset_confirm, resetIntent)
+            } else {
+                rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.GONE)
+                rv.setViewVisibility(R.id.widget_btn_reset, View.VISIBLE)
+                rv.setOnClickPendingIntent(R.id.widget_btn_reset, resetIntent)
+            }
         } else {
             rv.setViewVisibility(R.id.widget_btn_reset, View.GONE)
+            rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.GONE)
         }
 
         bindSwitchButtons(
@@ -426,7 +416,8 @@ object DirectWidgetRenderer {
         showExpandedBar: Boolean,
         columnCount: Int,
         flipSlot: Int,
-        isChecklistSwitch: Boolean,
+        isContentFlip: Boolean,
+        isFilterFlip: Boolean,
     ): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_full)
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
@@ -443,10 +434,11 @@ object DirectWidgetRenderer {
             hasMultipleChecklists = hasMultipleChecklists,
             showResetButton = showResetButton,
             showExpandedBar = showExpandedBar,
+            isFilterFlip = isFilterFlip,
         )
 
         // Keep both ViewFlipper slots in sync so in-place updates never depend on slot index,
-        // and only call setDisplayedChild when switching checklists so tile taps never replay flip animations.
+        // and only call setDisplayedChild when switching checklists or toggling the filter.
         bindFlipSlotContent(
             context = context,
             rv = rv,
@@ -467,7 +459,7 @@ object DirectWidgetRenderer {
             columnCount = columnCount,
             openAppIntent = openAppIntent,
         )
-        if (isChecklistSwitch) {
+        if (isContentFlip) {
             rv.setDisplayedChild(R.id.widget_content_flipper, flipSlot)
         }
 

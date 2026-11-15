@@ -26,12 +26,12 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
                 itemId = itemId,
                 checklistId = checklistId,
                 direction = direction,
-                onSchedulePersist = { persist ->
+                onScheduleAsync = { work ->
                     val pendingResult = goAsync()
-                    WidgetSyncManager.launchPersistWithPendingResult(
+                    WidgetSyncManager.launchAsyncWithPendingResult(
                         context = appContext,
                         pendingResult = pendingResult,
-                        persist = persist,
+                        work = work,
                     )
                 },
             )
