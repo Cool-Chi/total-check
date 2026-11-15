@@ -8,64 +8,85 @@
 - **資料與狀態**：Room `2.8.5`（`AppDatabase` 單例 + `ChecklistRepository`）、Preferences DataStore `1.3.0`（`UserPreferencesRepository`）、`MainViewModel`（`StateFlow`）。
 - **核心設計**：風格 C（`24.dp` 觸感膠囊模組、大型進度數字、飽和色「待備 / ✓ 已備」標籤）、原地勾選狀態轉場（不隨勾選沉底）。
 
-## 2. 已完成里程碑
+## 2. 已完成里程碑（`v0.0.1` ~ `v0.16.0`）
 
 | 版本標籤 | 里程碑 | 核心交付內容 |
 |---|---|---|
-| `v0.0.1` | 初始化 | 建立 `SPEC.md`、`AGENT.md`、`WORKFLOW.md` 與專案骨架 |
-| `v0.0.2` ~ `v0.1.0` | **M0（UI 外殼定型）** | 鎖定「風格 C」觸感膠囊介面、原地狀態轉場、`0.97f` 按壓縮放與「只看未帶」過濾切換 |
+| `v0.0.1` ~ `v0.1.0` | **M0（UI 外殼定型）** | 建立 `SPEC.md`、`AGENT.md`、`WORKFLOW.md`；鎖定「風格 C」觸感膠囊介面、原地狀態轉場、`0.97f` 按壓縮放與「只看未帶」過濾切換 |
 | `v0.2.0` | **M1（資料持久化基底）** | 串接 Room（`checklists` / `check_items`）、DataStore、首次啟動種子資料與 `WidgetSyncManager` 解耦空殼 |
-| `v0.3.0` | **M2-A（Edge-to-Edge 與雙軌色彩）** | `SystemBarStyle` 動態反轉、`Scaffold` insets 對齊、精調雙色盤（Dark `#0E1116` / Light `#F8FAFC` / Tertiary Amber）與 Dynamic Color 切換鈕 |
-| `v0.4.0` | **M2-B（Radial Theme Transition）** | `RadialThemeTransitionContainer`（單一活體樹 + `GraphicsLayer` 離屏快照 + `ClipOp.Difference` 反向圓形挖空）、真實觸控座標擷取與 `rememberReducedMotion()` 無障礙降級 |
-| `v0.5.0` ~ `v0.5.1` | **M3-A（多清單分頁與清單 CRUD）** | `HorizontalPager` 1:1 跟手分頁、頂部風格 C 膠囊 Tab 列、清單建立/改名/刪除（含最後一份保護）、修正新建清單跳頁競態與 `ThemeConfig?` 亮色冷啟動零閃爍 |
-| `v0.6.0` ~ `v0.6.1` | **M3-B（項目行內 CRUD 與重置 Undo）** | 底部常駐連續輸入列（`adjustResize` + `imePadding`、保持鍵盤開啟、新項目自動上滑至頂部）、項目行內改名/刪除、一鍵重置與 `Snackbar` 復原閉環 |
-| `v0.7.0` ~ `v0.8.0` | **M4（高階物理動效與手勢管線優化）** | `RadialThemeTransitionContainer` PointerDown 預擷取、`Spring Stepper Progress` 過衝回彈、`HorizontalPager` 零重組手勢管線、`Staggered Bulk Selection` 錯峰重置波浪與初期左滑曲線刪除 |
-| `v0.9.0` | **啟動骨架屏與轉場效能優化** | `TotalCheckSkeletonShimmer` 啟動骨架屏、`0.6f` 降採樣快照與多波次 `RevealWave` 主題擴散、`CapsuleComponents` `Animatable` + `drawBehind` 零重組色彩插值、`DistantTabTransition` 遠距分頁預熱滑動 |
-| `v0.10.0` | **M5（項目欄位動畫、堆疊排列與互動重構）** | 自訂 `StackedCardScrollLayout`（深度堆疊壓縮、層次暗化、點擊展開與 `ItemReflowAnim` / `NeighborRippleWave` 重排與鄰近波紋）、`Hold-to-Delete Perimeter Ring`（150ms 延遲 + 1000ms 外圈進度環刪除 + 300ms 退回）、`Drag-to-Reorder` 拖曳排序與懸浮層（含鍵盤/TalkBack 無障礙移動與 `ChecklistDao.updateItems` 批次持久化）、滾動方向感知 `QuickInputBar` 自動隱藏與 `BackHandler` 退出編輯 |
-| `v0.11.0` | **M6（頂部導覽列與其餘介面交互動效優化）** | 頂部 `ExpandingChecklistTabBar` 長按拖曳排序與 `TabReflowAnim` 彈簧讓位、`SlideOutCancelModifier`（`0.94f` 按壓下沉與 `44.dp` 滑出衰減取消）、自訂 `ScopedModalOverlay`（記憶軟鍵盤高度達成輸入彈窗首幀零二次跳動、背景 IME 凍結）、進度卡整合清單改名/刪除與刪除清單 `Snackbar` 連同項目復原、`StackedCardScrollLayout` 邊界過捲動手風琴拉伸回彈（Overscroll Accordion），以及中英雙語字串資源（`values` / `values-b+zh+Hant` / `values-zh`） |
-| `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析引擎與即時預覽快速匯入）** | 新增高容錯雙模式解析器 `ChecklistTextParser`、`ChecklistDao.createChecklistWithItems` 批次匯入交易、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（含 `LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調與 Sticky Header/Footer 防遮擋）及應用程式圖標 |
-| `v0.13.0` ~ `v0.13.5` | **M8（桌面小工具 Native Direct RemoteViews + Polish & Scroll Fix）** | 以原生 `DirectWidgetRenderer` 取代 Jetpack Glance 達成毫秒級響應，採用「雙槽位 `<ViewFlipper>` 內嵌原生 `<ListView>` + 純 `<TextView>` Bento 膠囊列」（API 31+ `RemoteCollectionItems` + API 26–30 `TotalCheckWidgetViewsService`）解決 Launcher 攔截垂直滑動手勢並徹底消滅重繪閃爍；整合 `85ms` ripple 綻放延遲、`toggleGeneration` 連點合併、`↺ ⇄ 確認?` 兩段式 `animateLayoutChanges` 過渡、鎖定寬度 `尚缺 X` 篩選 `<ViewFlipper>`、`WidgetSyncManager` 雙向同步與 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位 |
-| `v0.14.0` | **M8 Extension（動態預覽佈局 `previewLayout` 與多 Widget 命名規範）** | 新增 Android 12–16/17 純靜態高擬真 `widget_preview_checklist_grid.xml`（呈現 3x2 雙欄雙態對比）與 API < 31 風格 C 向量備援圖 `widget_preview_checklist_grid_fallback.xml`；將 Provider Metadata 結構化升級為 `widget_info_checklist_grid.xml`，並於三語系補齊 `widget_checklist_grid_name`、`widget_checklist_grid_description` 及 `widget_preview_*` 資源（保留 `TotalCheckWidgetReceiver` 類別路徑確保已釘選小工具無縫升級） |
-| `v0.15.0` | **M8 Refactor（雙 Widget 拆分：網格 `2x2+` 與極簡計數條 `2x1~4x1`）** | 將單行 1 格高版型正式拆分為第二款獨立小工具「清單極簡計數條」（`TotalCheckCounterWidgetReceiver` + `widget_info_counter_bar.xml` + `widget_counter_bar.xml`，鎖定 `40dp~85dp` 單行高度並依寬度 `>= 220dp` 自動展開進度條與兩段式 `↺ ⇄ 確認?` 重置），同時將原「工具清單網格」鎖定為 `2x2` 以上（`minWidth="140dp"`、`minHeight="110dp"`）並移除 `DirectWidgetRenderer` 的 `MICRO` 分支，雙 Widget 由 `DirectWidgetRenderer.renderAll()` 統一同步 |
-| `v0.15.1` | **M8 Polish III（計數條 2x1 佈局重構與多實例 `appWidgetId` 解耦）** | 重構 `widget_counter_bar.xml` 與 `widget_preview_counter_bar.xml`：移除獨立「尚缺 X」膠囊，左側改為 `2x1 ~ 4x1` 全尺寸常駐「上標題 + 右側精簡計數（`尚缺 X` / `✓ checked/total`）+ 下進度條」雙層結構，`2x1`（`< 220dp`）右側僅保留 `< >` 切換、`3x1/4x1`（`>= 220dp`）展開 `↺ ⇄ 確認?`；`UserPreferencesRepository`、`WidgetSyncManager`、`DirectWidgetRenderer` 與 `PendingIntent` 全面改以 `appWidgetId` 隔離各小工具實例的清單選擇、過濾與重置確認狀態（並於 `onDeleted` 清理），同步 `app/build.gradle.kts` 版號（`versionCode = 4` / `versionName = "0.15.1"`）與 `AGENT.md` 版號規範 |
-| `v0.16.0` | **M8 Theme Sync & Final Polish（雙軌主題同步、關鍵熱修與最終體驗打磨）** | 1. **App 雙軌主題同步**：新增 `WidgetThemePalette.kt`，將 App `ThemeConfig(isDarkMode, useDynamicColor)` 精調色盤與動態取色映射至原生 `<ripple>` Drawable 與四象限多槽位 `ProgressBar`，全面移除 `setColorStateList` 反射呼叫徹底根除 `RemoteViews.ActionException` 並以 `WidgetSyncManager.notifyThemeChanged()` 消除切換競態。<br>2. **Final Polish 四項體驗優化**：`<ListView>` 同行未填滿空槽位與新增 2 列底部透明列（`widget_row_blank_space.xml`，`viewTypeCount = 4`）綁定 `CMD_OPEN_APP` 點擊入 App；`TOGGLE_RIPPLE_DELAY_MS` 延長至 `260ms` 並強化水波紋對比；Widget `+ 新增`／空清單入口透過 `MainActivity.EXTRA_AUTO_FOCUS_INPUT` 自動聚焦 `QuickInputBar` 並彈出軟鍵盤；`ExpandingChecklistTabBar` 將「`+`」固定最右側並於左側頁籤列施加 `32.dp` `BlendMode.DstIn` 右緣漸層淡化；更新 `versionCode = 5` / `versionName = "0.16.0"` |
+| `v0.3.0` ~ `v0.4.0` | **M2（Edge-to-Edge、雙軌色彩與圓形主題切換）** | `SystemBarStyle` 動態反轉、精調雙色盤（Dark `#0E1116` / Light `#F8FAFC` / Tertiary Amber）+ Dynamic Color、`RadialThemeTransitionContainer` 與 `rememberReducedMotion()` |
+| `v0.5.0` ~ `v0.6.1` | **M3（多清單分頁、項目 CRUD 與重置 Undo）** | `HorizontalPager` 1:1 分頁、清單與項目 CRUD、亮色冷啟動零閃爍、常駐連續輸入列、一鍵重置與 `Snackbar` 復原閉環 |
+| `v0.7.0` ~ `v0.9.0` | **M4（高階物理動效與啟動骨架屏）** | `TotalCheckSkeletonShimmer`、`0.6f` 降採樣多波次 `RevealWave` 主題擴散、`Spring Stepper Progress`、`Staggered Bulk Selection` 錯峰重置波浪、`DistantTabTransition` 遠距預熱滑動 |
+| `v0.10.0` | **M5（堆疊捲動佈局與互動重構）** | 自訂 `StackedCardScrollLayout`（深度堆疊壓縮、點擊展開、`ItemReflowAnim` / `NeighborRippleWave`）、`Hold-to-Delete Perimeter Ring`（外圈進度環長按刪除）、`Drag-to-Reorder` 拖曳排序與批次持久化 |
+| `v0.11.0` | **M6（頂部導覽與全域交互優化）** | `ExpandingChecklistTabBar` 長按拖曳重排、`SlideOutCancelModifier`（`0.94f` 下沉與 `44.dp` 滑出取消）、`ScopedModalOverlay`（記憶鍵盤高度首幀零跳動）、邊界手風琴過捲動（Overscroll Accordion）與三語系資源 |
+| `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析與快速匯入）** | 高容錯雙模式解析器 `ChecklistTextParser`、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（`LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調）及 App 圖標 |
+| `v0.13.0` ~ `v0.16.0` | **M8（原生 Direct RemoteViews 雙桌面小工具與雙軌主題同步）** | 以原生 `DirectWidgetRenderer` 實作「工具清單網格（`2x2+` 三級響應式 + `<ListView>`）」與「清單極簡計數條（`2x1~4x1`）」；按 `appWidgetId` 隔離多實例狀態；`WidgetThemePalette` 無反射同步四象限主題色彩；`260ms` 水波紋延遲合併、底部空白列點擊入 App 與 `+ 新增` 自動聚焦鍵盤 |
 
 ## 3. 當前關鍵檔案結構
 ```text
 app/src/main/kotlin/com/example/totalcheck/
-├── MainActivity.kt                        # ThemeConfig? 延遲首幀 + SystemBarStyle 動態反轉 + RadialThemeTransitionContainer + Widget Intent 跳轉攔截
+├── MainActivity.kt                        # ThemeConfig? 延遲首幀 + SystemBarStyle + RadialThemeTransitionContainer + Widget/Notification Intent 攔截
 ├── data/
-│   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ChecklistDao
+│   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ReminderEntity (M9), ChecklistDao, ReminderDao (M9)
 │   ├── parser/ChecklistTextParser.kt      # 單行與多行 Markdown/表格/CSV/TSV/JSON 高容錯清單解析引擎
-│   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + 按 appWidgetId 隔離之 Widget 狀態與 onDeleted 清理)
-│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次匯入與排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
-│   └── widget/
-│       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + ThemeConfig 同步 + 260ms ripple 延遲與 toggleGeneration 合併 + 5 秒重置超時恢復
-│       ├── WidgetThemePalette.kt          # Curated Dark/Light 與 Dynamic Color (Android 12+) 四象限原生 Drawable / ProgressBar 色票解析器
-│       ├── DirectWidgetRenderer.kt        # 原生 RemoteViews 雙 Widget 渲染器（工具清單網格 Compact/Standard/Expanded + 清單極簡計數條）
-│       ├── TotalCheckWidgetViewsService.kt # API 26-30 RemoteViewsService 捲動列回退工廠
-│       ├── TotalCheckCounterWidgetReceiver.kt # Widget 2：清單極簡計數條 Receiver（2x1 ~ 4x1）
-│       └── TotalCheckWidgetReceiver.kt    # Widget 1：工具清單網格 Receiver 與全域指令派發器（含 CMD_OPEN_APP）
+│   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + 按 appWidgetId 隔離之 Widget 狀態)
+│   ├── reminder/                          # (M9 新增) ReminderScheduler, NotificationHelper, ReminderBroadcastReceiver, ReminderBootReceiver
+│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 提醒排程連動 + WidgetSyncManager 通知
+│   └── widget/                            # WidgetSyncManager, WidgetThemePalette, DirectWidgetRenderer, TotalCheckWidgetReceiver, TotalCheckCounterWidgetReceiver, TotalCheckWidgetViewsService
 └── ui/
     ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
+
 ```
 
-## 4. M8 已完成交付說明（桌面小工具 Native Direct RemoteViews）
+## 4. 當前開發目標：Milestone 9（智慧清點提醒與系統通知推送系統）
 
-- **多 Widget 擴充命名規範與動態預覽（M8 Extension / Refactor）**：
-  - Provider Metadata 統一採用 `res/xml/widget_info_<variant>.xml`（`widget_info_checklist_grid.xml` 與 `widget_info_counter_bar.xml`），對應 `widget_<variant>_name`、`widget_<variant>_description`、`res/layout/widget_preview_<variant>.xml` 與 `res/drawable/widget_preview_<variant>_fallback.xml`。
-  - 預覽佈局嚴格使用純靜態 `<LinearLayout>` + `<TextView>`（禁用 `<ListView>` / `<ViewFlipper>`），並於對應 `widget_info_*.xml` 設定 `tools:targetApi="31"` 之 `previewLayout` / `description` 與向下相容 `previewImage`。
-- **Widget 1：工具清單網格（`TotalCheckWidgetReceiver`，`2x2` 以上三級自適應）**：
-  - **Tier 1 (`Compact`, 寬 `< 240.dp`, 對應 `2x2`)**：迷你頂欄（清單名 + `尚缺 X` 切換過濾 + `< >`）+ 單欄可捲動 `<ListView>` 膠囊列。
-  - **Tier 2 (`Standard`, 寬 `>= 240.dp` 且 非 Expanded, 對應 `3x2` / `4x2`)**：完整頂欄（清單名 + `尚缺 X` 過濾切換 + 兩段式防誤觸重置 `↺` + `< >`）+ 雙欄可捲動 `<ListView>` Bento 膠囊網格。
-  - **Tier 3 (`Expanded`, 寬 `>= 320.dp` 且 高 `>= 220.dp`, 對應 `4x3` / `4x4`+)**：雙層頂欄（額外展開視覺化 `ProgressBar` 膠囊進度條與 `+ 新增` 快速入口）+ 3 欄高密度可捲動 Bento 膠囊網格。
-- **Widget 2：清單極簡計數條（`TotalCheckCounterWidgetReceiver`，`2x1` ~ `4x1` 水平自適應）**：
-  - **左側全尺寸雙層結構（`2x1` ~ `4x1` 常駐）**：上層為清單名稱（`layout_weight="1"`，點擊進入 App 並定位清單）與右側精簡計數文字（`尚缺 X` 或全備時 `✓ checked/total`），下層常駐圓角水平 `ProgressBar`，並搭配雙槽位 `<ViewFlipper>` 180ms 淡入縮放過渡。
-  - **右側操作區自適應**：`2x1`（寬 `< 220.dp`）隱藏重置鈕僅顯示 `< >` 切換清單；`3x1 / 4x1`（寬 `>= 220.dp`）於 `< >` 左側自動展開兩段式防誤觸重置鈕 `↺ ⇄ 確認?`（`animateLayoutChanges="true"`）。
-- **互動、捲動與動效規範**：
-  - **原生 `<ListView>` 捲動容器 + 純 `<TextView>` 膠囊列**：透過 `AdapterView` 攔截桌面垂直滑動手勢（避免 Pixel Launcher 誤觸通知欄/抽屜），API 31+ 使用 `RemoteCollectionItems`（`hasStableIds = true`、`viewTypeCount = 4`）搭配 `PendingIntentTemplate` + `FillInIntent`；未填滿之同行空槽位與 2 列底部 `72dp` 透明空白列（`widget_row_blank_space.xml`）綁定 `CMD_OPEN_APP`，利用 `<ListView>` 原生 Touch Slop 確保僅於輕點時跳轉進 App 而不與捲動手勢衝突。一般勾選維持 `ORDER BY sortOrder ASC, id DESC` 原始順序，等待 `260ms` `<ripple>` 綻放後原地全量刷新（不呼叫 `ViewFlipper.setDisplayedChild`）以保持捲動位置與鄰居方塊穩定。
-  - **雙槽位 `<ViewFlipper>` 切換轉場**：僅於 `<` / `>` 切換清單或點擊 `尚缺 X` 篩選時翻轉 `checklistFlipSlot`（`0 ⇄ 1`），呈現 180ms 淡入微縮放轉場；且 `尚缺 X` 膠囊鎖定精簡計數寬度，避免切換時擠壓左側清單標題。
-  - **兩段式防誤觸重置（`↺`）**：頂欄右側按鈕區以獨立 `LinearLayout` 啟用 `android:animateLayoutChanges="true"`，點擊 `↺` 後切換為紅底（`errorContainer`）`確認?` 並維持 5 秒有效期限，超時自動復原。
-  - **空面板與全部備齊徽章**：當清單無項目時顯示「尚無清點項目，點擊新增」入口；當 `尚缺 0` 且開啟「只看未帶」時，中央顯示 `✓ 全部備齊 (共 N 項)` 膠囊徽章與 `[ ↺ 重新清點 ]` / `[ 顯示全部項目 ]` 快捷鈕。
-  - **色彩與多實例解耦連動**：透過 `WidgetThemePalette` + `WidgetSyncManager.notifyThemeChanged()` 讓桌面小工具 100% 同步套用 App 內 `ThemeConfig(isDarkMode, useDynamicColor)` 雙軌色彩（精調色盤 / Android 12+ 動態取色），嚴格採用靜態安全 Drawable 切換（0 `setColorStateList` 反射）消除 `ActionException`；每個桌面 Widget 實例按 `appWidgetId` 獨立記憶選中清單、篩選與重置確認狀態（互不干擾，於 `onDeleted` 自動清理），面板控制僅刷新目標 `appWidgetId`、資料寫入則同步全體實例；直接點擊 Widget 標題／進度列／空白區進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`，點擊 `+ 新增` 或空清單入口則進一步透過 `EXTRA_AUTO_FOCUS_INPUT` 自動展開聚焦 `QuickInputBar` 與軟鍵盤。
+M9 採開放式多階段迭代架構，分為 **Part 1（功能基底與系統閉環）**、**Part 2（頂級時間選擇與物理動效注入）** 及 **Part 3+（後續延伸功能擴充）**。
+
+### 🔹 M9 - Part 1：功能基底、系統排程、通知互動與 Widget 狀態同步（當前首要任務）
+
+1. **資料庫升級與 Schema（`AppDatabase` `version = 1` → `version = 2`）**：
+* 新增 `ReminderEntity`（`reminders` 表，外鍵 `CASCADE` 綁定 `ChecklistEntity.id` 與可選 `CheckItemEntity.id`）與 `ReminderDao`。
+* 支援 Room 自動遷移或安全升級（保留既有清單資料），欄位涵蓋：`id`, `checklistId`, `itemId` (`null` 為清單級提醒、非 `null` 為單品提醒), `hour`, `minute`, `repeatDaysBitmask` (`0` = 單次提醒，Bit 0..6 對應週一至週日), `triggerEpochMillis`, `onlyIfUnchecked` (預設 `true`), `isEnabled`, `createdAt`。
+
+
+2. **系統鬧鐘排程與重開機恢復（`data/reminder/`）**：
+* 宣告本地權限：`POST_NOTIFICATIONS`、`SCHEDULE_EXACT_ALARM`、`USE_EXACT_ALARM`（或動態檢查 `AlarmManager.canScheduleExactAlarms()` 並平滑回退）、`RECEIVE_BOOT_COMPLETED`。**嚴禁宣告 `INTERNET` 權限**。
+* `ReminderScheduler`：使用 `AlarmManager.setExactAndAllowWhileIdle()` 計算並註冊下一次精確觸發時間。
+* **單次 vs 週期掛載規則（嚴格鎖定）**：
+* `repeatDaysBitmask == 0`（單次提醒）：鬧鐘到點觸發後，自動將 `isEnabled` 設為 `false` 並**保持關閉**；後續使用者點擊清單「↺ 一鍵重置」時，**絕不重新啟動已關閉的單次提醒**。
+* `repeatDaysBitmask > 0`（週期提醒）：鬧鐘到點觸發後，自動推算下一個符合星期幾的 `triggerEpochMillis` 並重新掛載至 `AlarmManager`。
+
+
+* `ReminderBootReceiver`：監聽 `BOOT_COMPLETED`、`TIME_SET`、`TIMEZONE_CHANGED` 與 `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`，重讀 DB 中所有 `isEnabled = true` 的提醒重新掛載（若單次提醒的 `triggerEpochMillis` 已過期則補發或標為關閉）。
+
+
+3. **智慧過濾通知與通知欄零跳轉操作（`NotificationHelper` & `ReminderBroadcastReceiver`）**：
+* **「有缺才響」智慧過濾**：到點喚醒時查詢 Room DB。若 `onlyIfUnchecked == true`：清單級提醒在該清單 `尚缺 0 項` 時靜默略過本次推播（週期提醒仍排程下一次）；單品級提醒在該項目 `isChecked == true` 時靜默略過。
+* **通知內容與 Direct Actions**：
+* 清單提醒：標題顯示清單名稱與尚缺數量，內文列出前 3 項未帶物品；提供 Action 按鈕 `[ 延後 15 分鐘 ]` 與 `[ ✓ 全部標為已備 ]`（點擊直接更新 Room DB、關閉通知並呼叫 `WidgetSyncManager.notifyDataChanged()` 刷新桌面小工具）。
+* 單品提醒：顯示單品名稱與所屬清單；提供 Action 按鈕 `[ 延後 15 分鐘 ]` 與 `[ ✓ 已帶此項 ]`（背景直接打勾該項目並同步桌面 Widget）。
+* 點擊通知本體：攜帶 `EXTRA_WIDGET_CHECKLIST_ID` 啟動 `MainActivity` 並自動滑動定位至該清單。
+
+
+
+
+4. **主畫面設定入口與基礎配置彈窗（UI Part 1）**：
+* **清單級提醒**：於 `CapsuleProgressModule` 操作列新增「🔔 提醒」按鈕；若該清單有啟用中的提醒，顯示精簡時間膠囊徽章（如 `🔔 08:00` 或 `🔔 週一~五 08:00`）。
+* **單品級提醒**：於 `CapsuleCheckItemRow` 新增單品提醒觸發入口與精簡時間標記（如小鈴鐺 + `08:00`）。
+* **基礎設定彈窗（`ScopedModalOverlay` 新增 `ReminderConfigModal`）**：Part 1 先以直覺穩定的小時/分鐘設定、週一至週日多選 Chip（全不選即為單次提醒）、「僅在尚有未帶項目時提醒」Switch、刪除/關閉提醒按鈕，以及「發送測試通知」按鈕完成閉環，並處理 Android 13+ 通知權限請求。
+
+
+5. **桌面雙 Widget 提醒狀態顯示（`WidgetSyncManager` & `DirectWidgetRenderer`）**：
+* `WidgetUiSnapshot` 新增啟用中提醒的摘要映射（如 `activeReminderByChecklist: Map<Long, ChecklistEntityReminderSummary>` 與單品提醒標記）。
+* **工具清單網格（`2x2+`）與清單極簡計數條（`2x1~4x1`）**：當所選清單具有啟用中的清單級提醒（或內部含有啟用中的單品提醒）時，於 Widget 頂欄標題旁或狀態區顯示精簡的 `🔔` 狀態標記（如 `🔔 08:00` 或 `🔔` 圖示，依尺寸 Tier 自適應不擠壓標題），並在鬧鐘觸發/設定變更時透過 `WidgetSyncManager.notifyDataChanged()` 即時刷新。
+
+
+
+### 🔹 M9 - Part 2：頂級時間互動與物理動效打磨（待 Part 1 穩定後由使用者提供專屬 Skill 規範接入）
+
+* 預定針對時間滾輪/刻度選擇器、星期標籤選擇動效、開關聯動回饋與鈴鐺/徽章狀態過渡注入高階物理動效。
+
+### 🔹 M9 - Part 3+：更多進階提醒與清單擴充功能（預留迭代）
+
+* 依使用者後續提出的 M9 延伸需求持續擴充。

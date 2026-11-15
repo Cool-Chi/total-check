@@ -3,8 +3,8 @@
 ## 1. 專案身份與真相來源 (Source of Truth)
 - **專案名稱**：TotalCheck（純本地離線工具清點板 Android App）
 - **套件名稱**：`com.example.totalcheck`
-- **必讀基準**：每次執行任務前，必須優先對齊 `SPEC.md`（功能與動效規格）與 `WORKFLOW.md`（環境與工具鏈）。若存在互動動效需求，必須查閱 `docs/advanced_interaction_design.md`。
-- **模型協作原則**：日常 UI 元件、CRUD 邏輯與編譯驗證由主力模型快速推進；涉及複雜手勢軌跡、自訂 `clipPath` 遮罩或跨進程同步時，需嚴格遵守物理數學邊界，不允許使用簡陋的固定時間線性動畫敷衍。
+- **必讀基準**：每次執行任務前，必須優先對齊 `SPEC.md`（功能與動效規格）、`Milestone.md`（當前進度與待辦目標）與 `WORKFLOW.md`（環境與工具鏈）。若存在互動動效需求，必須查閱 `docs/advanced-interaction-design/SKILL.md` 或使用者提供的動效規範。
+- **模型協作原則**：日常 UI 元件、CRUD 邏輯、系統廣播排程與編譯驗證由主力模型快速推進；涉及複雜手勢軌跡、自訂 `clipPath` 遮罩或跨進程同步時，需嚴格遵守物理數學邊界，不允許使用簡陋的固定時間線性動畫敷衍。
 
 ## 2. 開發環境與部署驗證邊界 (Windows 11 + Pixel 7)
 - **終端機環境**：Windows 11 PowerShell，所有 Gradle 指令必須使用 `.\gradlew` 格式。
@@ -13,13 +13,13 @@
   2. `adb shell am start -n com.example.totalcheck/.MainActivity` 啟動應用。
 
 ## 3. 技術棧與開發紅線 (Hard Constraints)
-1. **純離線架構**：`AndroidManifest.xml` **嚴禁**宣告 `android.permission.INTERNET` 或引入任何網路請求套件。
-2. **原生 Material 3 開發**：不使用 XML Layout，也不等待外部 Figma 設計稿，所有介面直接使用 `androidx.compose.material3` 實作。
-3. **API 36/37 全螢幕適配**：`minSdk = 26`、`targetSdk = 36`，實機測試為 Android 17 (API 37)。`MainActivity` 必須啟用 `enableEdgeToEdge()`，並正確處理 `WindowInsets`（狀態列、導覽列與 `WindowInsets.ime` 升降/遮罩）。
-4. **雙軌色彩引擎**：必須同時支援「預設精調亮/暗色盤（適配 HyperOS）」與「原生 Material 3 Dynamic Color 切換開關」，禁止寫死單一顏色值（如 `Color.Black` / `Color.White`）。
-5. **物理動效與零重組管線基準**：優先使用 `spring(dampingRatio = 0.8f, stiffness = 380f)` 物理彈簧模型，並尊重系統無障礙動畫縮放設定（Reduced Motion Fallback）；高頻率捲動與手勢動畫應下沉至 `graphicsLayer`、`drawBehind` / `drawWithContent` 或自訂 `Layout`（如 `StackedCardScrollLayout`、`ExpandingChecklistTabBar`），避免於滑動幀觸發 Composition 重組。
-6. **資料庫防鎖死**：`AppDatabase` 必須實作 Singleton 模式，並透過單一 `ChecklistRepository` 存取，為未來桌面 Widget 跨進程讀寫保留擴充性。
-7. **多語系資源管理**：所有介面文案、種子資料與無障礙描述統一透過 `res/values/strings.xml`、`res/values-b+zh+Hant/strings.xml` 與 `res/values-zh/strings.xml` 管理，嚴禁於 Composable 硬編碼顯示字串。
+1. **純離線架構**：`AndroidManifest.xml` **嚴禁**宣告 `android.permission.INTERNET` 或引入任何網路請求套件。M9 智慧提醒系統僅允許宣告本地排程與通知所需之系統權限（`POST_NOTIFICATIONS`、`SCHEDULE_EXACT_ALARM`、`USE_EXACT_ALARM`、`RECEIVE_BOOT_COMPLETED`、`VIBRATE`）。
+2. **原生 Material 3 + Direct RemoteViews 雙引擎**：主程式介面全部使用 `androidx.compose.material3` 與自訂 `Layout` 實作，不等待外部 Figma 設計稿；桌面小工具（`data/widget/`）統一使用原生 `DirectWidgetRenderer`（`RemoteViews` XML）直出渲染，嚴禁混入 Jetpack Glance 套件或呼叫 `setColorStateList` 反射方法。
+3. **API 36/37 全螢幕與系統權限適配**：`minSdk = 26`、`targetSdk = 36`，實機測試為 Android 17 (API 37)。`MainActivity` 必須啟用 `enableEdgeToEdge()`，並正確處理 `WindowInsets`（狀態列、導覽列與 `WindowInsets.ime` 升降/遮罩）；同時須妥善處理 Android 13+ `POST_NOTIFICATIONS` 動態權限請求，以及 Android 12+ `AlarmManager.canScheduleExactAlarms()` 精準鬧鐘檢查與平滑降級。
+4. **雙軌色彩引擎**：主程式與桌面小工具必須同時支援「預設精調亮/暗色盤（適配 HyperOS）」與「原生 Material 3 Dynamic Color 切換開關」，禁止寫死單一顏色值（如 `Color.Black` / `Color.White`）。
+5. **物理動效與零重組管線基準**：優先使用 `spring(dampingRatio = 0.8f, stiffness = 380f)` 物理彈簧模型，並尊重系統無障礙動畫縮放設定（`rememberReducedMotion()`）；高頻率捲動與手勢動畫應下沉至 `graphicsLayer`、`drawBehind` / `drawWithContent` 或自訂 `Layout`（如 `StackedCardScrollLayout`、`ExpandingChecklistTabBar`），避免於滑動幀觸發 Composition 重組。
+6. **資料庫防鎖死與無損升級**：`AppDatabase` 必須實作 Singleton 模式，並透過單一 `ChecklistRepository` 存取（確保主程式、桌面 Widget 與通知 `BroadcastReceiver` 跨進程讀寫不發生 Lock 衝突）；升級資料庫版本（如 M9 升至 `version = 2` 新增 `reminders` 表）時，必須提供無損遷移（`AutoMigration` 或明確的 `Migration(1, 2)` SQL），嚴禁使用 `fallbackToDestructiveMigration()` 清空使用者既有清單資料。
+7. **多語系資源管理**：所有介面文案、通知頻道與動作名稱、種子資料及無障礙描述統一透過 `res/values/strings.xml`、`res/values-b+zh+Hant/strings.xml` 與 `res/values-zh/strings.xml` 管理，嚴禁於 Composable 或通知建構器中硬編碼顯示字串。
 
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。
