@@ -71,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -86,6 +87,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -125,6 +127,7 @@ fun TotalCheckScreen(
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
     val selectedChecklistId by viewModel.selectedChecklistId.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
+    val pendingAutoFocusInput by viewModel.pendingAutoFocusInput.collectAsStateWithLifecycle()
     val themeConfig by viewModel.themeConfig.collectAsStateWithLifecycle()
     val isDarkMode = themeConfig?.isDarkMode ?: true
     val useDynamicColor = themeConfig?.useDynamicColor ?: false
@@ -136,6 +139,8 @@ fun TotalCheckScreen(
     var isModalOpen by remember { mutableStateOf(false) }
     var modalSessionKey by remember { mutableIntStateOf(0) }
     var returnFocusRequester by remember { mutableStateOf<FocusRequester?>(null) }
+    val quickInputFocusRequester = remember { FocusRequester() }
+    val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val addChecklistFocusRequester = remember { FocusRequester() }
     val renameFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val deleteFocusRequesters = remember { HashMap<Long, FocusRequester>() }
@@ -602,6 +607,26 @@ fun TotalCheckScreen(
                                 }
                             }
 
+                            LaunchedEffect(
+                                pendingAutoFocusInput,
+                                isReadyForInput,
+                                pendingScrollToChecklistId,
+                                isModalPresent
+                            ) {
+                                if (!pendingAutoFocusInput) return@LaunchedEffect
+                                if (!isReadyForInput || pendingScrollToChecklistId != null || isModalPresent) {
+                                    return@LaunchedEffect
+                                }
+                                editingItemId = null
+                                editingDraftHolder.text = ""
+                                suppressMainImeUntilClosed = false
+                                quickInputHideAnim.snapTo(0f)
+                                withFrameNanos { }
+                                quickInputFocusRequester.requestFocus()
+                                softwareKeyboardController?.show()
+                                viewModel.consumeAutoFocusInput()
+                            }
+
                             val submitNewItem: () -> Unit = {
                                 val trimmed = inputText.trim()
                                 if (trimmed.isNotEmpty() && pagerState.currentPage in checklists.indices) {
@@ -743,6 +768,7 @@ fun TotalCheckScreen(
                         hideProgressProvider = { quickInputHideAnim.value },
                         onBodyHeightChanged = { quickBarBodyHeightHolder.value = it },
                         onInputFocused = { suppressMainImeUntilClosed = false },
+                        inputFocusRequester = quickInputFocusRequester,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .zIndex(30f)
@@ -1503,6 +1529,7 @@ private fun QuickInputBar(
     hideProgressProvider: () -> Float,
     onBodyHeightChanged: (Float) -> Unit,
     onInputFocused: () -> Unit,
+    inputFocusRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -1552,6 +1579,7 @@ private fun QuickInputBar(
                         onValueChange = onValueChange,
                         modifier = Modifier
                             .weight(1f)
+                            .focusRequester(inputFocusRequester)
                             .onFocusChanged { if (it.isFocused) onInputFocused() },
                         placeholder = { Text(stringResource(R.string.quick_add_placeholder)) },
                         singleLine = true,

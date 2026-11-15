@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_counter_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_bg_rounded"
@@ -59,24 +60,91 @@
             </LinearLayout>
 
             <ProgressBar
-                android:id="@+id/widget_counter_progress_active_0"
+                android:id="@+id/widget_counter_progress_active_curated_dark_0"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="5dp"
                 android:layout_marginTop="4dp"
                 android:max="100"
                 android:progress="0"
-                android:progressDrawable="@drawable/widget_progress_active" />
+                android:progressDrawable="@drawable/widget_progress_active_curated_dark"
+                android:visibility="gone" />
 
             <ProgressBar
-                android:id="@+id/widget_counter_progress_done_0"
+                android:id="@+id/widget_counter_progress_done_curated_dark_0"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="5dp"
                 android:layout_marginTop="4dp"
                 android:max="100"
                 android:progress="100"
-                android:progressDrawable="@drawable/widget_progress_done"
+                android:progressDrawable="@drawable/widget_progress_done_curated_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_curated_light_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_curated_light_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_dynamic_dark_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_dynamic_dark_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_dynamic_light_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_dynamic_light_0"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_light"
                 android:visibility="gone" />
         </LinearLayout>
 
@@ -117,24 +185,91 @@
             </LinearLayout>
 
             <ProgressBar
-                android:id="@+id/widget_counter_progress_active_1"
+                android:id="@+id/widget_counter_progress_active_curated_dark_1"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="5dp"
                 android:layout_marginTop="4dp"
                 android:max="100"
                 android:progress="0"
-                android:progressDrawable="@drawable/widget_progress_active" />
+                android:progressDrawable="@drawable/widget_progress_active_curated_dark"
+                android:visibility="gone" />
 
             <ProgressBar
-                android:id="@+id/widget_counter_progress_done_1"
+                android:id="@+id/widget_counter_progress_done_curated_dark_1"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="5dp"
                 android:layout_marginTop="4dp"
                 android:max="100"
                 android:progress="100"
-                android:progressDrawable="@drawable/widget_progress_done"
+                android:progressDrawable="@drawable/widget_progress_done_curated_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_curated_light_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_curated_light_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_dynamic_dark_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_dynamic_dark_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_active_dynamic_light_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_counter_progress_done_dynamic_light_1"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="5dp"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_light"
                 android:visibility="gone" />
         </LinearLayout>
     </ViewFlipper>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_bg_rounded"
@@ -166,24 +167,91 @@
             android:paddingTop="6dp">
 
             <ProgressBar
-                android:id="@+id/widget_progress_active"
+                android:id="@+id/widget_progress_active_curated_dark"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="0dp"
                 android:layout_height="6dp"
                 android:layout_weight="1"
                 android:max="100"
                 android:progress="0"
-                android:progressDrawable="@drawable/widget_progress_active" />
+                android:progressDrawable="@drawable/widget_progress_active_curated_dark"
+                android:visibility="gone" />
 
             <ProgressBar
-                android:id="@+id/widget_progress_done"
+                android:id="@+id/widget_progress_done_curated_dark"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="0dp"
                 android:layout_height="6dp"
                 android:layout_weight="1"
                 android:max="100"
                 android:progress="100"
-                android:progressDrawable="@drawable/widget_progress_done"
+                android:progressDrawable="@drawable/widget_progress_done_curated_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_active_curated_light"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_done_curated_light"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_curated_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_active_dynamic_dark"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_done_dynamic_dark"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_dark"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_active_dynamic_light"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active_dynamic_light"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_done_dynamic_light"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done_dynamic_light"
                 android:visibility="gone" />
 
             <TextView

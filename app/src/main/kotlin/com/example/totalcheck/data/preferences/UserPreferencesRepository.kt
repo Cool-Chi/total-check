@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -28,7 +29,8 @@ data class WidgetPreferences(
 
 class UserPreferencesRepository(context: Context) {
 
-    private val dataStore = context.applicationContext.userPreferencesDataStore
+    private val appContext = context.applicationContext
+    private val dataStore = appContext.userPreferencesDataStore
 
     val themeConfig: Flow<ThemeConfig> = dataStore.data.map { prefs ->
         ThemeConfig(
@@ -45,12 +47,14 @@ class UserPreferencesRepository(context: Context) {
         dataStore.edit { prefs ->
             prefs[KEY_IS_DARK_MODE] = enabled
         }
+        WidgetSyncManager.notifyDataChanged(appContext)
     }
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
         dataStore.edit { prefs ->
             prefs[KEY_USE_DYNAMIC_COLOR] = enabled
         }
+        WidgetSyncManager.notifyDataChanged(appContext)
     }
 
     suspend fun readAllWidgetStates(appWidgetIds: IntArray): Map<Int, WidgetPreferences> {

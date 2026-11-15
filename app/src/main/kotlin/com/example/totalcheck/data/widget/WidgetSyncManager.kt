@@ -8,6 +8,7 @@ import android.os.SystemClock
 import com.example.totalcheck.data.local.AppDatabase
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.preferences.WidgetPreferences
 import com.example.totalcheck.data.repository.ChecklistRepository
@@ -19,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,6 +38,7 @@ data class WidgetUiSnapshot(
     val checklists: List<ChecklistEntity>,
     val itemsByChecklist: Map<Long, List<CheckItemEntity>>,
     val widgetStates: Map<Int, WidgetInstanceState> = emptyMap(),
+    val themeConfig: ThemeConfig = ThemeConfig(isDarkMode = true, useDynamicColor = false),
 ) {
     fun stateForWidget(appWidgetId: Int): WidgetInstanceState =
         widgetStates[appWidgetId] ?: WidgetInstanceState()
@@ -53,7 +56,7 @@ object WidgetSyncManager {
 
     private const val RESET_CONFIRM_WINDOW_MS = 5_000L
     private const val RESET_CONFIRM_REVERT_DELAY_MS = 5_050L
-    private const val TOGGLE_RIPPLE_DELAY_MS = 85L
+    private const val TOGGLE_RIPPLE_DELAY_MS = 260L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val snapshotLock = Any()
@@ -61,6 +64,9 @@ object WidgetSyncManager {
 
     private val _snapshotFlow = MutableStateFlow<WidgetUiSnapshot?>(null)
     val snapshotFlow: StateFlow<WidgetUiSnapshot?> = _snapshotFlow.asStateFlow()
+
+    @Volatile
+    private var overrideThemeConfig: ThemeConfig? = null
 
     private val resetConfirmChecklistByWidget = mutableMapOf<Int, Long>()
     private val resetConfirmDeadlineByWidget = mutableMapOf<Int, Long>()
@@ -90,6 +96,30 @@ object WidgetSyncManager {
         )
         synchronized(snapshotLock) {
             return _snapshotFlow.value ?: loaded.also { _snapshotFlow.value = it }
+        }
+    }
+
+    fun onThemeChanged(context: Context, newThemeConfig: ThemeConfig) {
+        val appContext = context.applicationContext
+        overrideThemeConfig = newThemeConfig
+        val updatedSnapshot = synchronized(snapshotLock) {
+            _snapshotFlow.value?.let { current ->
+                current.copy(themeConfig = newThemeConfig).also {
+                    _snapshotFlow.value = it
+                }
+            }
+        }
+        if (updatedSnapshot != null) {
+            scope.launch {
+                DirectWidgetRenderer.renderAll(
+                    context = appContext,
+                    snapshot = updatedSnapshot,
+                    isContentFlip = false,
+                    isFilterFlip = false,
+                )
+            }
+        } else {
+            notifyDataChanged(appContext)
         }
     }
 
@@ -588,11 +618,21 @@ object WidgetSyncManager {
             ChecklistRepository(appContext, dao).seedInitialDataIfNeeded()
         }
         val activeWidgetIds = getAllActiveWidgetIds(appContext)
-        val (checklists, prefsByWidget, allItems) = dbWriteMutex.withLock {
+        val (checklists, prefsByWidget, allItems, loadedThemeConfig) = dbWriteMutex.withLock {
             val loadedChecklists = dao.getAllChecklists()
             val loadedPrefs = prefsRepo.readAllWidgetStates(activeWidgetIds)
             val loadedItems = dao.getAllItems()
-            SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems)
+            val diskThemeConfig = prefsRepo.themeConfig.first()
+            SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems, diskThemeConfig)
+        }
+        val pendingOverride = overrideThemeConfig
+        val effectiveThemeConfig = if (pendingOverride != null) {
+            if (loadedThemeConfig == pendingOverride) {
+                overrideThemeConfig = null
+            }
+            pendingOverride
+        } else {
+            loadedThemeConfig
         }
         val itemsByChecklist = allItems.groupBy { it.checklistId }
         val now = SystemClock.elapsedRealtime()
@@ -613,6 +653,7 @@ object WidgetSyncManager {
             checklists = checklists,
             itemsByChecklist = itemsByChecklist,
             widgetStates = states,
+            themeConfig = effectiveThemeConfig,
         )
     }
 
@@ -632,5 +673,6 @@ object WidgetSyncManager {
         val checklists: List<ChecklistEntity>,
         val prefsByWidget: Map<Int, WidgetPreferences>,
         val allItems: List<CheckItemEntity>,
+        val themeConfig: ThemeConfig,
     )
 }

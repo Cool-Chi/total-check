@@ -6,6 +6,7 @@ import android.content.Intent
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.example.totalcheck.data.local.CheckItemEntity
+import com.example.totalcheck.data.preferences.ThemeConfig
 import kotlinx.coroutines.runBlocking
 
 class TotalCheckWidgetViewsService : RemoteViewsService() {
@@ -24,7 +25,13 @@ private class TotalCheckViewsFactory(
 ) : RemoteViewsService.RemoteViewsFactory {
 
     private var rows: List<List<CheckItemEntity>> = emptyList()
+    private var activeChecklistId: Long = -1L
     private var columnCount: Int = 2
+    private var hasBlankRows: Boolean = false
+    private var style: WidgetThemeStyle = resolveWidgetStyle(
+        context,
+        ThemeConfig(isDarkMode = true, useDynamicColor = false)
+    )
 
     override fun onCreate() = Unit
 
@@ -32,7 +39,9 @@ private class TotalCheckViewsFactory(
         val snapshot = WidgetSyncManager.snapshotFlow.value ?: runBlocking {
             WidgetSyncManager.ensureInitialized(context)
         }
+        style = resolveWidgetStyle(context, snapshot.themeConfig)
         val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
+        activeChecklistId = activeChecklist?.id ?: -1L
         val items = activeChecklist?.let { snapshot.itemsForChecklist(it.id) }.orEmpty()
         val visibleItems = if (snapshot.stateForWidget(appWidgetId).showUncheckedOnly) {
             items.filter { !it.isChecked }
@@ -45,29 +54,44 @@ private class TotalCheckViewsFactory(
         } else {
             visibleItems.chunked(columnCount)
         }
+        hasBlankRows = visibleItems.isNotEmpty()
     }
 
     override fun onDestroy() {
         rows = emptyList()
+        hasBlankRows = false
     }
 
-    override fun getCount(): Int = rows.size
+    override fun getCount(): Int = rows.size + if (hasBlankRows) 2 else 0
 
     override fun getViewAt(position: Int): RemoteViews? {
-        val rowItems = rows.getOrNull(position) ?: return null
-        return DirectWidgetRenderer.buildRowRemoteViews(
-            context = context,
-            rowItems = rowItems,
-            columnCount = columnCount
-        )
+        if (position in rows.indices) {
+            return DirectWidgetRenderer.buildRowRemoteViews(
+                context = context,
+                rowItems = rows[position],
+                columnCount = columnCount,
+                style = style,
+                checklistId = activeChecklistId,
+            )
+        }
+        if (hasBlankRows && position < getCount()) {
+            return DirectWidgetRenderer.buildBlankSpaceRowRemoteViews(
+                context = context,
+                checklistId = activeChecklistId,
+            )
+        }
+        return null
     }
 
     override fun getLoadingView(): RemoteViews? = null
 
-    override fun getViewTypeCount(): Int = 3
+    override fun getViewTypeCount(): Int = 4
 
-    override fun getItemId(position: Int): Long =
-        rows.getOrNull(position)?.firstOrNull()?.id ?: position.toLong()
+    override fun getItemId(position: Int): Long = when {
+        position in rows.indices -> rows[position].firstOrNull()?.id ?: position.toLong()
+        hasBlankRows -> -1001L - (position - rows.size).toLong()
+        else -> position.toLong()
+    }
 
     override fun hasStableIds(): Boolean = true
 }

@@ -15,7 +15,6 @@ import android.text.style.StrikethroughSpan
 import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
-import androidx.annotation.ColorRes
 import androidx.annotation.RequiresApi
 import com.example.totalcheck.MainActivity
 import com.example.totalcheck.R
@@ -28,12 +27,40 @@ private enum class WidgetSizeTier {
     EXPANDED
 }
 
+private data class ProgressBarGroupIds(
+    val activeCuratedDarkId: Int,
+    val doneCuratedDarkId: Int,
+    val activeCuratedLightId: Int,
+    val doneCuratedLightId: Int,
+    val activeDynamicDarkId: Int,
+    val doneDynamicDarkId: Int,
+    val activeDynamicLightId: Int,
+    val doneDynamicLightId: Int,
+) {
+    fun allIds(): IntArray = intArrayOf(
+        activeCuratedDarkId,
+        doneCuratedDarkId,
+        activeCuratedLightId,
+        doneCuratedLightId,
+        activeDynamicDarkId,
+        doneDynamicDarkId,
+        activeDynamicLightId,
+        doneDynamicLightId,
+    )
+
+    fun targetId(variant: WidgetThemeVariant, isAllDone: Boolean): Int = when (variant) {
+        WidgetThemeVariant.CURATED_DARK -> if (isAllDone) doneCuratedDarkId else activeCuratedDarkId
+        WidgetThemeVariant.CURATED_LIGHT -> if (isAllDone) doneCuratedLightId else activeCuratedLightId
+        WidgetThemeVariant.DYNAMIC_DARK -> if (isAllDone) doneDynamicDarkId else activeDynamicDarkId
+        WidgetThemeVariant.DYNAMIC_LIGHT -> if (isAllDone) doneDynamicLightId else activeDynamicLightId
+    }
+}
+
 private data class CounterFlipSlotViewIds(
     val openAppId: Int,
     val titleId: Int,
     val countId: Int,
-    val progressActiveId: Int,
-    val progressDoneId: Int,
+    val progressGroupIds: ProgressBarGroupIds,
 )
 
 private data class FlipSlotViewIds(
@@ -56,6 +83,18 @@ object DirectWidgetRenderer {
     private const val REQ_FORCE_RESET_BASE = 60_000
     private const val REQ_SHOW_ALL_BASE = 70_000
     private const val REQ_OPEN_APP_BASE = 80_000
+    private const val REQ_OPEN_APP_ADD_BASE = 90_000
+
+    private val FULL_PROGRESS_IDS = ProgressBarGroupIds(
+        activeCuratedDarkId = R.id.widget_progress_active_curated_dark,
+        doneCuratedDarkId = R.id.widget_progress_done_curated_dark,
+        activeCuratedLightId = R.id.widget_progress_active_curated_light,
+        doneCuratedLightId = R.id.widget_progress_done_curated_light,
+        activeDynamicDarkId = R.id.widget_progress_active_dynamic_dark,
+        doneDynamicDarkId = R.id.widget_progress_done_dynamic_dark,
+        activeDynamicLightId = R.id.widget_progress_active_dynamic_light,
+        doneDynamicLightId = R.id.widget_progress_done_dynamic_light,
+    )
 
     private val SLOT_0_IDS = FlipSlotViewIds(
         listViewId = R.id.widget_list_s0,
@@ -81,16 +120,32 @@ object DirectWidgetRenderer {
         openAppId = R.id.widget_counter_open_app_0,
         titleId = R.id.widget_counter_title_0,
         countId = R.id.widget_counter_count_0,
-        progressActiveId = R.id.widget_counter_progress_active_0,
-        progressDoneId = R.id.widget_counter_progress_done_0,
+        progressGroupIds = ProgressBarGroupIds(
+            activeCuratedDarkId = R.id.widget_counter_progress_active_curated_dark_0,
+            doneCuratedDarkId = R.id.widget_counter_progress_done_curated_dark_0,
+            activeCuratedLightId = R.id.widget_counter_progress_active_curated_light_0,
+            doneCuratedLightId = R.id.widget_counter_progress_done_curated_light_0,
+            activeDynamicDarkId = R.id.widget_counter_progress_active_dynamic_dark_0,
+            doneDynamicDarkId = R.id.widget_counter_progress_done_dynamic_dark_0,
+            activeDynamicLightId = R.id.widget_counter_progress_active_dynamic_light_0,
+            doneDynamicLightId = R.id.widget_counter_progress_done_dynamic_light_0,
+        ),
     )
 
     private val COUNTER_SLOT_1_IDS = CounterFlipSlotViewIds(
         openAppId = R.id.widget_counter_open_app_1,
         titleId = R.id.widget_counter_title_1,
         countId = R.id.widget_counter_count_1,
-        progressActiveId = R.id.widget_counter_progress_active_1,
-        progressDoneId = R.id.widget_counter_progress_done_1,
+        progressGroupIds = ProgressBarGroupIds(
+            activeCuratedDarkId = R.id.widget_counter_progress_active_curated_dark_1,
+            doneCuratedDarkId = R.id.widget_counter_progress_done_curated_dark_1,
+            activeCuratedLightId = R.id.widget_counter_progress_active_curated_light_1,
+            doneCuratedLightId = R.id.widget_counter_progress_done_curated_light_1,
+            activeDynamicDarkId = R.id.widget_counter_progress_active_dynamic_dark_1,
+            doneDynamicDarkId = R.id.widget_counter_progress_done_dynamic_dark_1,
+            activeDynamicLightId = R.id.widget_counter_progress_active_dynamic_light_1,
+            doneDynamicLightId = R.id.widget_counter_progress_done_dynamic_light_1,
+        ),
     )
 
     fun renderAll(context: Context) {
@@ -216,6 +271,8 @@ object DirectWidgetRenderer {
         context: Context,
         rowItems: List<CheckItemEntity>,
         columnCount: Int,
+        style: WidgetThemeStyle,
+        checklistId: Long,
     ): RemoteViews {
         val rowLayoutRes = when {
             columnCount <= 1 -> R.layout.widget_row_1col
@@ -224,27 +281,43 @@ object DirectWidgetRenderer {
         }
         val rowRv = RemoteViews(context.packageName, rowLayoutRes)
         bindTileSlot(
-            context = context,
             rowRv = rowRv,
             tileId = R.id.tile_0,
             item = rowItems.getOrNull(0),
+            style = style,
+            checklistId = checklistId,
         )
         if (columnCount >= 2) {
             bindTileSlot(
-                context = context,
                 rowRv = rowRv,
                 tileId = R.id.tile_1,
                 item = rowItems.getOrNull(1),
+                style = style,
+                checklistId = checklistId,
             )
         }
         if (columnCount >= 3) {
             bindTileSlot(
-                context = context,
                 rowRv = rowRv,
                 tileId = R.id.tile_2,
                 item = rowItems.getOrNull(2),
+                style = style,
+                checklistId = checklistId,
             )
         }
+        return rowRv
+    }
+
+    internal fun buildBlankSpaceRowRemoteViews(
+        context: Context,
+        checklistId: Long,
+    ): RemoteViews {
+        val rowRv = RemoteViews(context.packageName, R.layout.widget_row_blank_space)
+        val fillInIntent = Intent().apply {
+            putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_OPEN_APP)
+            putExtra(TotalCheckWidgetReceiver.EXTRA_CHECKLIST_ID, checklistId)
+        }
+        rowRv.setOnClickFillInIntent(R.id.widget_blank_space_row, fillInIntent)
         return rowRv
     }
 
@@ -262,6 +335,7 @@ object DirectWidgetRenderer {
         isContentFlip: Boolean,
         isFilterFlip: Boolean,
     ) {
+        val style = resolveWidgetStyle(context, snapshot.themeConfig)
         val options = manager.getAppWidgetOptions(appWidgetId)
         val (widthDp, heightDp) = resolveDimensionsDp(context, options)
         val tier = resolveSizeTier(widthDp, heightDp)
@@ -269,12 +343,7 @@ object DirectWidgetRenderer {
         val widgetState = snapshot.stateForWidget(appWidgetId)
         val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
         if (activeChecklist == null) {
-            val emptyRv = RemoteViews(context.packageName, R.layout.widget_empty).apply {
-                setOnClickPendingIntent(
-                    R.id.widget_empty_root,
-                    buildOpenAppPendingIntent(context, null, appWidgetId)
-                )
-            }
+            val emptyRv = buildEmptyRemoteViews(context, appWidgetId, style)
             manager.updateAppWidget(appWidgetId, emptyRv)
             return
         }
@@ -300,6 +369,7 @@ object DirectWidgetRenderer {
         val fullRv = buildFullRemoteViews(
             context = context,
             appWidgetId = appWidgetId,
+            style = style,
             checklist = activeChecklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
@@ -337,15 +407,11 @@ object DirectWidgetRenderer {
         snapshot: WidgetUiSnapshot,
         isContentFlip: Boolean,
     ) {
+        val style = resolveWidgetStyle(context, snapshot.themeConfig)
         val widgetState = snapshot.stateForWidget(appWidgetId)
         val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
         if (activeChecklist == null) {
-            val emptyRv = RemoteViews(context.packageName, R.layout.widget_empty).apply {
-                setOnClickPendingIntent(
-                    R.id.widget_empty_root,
-                    buildOpenAppPendingIntent(context, null, appWidgetId)
-                )
-            }
+            val emptyRv = buildEmptyRemoteViews(context, appWidgetId, style)
             manager.updateAppWidget(appWidgetId, emptyRv)
             return
         }
@@ -366,6 +432,7 @@ object DirectWidgetRenderer {
         val counterRv = buildCounterBarRemoteViews(
             context = context,
             appWidgetId = appWidgetId,
+            style = style,
             checklist = activeChecklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
@@ -381,9 +448,30 @@ object DirectWidgetRenderer {
         manager.updateAppWidget(appWidgetId, counterRv)
     }
 
+    private fun buildEmptyRemoteViews(
+        context: Context,
+        appWidgetId: Int,
+        style: WidgetThemeStyle,
+    ): RemoteViews {
+        return RemoteViews(context.packageName, R.layout.widget_empty).apply {
+            setInt(R.id.widget_empty_root, "setBackgroundResource", style.containerBgRes)
+            setTextColor(R.id.widget_empty_hint, style.textMuted)
+            setOnClickPendingIntent(
+                R.id.widget_empty_root,
+                buildOpenAppPendingIntent(
+                    context = context,
+                    checklistId = null,
+                    appWidgetId = appWidgetId,
+                    autoFocusInput = true,
+                )
+            )
+        }
+    }
+
     private fun buildCounterBarRemoteViews(
         context: Context,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -397,9 +485,12 @@ object DirectWidgetRenderer {
         isContentFlip: Boolean,
     ): RemoteViews {
         return RemoteViews(context.packageName, R.layout.widget_counter_bar).also { rv ->
+            rv.setInt(R.id.widget_counter_root, "setBackgroundResource", style.containerBgRes)
+
             bindCounterSlot(
                 context = context,
                 appWidgetId = appWidgetId,
+                style = style,
                 rv = rv,
                 slotIds = activeSlotIds,
                 checklist = checklist,
@@ -414,6 +505,7 @@ object DirectWidgetRenderer {
                 bindCounterSlot(
                     context = context,
                     appWidgetId = appWidgetId,
+                    style = style,
                     rv = rv,
                     slotIds = inactiveSlotIds,
                     checklist = checklist,
@@ -427,6 +519,7 @@ object DirectWidgetRenderer {
                 context = context,
                 rv = rv,
                 appWidgetId = appWidgetId,
+                style = style,
                 resetButtonId = R.id.widget_counter_btn_reset,
                 confirmButtonId = R.id.widget_counter_btn_reset_confirm,
                 checklistId = checklist.id,
@@ -438,6 +531,7 @@ object DirectWidgetRenderer {
                 context = context,
                 rv = rv,
                 appWidgetId = appWidgetId,
+                style = style,
                 checklistId = checklist.id,
                 enabled = hasMultipleChecklists,
                 prevButtonId = R.id.widget_counter_btn_prev,
@@ -449,6 +543,7 @@ object DirectWidgetRenderer {
     private fun bindCounterSlot(
         context: Context,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         rv: RemoteViews,
         slotIds: CounterFlipSlotViewIds,
         checklist: ChecklistEntity,
@@ -460,6 +555,7 @@ object DirectWidgetRenderer {
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id, appWidgetId)
 
         rv.setTextViewText(slotIds.titleId, checklist.name)
+        rv.setTextColor(slotIds.titleId, style.textPrimary)
         rv.setOnClickPendingIntent(slotIds.openAppId, openAppIntent)
 
         val countText = if (isAllDone) {
@@ -468,18 +564,16 @@ object DirectWidgetRenderer {
             context.getString(R.string.widget_left_count, uncheckedCount)
         }
         rv.setTextViewText(slotIds.countId, countText)
-        applyTextColor(
-            context = context,
-            rv = rv,
-            viewId = slotIds.countId,
-            colorRes = if (isAllDone) R.color.widget_primary else R.color.widget_tertiary
+        rv.setTextColor(
+            slotIds.countId,
+            if (isAllDone) style.accentPrimary else style.accentTertiary
         )
 
         bindProgressViews(
             context = context,
             rv = rv,
-            activeProgressId = slotIds.progressActiveId,
-            doneProgressId = slotIds.progressDoneId,
+            style = style,
+            groupIds = slotIds.progressGroupIds,
             ratioViewId = null,
             checkedCount = checkedCount,
             totalCount = totalCount,
@@ -491,6 +585,7 @@ object DirectWidgetRenderer {
         context: Context,
         rv: RemoteViews,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -507,6 +602,7 @@ object DirectWidgetRenderer {
 
         // Primary Header
         rv.setTextViewText(R.id.widget_header_title, checklist.name)
+        rv.setTextColor(R.id.widget_header_title, style.textPrimary)
         rv.setOnClickPendingIntent(R.id.widget_header_title, openAppIntent)
 
         // Lock pill label to concise count so toggling filter never squeezes the checklist title.
@@ -525,17 +621,21 @@ object DirectWidgetRenderer {
         rv.setInt(
             R.id.widget_btn_filter_normal,
             "setBackgroundResource",
-            if (isAllDone) R.drawable.widget_pill_primary_container else R.drawable.widget_pill_secondary_container
+            if (isAllDone) style.primaryPillBgRes else style.buttonPillBgRes
         )
-        applyTextColor(
-            context,
-            rv,
+        rv.setTextColor(
             R.id.widget_btn_filter_normal,
-            if (isAllDone) R.color.widget_on_primary_container else R.color.widget_on_secondary_container
+            if (isAllDone) style.onPrimaryContainer else style.textPrimary
         )
         rv.setOnClickPendingIntent(R.id.widget_btn_filter_normal, filterIntent)
 
         rv.setTextViewText(R.id.widget_btn_filter_active, filterLabel)
+        rv.setInt(
+            R.id.widget_btn_filter_active,
+            "setBackgroundResource",
+            style.tertiaryPillBgRes
+        )
+        rv.setTextColor(R.id.widget_btn_filter_active, style.onTertiary)
         rv.setOnClickPendingIntent(R.id.widget_btn_filter_active, filterIntent)
 
         if (isFilterFlip) {
@@ -546,6 +646,7 @@ object DirectWidgetRenderer {
             context = context,
             rv = rv,
             appWidgetId = appWidgetId,
+            style = style,
             resetButtonId = R.id.widget_btn_reset,
             confirmButtonId = R.id.widget_btn_reset_confirm,
             checklistId = checklist.id,
@@ -557,6 +658,7 @@ object DirectWidgetRenderer {
             context = context,
             rv = rv,
             appWidgetId = appWidgetId,
+            style = style,
             checklistId = checklist.id,
             enabled = hasMultipleChecklists
         )
@@ -564,18 +666,30 @@ object DirectWidgetRenderer {
         // Tier 4 Secondary Progress & Quick Add Bar
         if (showExpandedBar) {
             rv.setViewVisibility(R.id.widget_expanded_bar, View.VISIBLE)
+            rv.setInt(R.id.widget_progress_pill, "setBackgroundResource", style.surfacePillBgRes)
             bindProgressViews(
                 context = context,
                 rv = rv,
-                activeProgressId = R.id.widget_progress_active,
-                doneProgressId = R.id.widget_progress_done,
+                style = style,
+                groupIds = FULL_PROGRESS_IDS,
                 ratioViewId = R.id.widget_progress_ratio,
                 checkedCount = checkedCount,
                 totalCount = totalCount,
                 isAllDone = isAllDone,
             )
+            rv.setTextColor(R.id.widget_progress_ratio, style.textMuted)
+            rv.setInt(R.id.widget_btn_add_short, "setBackgroundResource", style.primaryPillBgRes)
+            rv.setTextColor(R.id.widget_btn_add_short, style.onPrimaryContainer)
             rv.setOnClickPendingIntent(R.id.widget_progress_pill, openAppIntent)
-            rv.setOnClickPendingIntent(R.id.widget_btn_add_short, openAppIntent)
+            rv.setOnClickPendingIntent(
+                R.id.widget_btn_add_short,
+                buildOpenAppPendingIntent(
+                    context = context,
+                    checklistId = checklist.id,
+                    appWidgetId = appWidgetId,
+                    autoFocusInput = true,
+                )
+            )
         } else {
             rv.setViewVisibility(R.id.widget_expanded_bar, View.GONE)
         }
@@ -584,6 +698,7 @@ object DirectWidgetRenderer {
     private fun buildFullRemoteViews(
         context: Context,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -602,12 +717,19 @@ object DirectWidgetRenderer {
         isFilterFlip: Boolean,
     ): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_full)
-        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id, appWidgetId)
+        rv.setInt(R.id.widget_root, "setBackgroundResource", style.containerBgRes)
+        val openAppAddIntent = buildOpenAppPendingIntent(
+            context = context,
+            checklistId = checklist.id,
+            appWidgetId = appWidgetId,
+            autoFocusInput = true,
+        )
 
         bindFullHeaderViews(
             context = context,
             rv = rv,
             appWidgetId = appWidgetId,
+            style = style,
             checklist = checklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
@@ -624,12 +746,13 @@ object DirectWidgetRenderer {
             context = context,
             rv = rv,
             appWidgetId = appWidgetId,
+            style = style,
             slotIds = activeSlotIds,
             checklist = checklist,
             totalCount = totalCount,
             visibleItems = visibleItems,
             columnCount = columnCount,
-            openAppIntent = openAppIntent,
+            openAppAddIntent = openAppAddIntent,
         )
 
         if (isContentFlip) {
@@ -641,12 +764,13 @@ object DirectWidgetRenderer {
                 context = context,
                 rv = rv,
                 appWidgetId = appWidgetId,
+                style = style,
                 slotIds = inactiveSlotIds,
                 checklist = checklist,
                 totalCount = totalCount,
                 visibleItems = visibleItems,
                 columnCount = columnCount,
-                openAppIntent = openAppIntent,
+                openAppAddIntent = openAppAddIntent,
             )
         }
 
@@ -657,19 +781,22 @@ object DirectWidgetRenderer {
         context: Context,
         rv: RemoteViews,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         slotIds: FlipSlotViewIds,
         checklist: ChecklistEntity,
         totalCount: Int,
         visibleItems: List<CheckItemEntity>,
         columnCount: Int,
-        openAppIntent: PendingIntent,
+        openAppAddIntent: PendingIntent,
     ) {
         when {
             totalCount == 0 -> {
                 rv.setViewVisibility(slotIds.listViewId, View.GONE)
                 rv.setViewVisibility(slotIds.allSetStateId, View.GONE)
                 rv.setViewVisibility(slotIds.emptyStateId, View.VISIBLE)
-                rv.setOnClickPendingIntent(slotIds.emptyStatePillId, openAppIntent)
+                rv.setInt(slotIds.emptyStatePillId, "setBackgroundResource", style.buttonPillBgRes)
+                rv.setTextColor(slotIds.emptyStatePillId, style.textPrimary)
+                rv.setOnClickPendingIntent(slotIds.emptyStatePillId, openAppAddIntent)
             }
 
             visibleItems.isEmpty() -> {
@@ -680,6 +807,10 @@ object DirectWidgetRenderer {
                     slotIds.allSetBadgeId,
                     context.getString(R.string.widget_all_set_with_count, totalCount)
                 )
+                rv.setInt(slotIds.allSetBadgeId, "setBackgroundResource", style.primaryPillBgRes)
+                rv.setTextColor(slotIds.allSetBadgeId, style.onPrimaryContainer)
+                rv.setInt(slotIds.btnRecheckId, "setBackgroundResource", style.buttonPillBgRes)
+                rv.setTextColor(slotIds.btnRecheckId, style.textPrimary)
                 rv.setOnClickPendingIntent(
                     slotIds.btnRecheckId,
                     buildBroadcastPendingIntent(
@@ -690,6 +821,8 @@ object DirectWidgetRenderer {
                         checklistId = checklist.id,
                     )
                 )
+                rv.setInt(slotIds.btnShowAllId, "setBackgroundResource", style.primaryPillBgRes)
+                rv.setTextColor(slotIds.btnShowAllId, style.onPrimaryContainer)
                 rv.setOnClickPendingIntent(
                     slotIds.btnShowAllId,
                     buildBroadcastPendingIntent(
@@ -731,6 +864,8 @@ object DirectWidgetRenderer {
                         listViewId = slotIds.listViewId,
                         visibleItems = visibleItems,
                         columnCount = columnCount,
+                        style = style,
+                        checklistId = checklist.id,
                     )
                 } else {
                     @Suppress("DEPRECATION")
@@ -752,16 +887,18 @@ object DirectWidgetRenderer {
         listViewId: Int,
         visibleItems: List<CheckItemEntity>,
         columnCount: Int,
+        style: WidgetThemeStyle,
+        checklistId: Long,
     ) {
         val builder = RemoteViews.RemoteCollectionItems.Builder()
             .setHasStableIds(true)
-            .setViewTypeCount(3)
+            .setViewTypeCount(4)
 
         if (columnCount <= 1) {
             for (item in visibleItems) {
                 builder.addItem(
                     item.id,
-                    buildRowRemoteViews(context, listOf(item), 1)
+                    buildRowRemoteViews(context, listOf(item), 1, style, checklistId)
                 )
             }
         } else {
@@ -772,56 +909,55 @@ object DirectWidgetRenderer {
                 val rowItems = visibleItems.subList(idx, end)
                 builder.addItem(
                     rowItems[0].id,
-                    buildRowRemoteViews(context, rowItems, columnCount)
+                    buildRowRemoteViews(context, rowItems, columnCount, style, checklistId)
                 )
                 idx = end
             }
+        }
+
+        if (visibleItems.isNotEmpty()) {
+            builder.addItem(-1001L, buildBlankSpaceRowRemoteViews(context, checklistId))
+            builder.addItem(-1002L, buildBlankSpaceRowRemoteViews(context, checklistId))
         }
 
         rv.setRemoteAdapter(listViewId, builder.build())
     }
 
     private fun bindTileSlot(
-        context: Context,
         rowRv: RemoteViews,
         tileId: Int,
         item: CheckItemEntity?,
+        style: WidgetThemeStyle,
+        checklistId: Long,
     ) {
         if (item == null) {
-            rowRv.setViewVisibility(tileId, View.INVISIBLE)
-            rowRv.setOnClickFillInIntent(tileId, Intent())
+            rowRv.setViewVisibility(tileId, View.VISIBLE)
+            rowRv.setInt(tileId, "setBackgroundResource", android.R.color.transparent)
+            rowRv.setTextViewCompoundDrawablesRelative(tileId, 0, 0, 0, 0)
+            rowRv.setTextViewText(tileId, "")
+            val fillInIntent = Intent().apply {
+                putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, TotalCheckWidgetReceiver.CMD_OPEN_APP)
+                putExtra(TotalCheckWidgetReceiver.EXTRA_CHECKLIST_ID, checklistId)
+            }
+            rowRv.setOnClickFillInIntent(tileId, fillInIntent)
             return
         }
         rowRv.setViewVisibility(tileId, View.VISIBLE)
         rowRv.setInt(
             tileId,
             "setBackgroundResource",
-            if (item.isChecked) {
-                R.drawable.widget_pill_surface_low
-            } else {
-                R.drawable.widget_pill_surface_high
-            }
+            if (item.isChecked) style.tileCheckedBgRes else style.tileUncheckedBgRes
         )
         rowRv.setTextViewCompoundDrawablesRelative(
             tileId,
-            if (item.isChecked) {
-                R.drawable.widget_ic_check_checked
-            } else {
-                R.drawable.widget_ic_dot_unchecked
-            },
+            if (item.isChecked) style.checkIconRes else style.dotIconRes,
             0,
             0,
             0
         )
-        applyTextColor(
-            context = context,
-            rv = rowRv,
-            viewId = tileId,
-            colorRes = if (item.isChecked) {
-                R.color.widget_on_surface_variant
-            } else {
-                R.color.widget_on_surface
-            }
+        rowRv.setTextColor(
+            tileId,
+            if (item.isChecked) style.textMuted else style.textPrimary
         )
         rowRv.setTextViewText(tileId, buildStyledLabel(item.label, item.isChecked))
         val fillInIntent = Intent().apply {
@@ -844,8 +980,8 @@ object DirectWidgetRenderer {
     private fun bindProgressViews(
         context: Context,
         rv: RemoteViews,
-        activeProgressId: Int,
-        doneProgressId: Int,
+        style: WidgetThemeStyle,
+        groupIds: ProgressBarGroupIds,
         ratioViewId: Int?,
         checkedCount: Int,
         totalCount: Int,
@@ -856,15 +992,11 @@ object DirectWidgetRenderer {
         } else {
             0
         }
-        if (isAllDone) {
-            rv.setViewVisibility(activeProgressId, View.GONE)
-            rv.setViewVisibility(doneProgressId, View.VISIBLE)
-            rv.setProgressBar(doneProgressId, 100, progressPct, false)
-        } else {
-            rv.setViewVisibility(doneProgressId, View.GONE)
-            rv.setViewVisibility(activeProgressId, View.VISIBLE)
-            rv.setProgressBar(activeProgressId, 100, progressPct, false)
+        val targetId = groupIds.targetId(style.variant, isAllDone)
+        for (id in groupIds.allIds()) {
+            rv.setViewVisibility(id, if (id == targetId) View.VISIBLE else View.GONE)
         }
+        rv.setProgressBar(targetId, 100, progressPct, false)
         if (ratioViewId != null) {
             rv.setTextViewText(
                 ratioViewId,
@@ -877,6 +1009,7 @@ object DirectWidgetRenderer {
         context: Context,
         rv: RemoteViews,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         resetButtonId: Int,
         confirmButtonId: Int,
         checklistId: Long,
@@ -898,10 +1031,14 @@ object DirectWidgetRenderer {
         if (isResetConfirmActive) {
             rv.setViewVisibility(resetButtonId, View.GONE)
             rv.setViewVisibility(confirmButtonId, View.VISIBLE)
+            rv.setInt(confirmButtonId, "setBackgroundResource", style.errorPillBgRes)
+            rv.setTextColor(confirmButtonId, style.onErrorContainer)
             rv.setOnClickPendingIntent(confirmButtonId, resetIntent)
         } else {
             rv.setViewVisibility(confirmButtonId, View.GONE)
             rv.setViewVisibility(resetButtonId, View.VISIBLE)
+            rv.setInt(resetButtonId, "setBackgroundResource", style.buttonPillBgRes)
+            rv.setTextColor(resetButtonId, style.textMuted)
             rv.setOnClickPendingIntent(resetButtonId, resetIntent)
         }
     }
@@ -910,18 +1047,17 @@ object DirectWidgetRenderer {
         context: Context,
         rv: RemoteViews,
         appWidgetId: Int,
+        style: WidgetThemeStyle,
         checklistId: Long,
         enabled: Boolean,
         prevButtonId: Int = R.id.widget_btn_prev,
         nextButtonId: Int = R.id.widget_btn_next,
     ) {
-        val textColorRes = if (enabled) {
-            R.color.widget_on_surface
-        } else {
-            R.color.widget_on_surface_variant
-        }
-        applyTextColor(context, rv, prevButtonId, textColorRes)
-        applyTextColor(context, rv, nextButtonId, textColorRes)
+        val textColor = if (enabled) style.textPrimary else style.textMuted
+        rv.setInt(prevButtonId, "setBackgroundResource", style.buttonPillBgRes)
+        rv.setInt(nextButtonId, "setBackgroundResource", style.buttonPillBgRes)
+        rv.setTextColor(prevButtonId, textColor)
+        rv.setTextColor(nextButtonId, textColor)
 
         rv.setOnClickPendingIntent(
             prevButtonId,
@@ -945,19 +1081,6 @@ object DirectWidgetRenderer {
                 direction = 1
             )
         )
-    }
-
-    private fun applyTextColor(
-        context: Context,
-        rv: RemoteViews,
-        viewId: Int,
-        @ColorRes colorRes: Int
-    ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            rv.setColor(viewId, "setTextColor", colorRes)
-        } else {
-            rv.setTextColor(viewId, context.getColor(colorRes))
-        }
     }
 
     private fun buildBroadcastPendingIntent(
@@ -992,6 +1115,7 @@ object DirectWidgetRenderer {
         context: Context,
         checklistId: Long?,
         appWidgetId: Int,
+        autoFocusInput: Boolean = false,
     ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or
@@ -1000,11 +1124,17 @@ object DirectWidgetRenderer {
             if (checklistId != null && checklistId > 0L) {
                 putExtra(MainActivity.EXTRA_WIDGET_CHECKLIST_ID, checklistId)
             }
-            data = Uri.parse("totalcheck://widget/$appWidgetId/checklist/${checklistId ?: 0L}")
+            if (autoFocusInput) {
+                putExtra(MainActivity.EXTRA_AUTO_FOCUS_INPUT, true)
+                data = Uri.parse("totalcheck://widget/$appWidgetId/add/${checklistId ?: 0L}")
+            } else {
+                data = Uri.parse("totalcheck://widget/$appWidgetId/checklist/${checklistId ?: 0L}")
+            }
         }
+        val requestCodeBase = if (autoFocusInput) REQ_OPEN_APP_ADD_BASE else REQ_OPEN_APP_BASE
         return PendingIntent.getActivity(
             context,
-            REQ_OPEN_APP_BASE + (appWidgetId and 0xFFFF),
+            requestCodeBase + (appWidgetId and 0xFFFF),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

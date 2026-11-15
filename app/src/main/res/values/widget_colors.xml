@@ -20,5 +20,5 @@
 
     <color name="widget_error_container">#F9DEDC</color>
     <color name="widget_on_error_container">#410E0B</color>
-    <color name="widget_ripple">#26181C24</color>
+    <color name="widget_ripple">#3B181C24</color>
 </resources>

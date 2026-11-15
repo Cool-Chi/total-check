@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_dyn_dark_bg">@android:color/system_neutral1_900</color>
+    <color name="widget_dyn_dark_tile_unchecked">@android:color/system_neutral2_800</color>
+    <color name="widget_dyn_dark_tile_checked">@android:color/system_neutral1_800</color>
+    <color name="widget_dyn_dark_surface_container">@android:color/system_neutral1_800</color>
+    <color name="widget_dyn_dark_button">@android:color/system_neutral2_700</color>
+    <color name="widget_dyn_dark_primary">@android:color/system_accent1_200</color>
+    <color name="widget_dyn_dark_primary_container">@android:color/system_accent1_700</color>
+    <color name="widget_dyn_dark_tertiary">@android:color/system_accent3_200</color>
+    <color name="widget_dyn_dark_error_container">#93000A</color>
+
+    <color name="widget_dyn_light_bg">@android:color/system_neutral1_50</color>
+    <color name="widget_dyn_light_tile_unchecked">@android:color/system_neutral1_10</color>
+    <color name="widget_dyn_light_tile_checked">@android:color/system_neutral2_100</color>
+    <color name="widget_dyn_light_surface_container">@android:color/system_neutral2_50</color>
+    <color name="widget_dyn_light_button">@android:color/system_neutral2_200</color>
+    <color name="widget_dyn_light_primary">@android:color/system_accent1_600</color>
+    <color name="widget_dyn_light_primary_container">@android:color/system_accent1_100</color>
+    <color name="widget_dyn_light_tertiary">@android:color/system_accent3_600</color>
+    <color name="widget_dyn_light_error_container">#F9DEDC</color>
+</resources>

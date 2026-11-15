@@ -10,6 +10,7 @@ import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.repository.ChecklistRepository
+import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,6 +99,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _pendingScrollToChecklistId = MutableStateFlow<Long?>(null)
     val pendingScrollToChecklistId: StateFlow<Long?> = _pendingScrollToChecklistId.asStateFlow()
+
+    private val _pendingAutoFocusInput = MutableStateFlow(false)
+    val pendingAutoFocusInput: StateFlow<Boolean> = _pendingAutoFocusInput.asStateFlow()
 
     private val _themeConfig = MutableStateFlow<ThemeConfig?>(null)
     val themeConfig: StateFlow<ThemeConfig?> = _themeConfig.asStateFlow()
@@ -204,6 +208,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingScrollToChecklistId.value = null
     }
 
+    fun requestAutoFocusInput() {
+        _pendingAutoFocusInput.value = true
+    }
+
+    fun consumeAutoFocusInput() {
+        _pendingAutoFocusInput.value = false
+    }
+
     fun renameChecklist(id: Long, newName: String) {
         val trimmed = newName.trim()
         if (trimmed.isEmpty()) return
@@ -265,7 +277,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleDarkMode() {
         val current = _themeConfig.value ?: return
         val next = !current.isDarkMode
-        _themeConfig.value = current.copy(isDarkMode = next)
+        val nextConfig = current.copy(isDarkMode = next)
+        _themeConfig.value = nextConfig
+        WidgetSyncManager.onThemeChanged(getApplication(), nextConfig)
         viewModelScope.launch {
             preferencesRepository.setDarkMode(next)
         }
@@ -274,7 +288,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleDynamicColor() {
         val current = _themeConfig.value ?: return
         val next = !current.useDynamicColor
-        _themeConfig.value = current.copy(useDynamicColor = next)
+        val nextConfig = current.copy(useDynamicColor = next)
+        _themeConfig.value = nextConfig
+        WidgetSyncManager.onThemeChanged(getApplication(), nextConfig)
         viewModelScope.launch {
             preferencesRepository.setUseDynamicColor(next)
         }

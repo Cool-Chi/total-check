@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import com.example.totalcheck.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +24,22 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
             val itemId = intent.getLongExtra(EXTRA_ITEM_ID, -1L)
             val checklistId = intent.getLongExtra(EXTRA_CHECKLIST_ID, -1L)
             val direction = intent.getIntExtra(EXTRA_DIRECTION, 1)
+
+            if (command == CMD_OPEN_APP) {
+                val launchIntent = Intent(appContext, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    if (checklistId > 0L) {
+                        putExtra(MainActivity.EXTRA_WIDGET_CHECKLIST_ID, checklistId)
+                    }
+                    if (intent.getBooleanExtra(MainActivity.EXTRA_AUTO_FOCUS_INPUT, false)) {
+                        putExtra(MainActivity.EXTRA_AUTO_FOCUS_INPUT, true)
+                    }
+                }
+                appContext.startActivity(launchIntent)
+                return
+            }
 
             val handledFast = WidgetSyncManager.tryHandleFastCommand(
                 context = appContext,
@@ -145,6 +162,7 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
         const val CMD_SWITCH_CHECKLIST = "switch_checklist"
         const val CMD_RESET_STAGE = "reset_stage"
         const val CMD_FORCE_RESET = "force_reset"
+        const val CMD_OPEN_APP = "open_app"
 
         private val coldScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }

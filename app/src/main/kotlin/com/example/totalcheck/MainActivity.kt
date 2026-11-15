@@ -70,15 +70,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleWidgetIntent(intent: Intent?) {
-        if (intent == null || !intent.hasExtra(EXTRA_WIDGET_CHECKLIST_ID)) return
-        val checklistId = intent.getLongExtra(EXTRA_WIDGET_CHECKLIST_ID, -1L)
-        if (checklistId > 0L) {
-            mainViewModel.selectAndScrollToChecklist(checklistId)
+        if (intent == null) return
+        val hasChecklistExtra = intent.hasExtra(EXTRA_WIDGET_CHECKLIST_ID)
+        val hasAutoFocusExtra = intent.getBooleanExtra(EXTRA_AUTO_FOCUS_INPUT, false)
+        if (!hasChecklistExtra && !hasAutoFocusExtra) return
+
+        if (hasChecklistExtra) {
+            val checklistId = intent.getLongExtra(EXTRA_WIDGET_CHECKLIST_ID, -1L)
+            if (checklistId > 0L) {
+                mainViewModel.selectAndScrollToChecklist(checklistId)
+            }
             intent.removeExtra(EXTRA_WIDGET_CHECKLIST_ID)
+        }
+        if (hasAutoFocusExtra) {
+            mainViewModel.requestAutoFocusInput()
+            intent.removeExtra(EXTRA_AUTO_FOCUS_INPUT)
         }
     }
 
     companion object {
         const val EXTRA_WIDGET_CHECKLIST_ID = "extra_widget_checklist_id"
+        const val EXTRA_AUTO_FOCUS_INPUT = "extra_auto_focus_input"
     }
 }
