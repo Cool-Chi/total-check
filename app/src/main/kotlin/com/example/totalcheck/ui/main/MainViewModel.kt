@@ -7,8 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.totalcheck.data.local.AppDatabase
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
+import com.example.totalcheck.data.reminder.NotificationHelper
 import com.example.totalcheck.data.repository.ChecklistRepository
 import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.Dispatchers
@@ -31,8 +33,19 @@ import kotlinx.coroutines.sync.withLock
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getInstance(application)
-    private val repository = ChecklistRepository(application, database.checklistDao())
+    private val repository = ChecklistRepository(
+        context = application,
+        dao = database.checklistDao(),
+        reminderDao = database.reminderDao(),
+    )
     private val preferencesRepository = UserPreferencesRepository(application)
+
+    val reminders: StateFlow<List<ReminderEntity>> = repository.observeAllReminders()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
 
     private val reorderMutex = Mutex()
     private val _latestDbChecklists = MutableStateFlow<List<ChecklistEntity>>(emptyList())
@@ -409,5 +422,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             reorderedVisibleIds = mutableIds,
             showUncheckedOnly = showUncheckedOnly
         )
+    }
+
+    fun saveReminder(
+        checklistId: Long,
+        itemId: Long?,
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        onlyIfUnchecked: Boolean,
+        onSaved: (ReminderEntity) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val saved = repository.upsertReminder(
+                checklistId = checklistId,
+                itemId = itemId,
+                hour = hour,
+                minute = minute,
+                repeatDaysBitmask = repeatDaysBitmask,
+                onlyIfUnchecked = onlyIfUnchecked,
+            )
+            onSaved(saved)
+        }
+    }
+
+    fun deleteReminder(
+        reminderId: Long,
+        onDeleted: () -> Unit = {}
+    ) {
+        if (reminderId <= 0L) return
+        viewModelScope.launch {
+            repository.deleteReminder(reminderId)
+            onDeleted()
+        }
+    }
+
+    fun sendTestReminderNotification(
+        checklistId: Long,
+        itemId: Long?,
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        onlyIfUnchecked: Boolean,
+        onSent: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val previewEntity = ReminderEntity(
+                id = 0L,
+                checklistId = checklistId,
+                itemId = itemId,
+                hour = hour.coerceIn(0, 23),
+                minute = minute.coerceIn(0, 59),
+                repeatDaysBitmask = repeatDaysBitmask,
+                onlyIfUnchecked = onlyIfUnchecked,
+                isEnabled = true,
+            )
+            val posted = NotificationHelper.evaluateAndNotifyIfNeeded(
+                context = getApplication(),
+                reminder = previewEntity,
+                isTestNotification = true,
+            )
+            onSent(posted)
+        }
     }
 }

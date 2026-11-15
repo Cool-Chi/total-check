@@ -97,6 +97,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.local.ReminderEntity
+import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -125,6 +127,7 @@ fun TotalCheckScreen(
 
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
+    val reminders by viewModel.reminders.collectAsStateWithLifecycle()
     val selectedChecklistId by viewModel.selectedChecklistId.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
     val pendingAutoFocusInput by viewModel.pendingAutoFocusInput.collectAsStateWithLifecycle()
@@ -142,6 +145,7 @@ fun TotalCheckScreen(
     val quickInputFocusRequester = remember { FocusRequester() }
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val addChecklistFocusRequester = remember { FocusRequester() }
+    val reminderFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val renameFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val deleteFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     var editingItemId by remember { mutableStateOf<Long?>(null) }
@@ -696,15 +700,31 @@ fun TotalCheckScreen(
                                         } else {
                                             null
                                         }
+                                        val reminderBtnFocus = reminderFocusRequesters.getOrPut(checklist.id) {
+                                            FocusRequester()
+                                        }
                                         val renameBtnFocus = renameFocusRequesters.getOrPut(checklist.id) {
                                             FocusRequester()
                                         }
                                         val deleteBtnFocus = deleteFocusRequesters.getOrPut(checklist.id) {
                                             FocusRequester()
                                         }
+                                        val checklistReminders = remember(reminders, checklist.id) {
+                                            reminders.filter { it.checklistId == checklist.id }
+                                        }
+                                        val activeChecklistReminder = remember(checklistReminders) {
+                                            checklistReminders.firstOrNull { it.itemId == null }
+                                        }
+                                        val itemRemindersById = remember(checklistReminders) {
+                                            checklistReminders.mapNotNull { r ->
+                                                r.itemId?.let { id -> id to r }
+                                            }.toMap()
+                                        }
                                         ChecklistPageContent(
                                             checklist = checklist,
                                             items = items,
+                                            checklistReminder = activeChecklistReminder,
+                                            itemRemindersById = itemRemindersById,
                                             canDeleteChecklist = checklists.size > 1,
                                             showUncheckedOnly = showUncheckedOnly,
                                             editingItemId = pageEditingItemId,
@@ -715,6 +735,7 @@ fun TotalCheckScreen(
                                             progressCollapseFractionProvider = progressCollapseFractionProvider,
                                             bottomOverlayInsetPxProvider = bottomOverlayInsetPxProvider,
                                             baseBottomOverlayInsetPxProvider = baseBottomOverlayInsetPxProvider,
+                                            reminderButtonFocusRequester = reminderBtnFocus,
                                             renameButtonFocusRequester = renameBtnFocus,
                                             deleteButtonFocusRequester = deleteBtnFocus,
                                             onStartEdit = onStartInlineEditStable,
@@ -824,6 +845,78 @@ fun TotalCheckScreen(
                             }
                         }
                     },
+                    onSaveReminder = { checklistId, itemId, hour, minute, repeatDaysBitmask, onlyIfUnchecked ->
+                        closeModal(restoreFocus = true)
+                        viewModel.saveReminder(
+                            checklistId = checklistId,
+                            itemId = itemId,
+                            hour = hour,
+                            minute = minute,
+                            repeatDaysBitmask = repeatDaysBitmask,
+                            onlyIfUnchecked = onlyIfUnchecked
+                        ) { saved ->
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(
+                                        R.string.snackbar_reminder_saved,
+                                        ReminderFormatter.formatSavedSummary(
+                                            context = context,
+                                            hour = saved.hour,
+                                            minute = saved.minute,
+                                            repeatDaysBitmask = saved.repeatDaysBitmask
+                                        )
+                                    ),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
+                        }
+                    },
+                    onDeleteReminder = { reminderId ->
+                        closeModal(restoreFocus = false)
+                        viewModel.deleteReminder(reminderId) {
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(R.string.snackbar_reminder_deleted),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
+                        }
+                    },
+                    onSendTestReminder = { checklistId, itemId, hour, minute, repeatDaysBitmask, onlyIfUnchecked ->
+                        viewModel.sendTestReminderNotification(
+                            checklistId = checklistId,
+                            itemId = itemId,
+                            hour = hour,
+                            minute = minute,
+                            repeatDaysBitmask = repeatDaysBitmask,
+                            onlyIfUnchecked = onlyIfUnchecked
+                        ) { posted ->
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(
+                                        if (posted) {
+                                            R.string.snackbar_test_notification_sent
+                                        } else {
+                                            R.string.snackbar_notif_permission_denied
+                                        }
+                                    ),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
+                        }
+                    },
+                    onNotificationPermissionDenied = {
+                        scope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            snackbarHostState.showSnackbar(
+                                message = context.getString(R.string.snackbar_notif_permission_denied),
+                                duration = SnackbarDuration.Short
+                            )
+                        }
+                    },
                     onExited = {
                         if (!isModalOpen) {
                             modalContent = null
@@ -925,6 +1018,8 @@ private fun TopAppHeaderBar(
 private fun ChecklistPageContent(
     checklist: ChecklistEntity,
     items: List<CheckItemEntity>,
+    checklistReminder: ReminderEntity?,
+    itemRemindersById: Map<Long, ReminderEntity>,
     canDeleteChecklist: Boolean,
     showUncheckedOnly: Boolean,
     editingItemId: Long?,
@@ -935,6 +1030,7 @@ private fun ChecklistPageContent(
     progressCollapseFractionProvider: () -> Float,
     bottomOverlayInsetPxProvider: () -> Float,
     baseBottomOverlayInsetPxProvider: () -> Float,
+    reminderButtonFocusRequester: FocusRequester,
     renameButtonFocusRequester: FocusRequester,
     deleteButtonFocusRequester: FocusRequester,
     onStartEdit: (Long, String) -> Unit,
@@ -1237,6 +1333,17 @@ private fun ChecklistPageContent(
                     }
                 },
                 canDeleteChecklist = canDeleteChecklist,
+                activeChecklistReminder = checklistReminder,
+                onOpenChecklistReminder = {
+                    onOpenModal(
+                        ChecklistModalContent.ConfigureReminder(
+                            checklist = checklist,
+                            item = null,
+                            existingReminder = checklistReminder,
+                        ),
+                        reminderButtonFocusRequester
+                    )
+                },
                 onRenameChecklist = {
                     onOpenModal(
                         ChecklistModalContent.RenameChecklist(checklist),
@@ -1252,6 +1359,7 @@ private fun ChecklistPageContent(
                         deleteButtonFocusRequester
                     )
                 },
+                reminderButtonFocusRequester = reminderButtonFocusRequester,
                 renameButtonFocusRequester = renameButtonFocusRequester,
                 deleteButtonFocusRequester = deleteButtonFocusRequester,
                 modifier = Modifier
@@ -1402,6 +1510,7 @@ private fun ChecklistPageContent(
                             .coerceAtLeast(52.dp)
                         DashedCapsuleEmptySlot(heightDp = slotHeightDp)
                     } else {
+                        val itemReminder = itemRemindersById[item.id]
                         CapsuleCheckItemRow(
                             item = item,
                             onToggle = {
@@ -1414,6 +1523,17 @@ private fun ChecklistPageContent(
                                 )
                             },
                             isEditing = editingItemId == item.id,
+                            activeItemReminder = itemReminder,
+                            onOpenItemReminder = {
+                                onOpenModal(
+                                    ChecklistModalContent.ConfigureReminder(
+                                        checklist = checklist,
+                                        item = item,
+                                        existingReminder = itemReminder,
+                                    ),
+                                    null
+                                )
+                            },
                             stackDepthProvider = { slotState.depthState.floatValue },
                             isCompressedProvider = { slotState.isCompressed },
                             onCompressedClick = {

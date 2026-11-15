@@ -2,16 +2,23 @@ package com.example.totalcheck.data.repository
 
 import android.content.Context
 import com.example.totalcheck.R
+import com.example.totalcheck.data.local.AppDatabase
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistDao
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.local.ReminderDao
+import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.parser.ParsedItemDraft
+import com.example.totalcheck.data.reminder.NotificationHelper
+import com.example.totalcheck.data.reminder.ReminderFormatter
+import com.example.totalcheck.data.reminder.ReminderScheduler
 import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.flow.Flow
 
 class ChecklistRepository(
     context: Context,
-    private val dao: ChecklistDao
+    private val dao: ChecklistDao,
+    private val reminderDao: ReminderDao = AppDatabase.getInstance(context).reminderDao(),
 ) {
     private val appContext = context.applicationContext
 
@@ -66,17 +73,20 @@ class ChecklistRepository(
     }
 
     suspend fun deleteChecklist(id: Long) {
+        cancelChecklistReminders(id)
         dao.deleteChecklist(id)
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
     suspend fun deleteChecklist(checklist: ChecklistEntity) {
+        cancelChecklistReminders(checklist.id)
         dao.deleteChecklist(checklist)
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
     suspend fun deleteChecklistWithSnapshot(checklist: ChecklistEntity): List<CheckItemEntity> {
         val itemsSnapshot = dao.getItemsByChecklist(checklist.id)
+        cancelChecklistReminders(checklist.id)
         dao.deleteChecklist(checklist.id)
         WidgetSyncManager.notifyDataChanged(appContext)
         return itemsSnapshot
@@ -136,6 +146,10 @@ class ChecklistRepository(
     }
 
     suspend fun deleteItem(item: CheckItemEntity) {
+        reminderDao.getItemLevelReminder(item.id)?.let { reminder ->
+            ReminderScheduler.cancelReminder(appContext, reminder.id)
+            NotificationHelper.cancelNotificationForReminder(appContext, reminder.id)
+        }
         dao.deleteItem(item)
         WidgetSyncManager.notifyDataChanged(appContext)
     }
@@ -155,6 +169,87 @@ class ChecklistRepository(
         dao.resetChecklistItems(checklistId)
         WidgetSyncManager.notifyDataChanged(appContext)
         return checkedSnapshot
+    }
+
+    suspend fun checkAllChecklistItems(checklistId: Long) {
+        dao.checkAllChecklistItems(checklistId)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    fun observeAllReminders(): Flow<List<ReminderEntity>> = reminderDao.observeAllReminders()
+
+    suspend fun upsertReminder(
+        checklistId: Long,
+        itemId: Long?,
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        onlyIfUnchecked: Boolean,
+    ): ReminderEntity {
+        val clampedHour = hour.coerceIn(0, 23)
+        val clampedMinute = minute.coerceIn(0, 59)
+        val maskedDays = repeatDaysBitmask and ReminderFormatter.DAILY_MASK
+        val triggerEpochMillis = ReminderScheduler.computeNextTriggerEpochMillis(
+            hour = clampedHour,
+            minute = clampedMinute,
+            repeatDaysBitmask = maskedDays,
+        )
+        val existing = if (itemId == null) {
+            reminderDao.getChecklistLevelReminder(checklistId)
+        } else {
+            reminderDao.getItemLevelReminder(itemId)
+        }
+        val saved = if (existing != null) {
+            ReminderScheduler.cancelReminder(appContext, existing.id)
+            NotificationHelper.cancelNotificationForReminder(appContext, existing.id)
+            val updated = existing.copy(
+                hour = clampedHour,
+                minute = clampedMinute,
+                repeatDaysBitmask = maskedDays,
+                triggerEpochMillis = triggerEpochMillis,
+                onlyIfUnchecked = onlyIfUnchecked,
+                isEnabled = true,
+            )
+            reminderDao.updateReminder(updated)
+            updated
+        } else {
+            val created = ReminderEntity(
+                checklistId = checklistId,
+                itemId = itemId,
+                hour = clampedHour,
+                minute = clampedMinute,
+                repeatDaysBitmask = maskedDays,
+                triggerEpochMillis = triggerEpochMillis,
+                onlyIfUnchecked = onlyIfUnchecked,
+                isEnabled = true,
+            )
+            val newId = reminderDao.insertReminder(created)
+            created.copy(id = newId)
+        }
+        ReminderScheduler.scheduleReminder(appContext, saved)
+        WidgetSyncManager.notifyDataChanged(appContext)
+        return saved
+    }
+
+    suspend fun deleteReminder(reminderId: Long) {
+        ReminderScheduler.cancelReminder(appContext, reminderId)
+        NotificationHelper.cancelNotificationForReminder(appContext, reminderId)
+        reminderDao.deleteReminderById(reminderId)
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
+    suspend fun syncWidgetsNow() {
+        WidgetSyncManager.notifyDataChangedNow(appContext)
+    }
+
+    private suspend fun cancelChecklistReminders(checklistId: Long) {
+        val associated = reminderDao.getRemindersByChecklist(checklistId)
+        if (associated.isNotEmpty()) {
+            ReminderScheduler.cancelReminders(appContext, associated)
+            associated.forEach { reminder ->
+                NotificationHelper.cancelNotificationForReminder(appContext, reminder.id)
+            }
+        }
     }
 
     suspend fun restoreCheckedStates(itemIds: List<Long>) {

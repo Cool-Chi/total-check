@@ -36,6 +36,8 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +89,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -110,6 +113,8 @@ import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp
 import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
+import com.example.totalcheck.data.local.ReminderEntity
+import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import com.example.totalcheck.ui.theme.LocalThemeTransitioning
 import kotlinx.coroutines.Job
@@ -129,10 +134,14 @@ fun CapsuleProgressModule(
     canDeleteChecklist: Boolean,
     onRenameChecklist: () -> Unit,
     onDeleteChecklist: () -> Unit,
+    activeChecklistReminder: ReminderEntity? = null,
+    onOpenChecklistReminder: () -> Unit = {},
+    reminderButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     renameButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     deleteButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     val isReducedMotion = LocalReducedMotion.current
     val freezeColorTransition = LocalThemeTransitioning.current || isReducedMotion
@@ -297,7 +306,7 @@ fun CapsuleProgressModule(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 TactileFilterChip(
                     selected = showUncheckedOnly,
@@ -322,9 +331,67 @@ fun CapsuleProgressModule(
                     selectedLeadingIconColor = colorScheme.onTertiaryContainer
                 )
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
+                    val isReminderActive = activeChecklistReminder != null && activeChecklistReminder.isEnabled
+                    val reminderLabel = if (isReminderActive) {
+                        ReminderFormatter.formatCompactBadge(
+                            context = context,
+                            hour = activeChecklistReminder.hour,
+                            minute = activeChecklistReminder.minute,
+                            repeatDaysBitmask = activeChecklistReminder.repeatDaysBitmask
+                        )
+                    } else {
+                        stringResource(R.string.action_reminder_short)
+                    }
+                    TactileButton(
+                        onClick = onOpenChecklistReminder,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .height(40.dp)
+                            .focusRequester(reminderButtonFocusRequester)
+                            .testTag("checklist_reminder_button"),
+                        shape = RoundedCornerShape(50),
+                        containerColor = if (isReminderActive) {
+                            colorScheme.primaryContainer
+                        } else {
+                            colorScheme.surfaceContainerHighest
+                        },
+                        contentColor = if (isReminderActive) {
+                            colorScheme.onPrimaryContainer
+                        } else {
+                            colorScheme.onSurfaceVariant
+                        },
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (isReminderActive) {
+                                colorScheme.primary.copy(alpha = 0.5f)
+                            } else {
+                                colorScheme.outlineVariant
+                            }
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isReminderActive) {
+                                Icons.Rounded.NotificationsActive
+                            } else {
+                                Icons.Rounded.NotificationsNone
+                            },
+                            contentDescription = stringResource(R.string.cd_checklist_reminder),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = reminderLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isReminderActive) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     TactileIconButton(
                         onClick = onRenameChecklist,
                         modifier = Modifier
@@ -420,6 +487,8 @@ fun CapsuleCheckItemRow(
     onToggle: () -> Unit,
     isEditing: Boolean = false,
     isFloatingDragged: Boolean = false,
+    activeItemReminder: ReminderEntity? = null,
+    onOpenItemReminder: () -> Unit = {},
     stackDepthProvider: () -> Float = { 0f },
     isCompressedProvider: () -> Boolean = { false },
     onCompressedClick: (() -> Unit)? = null,
@@ -437,6 +506,7 @@ fun CapsuleCheckItemRow(
     onMoveDown: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -964,22 +1034,67 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 } else {
-                    Text(
-                        text = displayedLabel,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
-                        color = colorScheme.onSurface,
-                        textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(vertical = 4.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    val hasActiveReminder = activeItemReminder != null && activeItemReminder.isEnabled
+                    if (hasActiveReminder) {
+                        val badgeText = ReminderFormatter.formatCompactBadge(
+                            context = context,
+                            hour = activeItemReminder.hour,
+                            minute = activeItemReminder.minute,
+                            repeatDaysBitmask = activeItemReminder.repeatDaysBitmask
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = displayedLabel,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
+                                color = colorScheme.onSurface,
+                                textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = colorScheme.primary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = badgeText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = displayedLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
+                            color = colorScheme.onSurface,
+                            textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 4.dp),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
-                            .width(80.dp)
+                            .width(74.dp)
                             .height(28.dp)
                             .graphicsLayer {
                                 val badgeScale = 1f + (wavePulseScale.value - 1f) * 1.8f
@@ -1031,11 +1146,35 @@ fun CapsuleCheckItemRow(
                             if (currentIsCompressedProvider()) {
                                 currentOnCompressedClick?.invoke()
                             } else {
+                                onOpenItemReminder()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("reminder_item_button_${item.id}"),
+                        contentColor = if (hasActiveReminder) colorScheme.primary else colorScheme.onSurfaceVariant,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
+                    ) {
+                        Icon(
+                            imageVector = if (hasActiveReminder) {
+                                Icons.Rounded.NotificationsActive
+                            } else {
+                                Icons.Rounded.NotificationsNone
+                            },
+                            contentDescription = stringResource(R.string.cd_item_reminder, displayedLabel),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                    TactileIconButton(
+                        onClick = {
+                            if (currentIsCompressedProvider()) {
+                                currentOnCompressedClick?.invoke()
+                            } else {
                                 onStartEdit()
                             }
                         },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .testTag("edit_item_button_${item.id}"),
                         contentColor = colorScheme.onSurfaceVariant,
                         onPressChanged = { pressed -> isChildButtonPressed = pressed }

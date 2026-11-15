@@ -1,8 +1,12 @@
 package com.example.totalcheck.ui.main
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,13 +54,18 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -103,17 +112,23 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.example.totalcheck.R
+import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
+import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.parser.ChecklistTextParser
 import com.example.totalcheck.data.parser.ImportFormatMode
 import com.example.totalcheck.data.parser.ParsedItemDraft
+import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.ui.theme.LocalReducedMotion
+import java.time.LocalTime
+import java.util.Locale
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -136,6 +151,11 @@ internal sealed interface ChecklistModalContent {
         val checklist: ChecklistEntity,
         val itemCount: Int
     ) : ChecklistModalContent
+    data class ConfigureReminder(
+        val checklist: ChecklistEntity,
+        val item: CheckItemEntity? = null,
+        val existingReminder: ReminderEntity? = null,
+    ) : ChecklistModalContent
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -149,6 +169,24 @@ internal fun ScopedModalHost(
     onConfirmImport: (title: String, items: List<ParsedItemDraft>) -> Unit = { _, _ -> },
     onConfirmRename: (ChecklistEntity, String) -> Unit,
     onConfirmDelete: (ChecklistEntity) -> Unit,
+    onSaveReminder: (
+        checklistId: Long,
+        itemId: Long?,
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        onlyIfUnchecked: Boolean,
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    onDeleteReminder: (reminderId: Long) -> Unit = {},
+    onSendTestReminder: (
+        checklistId: Long,
+        itemId: Long?,
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        onlyIfUnchecked: Boolean,
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    onNotificationPermissionDenied: () -> Unit = {},
     onExited: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1004,6 +1042,535 @@ internal fun ScopedModalHost(
                         )
                     }
                 }
+
+                is ChecklistModalContent.ConfigureReminder -> {
+                    val existing = modalContent.existingReminder
+                    val initialTime = remember(sessionKey) {
+                        if (existing != null) {
+                            existing.hour to existing.minute
+                        } else {
+                            val plusTwoMin = LocalTime.now().plusMinutes(2)
+                            plusTwoMin.hour to plusTwoMin.minute
+                        }
+                    }
+                    var selectedHour by remember(sessionKey) { mutableIntStateOf(initialTime.first) }
+                    var selectedMinute by remember(sessionKey) { mutableIntStateOf(initialTime.second) }
+                    var repeatMask by remember(sessionKey) {
+                        mutableIntStateOf(existing?.repeatDaysBitmask ?: 0)
+                    }
+                    var onlyIfUnchecked by remember(sessionKey) {
+                        mutableStateOf(existing?.onlyIfUnchecked ?: true)
+                    }
+                    var pendingPermissionAction by remember(sessionKey) {
+                        mutableStateOf<Pair<Boolean, () -> Unit>?>(null)
+                    }
+                    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestPermission()
+                    ) { granted ->
+                        val pending = pendingPermissionAction
+                        pendingPermissionAction = null
+                        if (granted) {
+                            pending?.second?.invoke()
+                        } else {
+                            if (pending?.first == true) {
+                                pending.second.invoke()
+                            }
+                            onNotificationPermissionDenied()
+                        }
+                    }
+                    val withNotificationPermission: (runOnDeny: Boolean, action: () -> Unit) -> Unit = { runOnDeny, action ->
+                        if (
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            pendingPermissionAction = runOnDeny to action
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            action()
+                        }
+                    }
+
+                    val targetChecklist = modalContent.checklist
+                    val targetItem = modalContent.item
+                    val modalTitle = if (targetItem == null) {
+                        stringResource(R.string.dialog_reminder_checklist_title)
+                    } else {
+                        stringResource(R.string.dialog_reminder_item_title)
+                    }
+                    val targetLabel = if (targetItem == null) {
+                        stringResource(R.string.reminder_target_checklist, targetChecklist.name)
+                    } else {
+                        stringResource(
+                            R.string.reminder_target_item,
+                            targetItem.label,
+                            targetChecklist.name
+                        )
+                    }
+
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = false,
+                        confirmEnabled = true,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = dismissImeOrCloseModal,
+                        headerContent = {
+                            Text(
+                                text = modalTitle,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = colorScheme.primaryContainer.copy(alpha = 0.72f)
+                            ) {
+                                Text(
+                                    text = targetLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                        },
+                        footerContent = { onFocusIndexChanged ->
+                            Spacer(modifier = Modifier.height(14.dp))
+                            ModalActionRow(
+                                cancelFocus = cancelFocus,
+                                confirmFocus = confirmFocus,
+                                confirmLabel = stringResource(R.string.action_save_reminder),
+                                confirmEnabled = true,
+                                isDestructive = false,
+                                onFocusIndexChanged = onFocusIndexChanged,
+                                onCancel = { if (isOpen) onRequestClose(true) },
+                                onConfirm = {
+                                    if (isOpen) {
+                                        withNotificationPermission(true) {
+                                            onSaveReminder(
+                                                targetChecklist.id,
+                                                targetItem?.id,
+                                                selectedHour,
+                                                selectedMinute,
+                                                repeatMask,
+                                                onlyIfUnchecked
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    ) { _ ->
+                        // Time Picker Stepper + Quick Presets
+                        Text(
+                            text = stringResource(R.string.reminder_time_section_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TimeUnitStepper(
+                                value = selectedHour,
+                                unitLabel = stringResource(R.string.reminder_hour_label),
+                                decrementDescription = stringResource(R.string.cd_decrease_hour),
+                                incrementDescription = stringResource(R.string.cd_increase_hour),
+                                onDecrement = { selectedHour = (selectedHour + 23) % 24 },
+                                onIncrement = { selectedHour = (selectedHour + 1) % 24 },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = ":",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.primary
+                            )
+                            TimeUnitStepper(
+                                value = selectedMinute,
+                                unitLabel = stringResource(R.string.reminder_minute_label),
+                                decrementDescription = stringResource(R.string.cd_decrease_minute),
+                                incrementDescription = stringResource(R.string.cd_increase_minute),
+                                onDecrement = { selectedMinute = (selectedMinute + 59) % 60 },
+                                onIncrement = { selectedMinute = (selectedMinute + 1) % 60 },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val timePresets = remember {
+                            listOf(8 to 0, 9 to 0, 18 to 0, 22 to 0)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            timePresets.forEach { (presetHour, presetMinute) ->
+                                val selected = selectedHour == presetHour && selectedMinute == presetMinute
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .slideOutCancelClickable(
+                                            shape = RoundedCornerShape(50),
+                                            role = Role.Button,
+                                            onClick = {
+                                                selectedHour = presetHour
+                                                selectedMinute = presetMinute
+                                            }
+                                        ),
+                                    shape = RoundedCornerShape(50),
+                                    color = if (selected) {
+                                        colorScheme.primaryContainer
+                                    } else {
+                                        colorScheme.surfaceContainer
+                                    },
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (selected) colorScheme.primary else colorScheme.outlineVariant
+                                    )
+                                ) {
+                                    Text(
+                                        text = ReminderFormatter.formatTime(presetHour, presetMinute),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) {
+                                            colorScheme.onPrimaryContainer
+                                        } else {
+                                            colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Repeat Weekday Chips
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = stringResource(R.string.reminder_repeat_section_label),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = ReminderFormatter.formatRepeatSummary(context, repeatMask),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val repeatPresets = listOf(
+                            0 to stringResource(R.string.reminder_repeat_once),
+                            ReminderFormatter.DAILY_MASK to stringResource(R.string.reminder_repeat_daily),
+                            ReminderFormatter.WEEKDAYS_MASK to stringResource(R.string.reminder_repeat_weekdays),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            repeatPresets.forEach { (presetMask, label) ->
+                                val active = (repeatMask and ReminderFormatter.DAILY_MASK) == presetMask
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .slideOutCancelClickable(
+                                            shape = RoundedCornerShape(50),
+                                            role = Role.Button,
+                                            onClick = { repeatMask = presetMask }
+                                        ),
+                                    shape = RoundedCornerShape(50),
+                                    color = if (active) {
+                                        colorScheme.tertiaryContainer
+                                    } else {
+                                        colorScheme.surfaceContainer
+                                    },
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (active) colorScheme.tertiary else colorScheme.outlineVariant
+                                    )
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (active) {
+                                            colorScheme.onTertiaryContainer
+                                        } else {
+                                            colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val dayLabels = listOf(
+                            stringResource(R.string.reminder_day_mon),
+                            stringResource(R.string.reminder_day_tue),
+                            stringResource(R.string.reminder_day_wed),
+                            stringResource(R.string.reminder_day_thu),
+                            stringResource(R.string.reminder_day_fri),
+                            stringResource(R.string.reminder_day_sat),
+                            stringResource(R.string.reminder_day_sun),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            dayLabels.forEachIndexed { bitIdx, dayLabel ->
+                                val bit = 1 shl bitIdx
+                                val isDaySelected = (repeatMask and bit) != 0
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .slideOutCancelClickable(
+                                            shape = CircleShape,
+                                            role = Role.Checkbox,
+                                            onClick = {
+                                                repeatMask = if (isDaySelected) {
+                                                    repeatMask and bit.inv()
+                                                } else {
+                                                    repeatMask or bit
+                                                }
+                                            }
+                                        ),
+                                    shape = CircleShape,
+                                    color = if (isDaySelected) {
+                                        colorScheme.primary
+                                    } else {
+                                        colorScheme.surfaceContainerHighest
+                                    },
+                                    border = if (isDaySelected) null else BorderStroke(
+                                        1.dp,
+                                        colorScheme.outlineVariant
+                                    )
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = dayLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isDaySelected) {
+                                                colorScheme.onPrimary
+                                            } else {
+                                                colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if ((repeatMask and ReminderFormatter.DAILY_MASK) == 0) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.reminder_repeat_once_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Only If Unchecked Switch
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = colorScheme.surfaceContainer,
+                            border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.6f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(
+                                            if (targetItem == null) {
+                                                R.string.reminder_only_if_unchecked_checklist_title
+                                            } else {
+                                                R.string.reminder_only_if_unchecked_item_title
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = stringResource(R.string.reminder_only_if_unchecked_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = onlyIfUnchecked,
+                                    onCheckedChange = { onlyIfUnchecked = it }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Test Notification & Delete Existing Actions
+                        TactileButton(
+                            onClick = {
+                                withNotificationPermission(false) {
+                                    onSendTestReminder(
+                                        targetChecklist.id,
+                                        targetItem?.id,
+                                        selectedHour,
+                                        selectedMinute,
+                                        repeatMask,
+                                        onlyIfUnchecked
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(50),
+                            containerColor = colorScheme.secondaryContainer,
+                            contentColor = colorScheme.onSecondaryContainer,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.NotificationsActive,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.action_send_test_notification),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        if (existing != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TactileButton(
+                                onClick = {
+                                    if (isOpen) onDeleteReminder(existing.id)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(50),
+                                containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
+                                contentColor = colorScheme.onErrorContainer,
+                                border = BorderStroke(1.dp, colorScheme.error.copy(alpha = 0.35f)),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.DeleteOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.action_delete_reminder),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimeUnitStepper(
+    value: Int,
+    unitLabel: String,
+    decrementDescription: String,
+    incrementDescription: String,
+    onDecrement: () -> Unit,
+    onIncrement: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.6f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TactileIconButton(
+                onClick = onDecrement,
+                modifier = Modifier.size(32.dp),
+                shape = CircleShape,
+                containerColor = colorScheme.surfaceContainerHighest,
+                contentColor = colorScheme.onSurface
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Remove,
+                    contentDescription = decrementDescription,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = String.format(Locale.US, "%02d", value),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = colorScheme.onSurface
+                )
+                Text(
+                    text = unitLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant
+                )
+            }
+            TactileIconButton(
+                onClick = onIncrement,
+                modifier = Modifier.size(32.dp),
+                shape = CircleShape,
+                containerColor = colorScheme.surfaceContainerHighest,
+                contentColor = colorScheme.onSurface
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Add,
+                    contentDescription = incrementDescription,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }
