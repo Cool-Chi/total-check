@@ -80,7 +80,14 @@
 
     <!-- Desktop Widget (M8) -->
     <string name="widget_name">TotalCheck</string>
-    <string name="widget_description">Quickly check off items and switch checklists from your home screen.</string>
+    <string name="widget_checklist_grid_name">Checklist Grid</string>
+    <string name="widget_checklist_grid_description">Adaptive multi-size bento grid for instant tool checking</string>
+    <string name="widget_preview_title">Tool Kit</string>
+    <string name="widget_preview_count">3 left</string>
+    <string name="widget_preview_item_1">Digital Multimeter</string>
+    <string name="widget_preview_item_2">ID Card &amp; Keys</string>
+    <string name="widget_preview_item_3">Jumper Wires</string>
+    <string name="widget_preview_item_4">USB-C Cable</string>
     <string name="widget_left_count">%1$d left</string>
     <string name="widget_left_filtered">%1$d left · Unchecked</string>
     <string name="widget_all_set_short">✓ All set</string>

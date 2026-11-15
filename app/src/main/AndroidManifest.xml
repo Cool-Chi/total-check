@@ -21,13 +21,13 @@
         <receiver
             android:name=".data.widget.TotalCheckWidgetReceiver"
             android:exported="true"
-            android:label="@string/widget_name">
+            android:label="@string/widget_checklist_grid_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/total_check_widget_info" />
+                android:resource="@xml/widget_info_checklist_grid" />
         </receiver>
 
         <service

@@ -80,7 +80,14 @@
 
     <!-- Desktop Widget (M8) -->
     <string name="widget_name">隨身清點板</string>
-    <string name="widget_description">在桌面快速勾選清點項目與切換清單組別。</string>
+    <string name="widget_checklist_grid_name">工具清單網格</string>
+    <string name="widget_checklist_grid_description">支援多尺寸自適應與快速原地勾選的隨身工具清點面板</string>
+    <string name="widget_preview_title">隨身工具箱</string>
+    <string name="widget_preview_count">尚缺 3</string>
+    <string name="widget_preview_item_1">數位三用電表</string>
+    <string name="widget_preview_item_2">學生證與鑰匙</string>
+    <string name="widget_preview_item_3">麵包板連接線</string>
+    <string name="widget_preview_item_4">Type-C 傳輸線</string>
     <string name="widget_left_count">尚缺 %1$d</string>
     <string name="widget_left_filtered">尚缺 %1$d · 未帶</string>
     <string name="widget_all_set_short">✓ 全部備齊</string>
