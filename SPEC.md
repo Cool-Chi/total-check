@@ -16,7 +16,7 @@
 - [x] **一鍵重置（Reset All）**：無二次確認彈窗立即歸零當前清單勾選狀態並觸發錯峰波浪動效（`Staggered Bulk Selection`），同時提供底部 `Snackbar` `復原 (Undo)` 機制。
 - [x] **狀態持久化與多語系資源**：Room Database 本地儲存，維持項目原始順序（點擊勾選原地狀態轉場，不隨勾選沉底）、提供「只看未帶」過濾切換，並完整抽離中英雙語字串資源（`values`、`values-b+zh+Hant`、`values-zh`）。
 - [x] **雙軌色彩與主題引擎**：內建專為 HyperOS / 非標準 Monet 系統調校的高對比亮/暗色盤、原生 Material 3 Dynamic Color 切換開關、`ThemeConfig?` 冷啟動零閃爍初始化，以及啟動骨架屏（`TotalCheckSkeletonShimmer`）。
-- [x] **桌面 Widget（M8，Jetpack Glance 四級響應式桌面小工具）**：單一全域 `TotalCheckAppWidget`（`SizeMode.Responsive` 支援 `Micro` 2x1 / `Compact` 2x2・3x1 / `Standard` 3x2・4x2 / `Expanded` 4x3・4x4+ 四級自適應版型），支援原地勾選轉場、`只看未帶` 過濾、兩段式 3 秒防誤觸重置（`↺` → `確認?`）、全部備齊完成徽章、`WidgetSyncManager.notifyDataChanged()` 跨進程即時同步與點擊標題/進度列帶 `EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位主畫面分頁，採用系統日夜模式 `GlanceTheme` 色票。
+- [x] **桌面 Widget（M8+，原生 Direct RemoteViews 四級響應式桌面小工具）**：單一全域 `TotalCheckWidgetReceiver` + `DirectWidgetRenderer`（依據宿主尺寸動態渲染 `Micro` 2x1 / `Compact` 2x2・3x1 / `Standard` 3x2・4x2 / `Expanded` 4x3・4x4+ 四級自適應版型），以 `<CheckBox>` + `180ms` AVD（`● ⇄ ✓`）與 `partiallyUpdateAppWidget` 頂欄局部更新實現零延遲・零列表跳動的原地勾選轉場；支援雙槽位 `<ViewFlipper>` 組別切換淡入縮放、`只看未帶` 過濾、兩段式 5 秒防誤觸重置（`↺` → `確認?`）、全部備齊完成徽章、`WidgetSyncManager` 跨進程即時同步與點擊標題/進度列帶 `EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位主畫面分頁，支援 Android 12+ 系統日夜模式動態色票（`values-v31` / `values-night-v31`）。
 
 ### 擴充功能（M7+ 迭代，底層欄位已預埋）
 - [x] **讀取格式文檔與配置字串快速載入列表（M7）**：內建高容錯雙模式解析引擎（`ChecklistTextParser`：支援極簡單行逗號／頓號／空白／直線分隔字串與多行 Markdown / 表格 / CSV / TSV / JSON 陣列／純文字清單），整合 `LiquidTabBar` 液態分頁切換、AI 提示詞複製卡、剪貼簿貼上與 `.txt`/`.md`/`.csv` 本地文檔讀取，並於匯入前提供即時互動預覽（修改標題、切換待備/已備狀態、剔除單項）與 Sticky Header/Footer 防鍵盤遮擋排版。
@@ -74,7 +74,7 @@ data class CheckItemEntity(
 ### 3.3 主程式與 Widget 解耦機制
 
 * `AppDatabase` 必須採用 Double-Checked Locking Singleton 模式，確保未來主程式與 Widget 跨進程讀寫不發生 Lock 衝突。
-* 在 `ChecklistRepository` 每次完成寫入（新增、勾選、刪除、重置）後，統一呼叫 `WidgetSyncManager.notifyDataChanged(context)` 透過 `TotalCheckAppWidget().updateAll(context.applicationContext)` 即時刷新桌面小工具；由 Widget 點擊標題列／進度區啟動主程式時，透過 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 與 `MainViewModel.selectAndScrollToChecklist()` 精準定位至對應清單。
+* 在 `ChecklistRepository` 每次完成寫入（新增、勾選、刪除、重置）後，統一呼叫 `WidgetSyncManager.notifyDataChanged(context)` 透過 `DirectWidgetRenderer.renderAllWidgets()` 即時刷新桌面小工具；而在桌面 Widget 原地勾選項目（未改變列表結構）時，透過 `WidgetSyncManager.notifyHeaderOnlyChanged(context)` 呼叫 `DirectWidgetRenderer.updateHeaderOnly()` 執行 `AppWidgetManager.partiallyUpdateAppWidget`，保持列表靜止並完整播放 `<CheckBox>` 180ms AVD 動效。由 Widget 點擊標題列／進度區啟動主程式時，透過 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 與 `MainViewModel.selectAndScrollToChecklist()` 精準定位至對應清單。
 
 ---
 
