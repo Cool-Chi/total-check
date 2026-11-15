@@ -94,6 +94,7 @@
     <string name="widget_progress_ratio">已備 %1$d/%2$d</string>
     <string name="widget_prev_checklist">&lt;</string>
     <string name="widget_next_checklist">&gt;</string>
+    <string name="widget_overflow_more">還有 +%1$d 項 · 點擊查看全部</string>
 
     <!-- Skeleton -->
     <string name="skeleton_loading_state">正在載入清單資料</string>

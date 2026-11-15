@@ -98,8 +98,8 @@ object WidgetSyncManager {
     }
 
     /**
-     * Updates only the widget header bar via AppWidgetManager.partiallyUpdateAppWidget,
-     * keeping the ListView and active CheckBox AVD animations completely untouched.
+     * Partially updates only the header bar via AppWidgetManager.partiallyUpdateAppWidget,
+     * leaving tile slots and ViewFlipper untouched.
      */
     fun notifyHeaderOnlyChanged(context: Context) {
         val appContext = context.applicationContext
@@ -117,6 +117,30 @@ object WidgetSyncManager {
     }
 
     /**
+     * Partially updates only the header bar and the single toggled `<CheckBox>` slot
+     * (`widget_tile_k`) via `AppWidgetManager.partiallyUpdateAppWidget`, keeping sibling
+     * tiles and ViewFlipper completely untouched.
+     */
+    fun notifySingleTileChanged(
+        context: Context,
+        itemId: Long,
+        newChecked: Boolean,
+    ) {
+        val appContext = context.applicationContext
+        val warmSnapshot = _snapshotFlow.value
+        if (warmSnapshot != null) {
+            DirectWidgetRenderer.updateSingleTileInPlace(appContext, itemId, newChecked)
+            return
+        }
+        scope.launch {
+            runCatching {
+                ensureInitialized(appContext)
+                DirectWidgetRenderer.updateSingleTileInPlace(appContext, itemId, newChecked)
+            }
+        }
+    }
+
+    /**
      * Synchronous < 3ms hot path called directly inside BroadcastReceiver.onReceive().
      * Returns true if snapshot was already warm in memory and the widget UI was updated
      * immediately on the caller thread; false if a cold DB load is required first.
@@ -127,6 +151,7 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
+        targetChecked: Boolean? = null,
         onSchedulePersist: (suspend (Context) -> Unit) -> Unit,
     ): Boolean {
         val appContext = context.applicationContext
@@ -138,12 +163,13 @@ object WidgetSyncManager {
                 itemId = itemId,
                 checklistId = checklistId,
                 direction = direction,
+                targetChecked = targetChecked,
             )
         } ?: return true // Command is a valid no-op on warm snapshot.
 
         // Render & push RemoteViews immediately before BroadcastReceiver.onReceive() returns.
-        if (step.headerOnlyUpdate) {
-            notifyHeaderOnlyChanged(appContext)
+        if (step.singleTileItemId > 0L) {
+            notifySingleTileChanged(appContext, step.singleTileItemId, step.singleTileNewChecked)
         } else {
             DirectWidgetRenderer.renderAllWidgets(appContext, step.nextSnapshot)
         }
@@ -177,6 +203,7 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
+        targetChecked: Boolean? = null,
     ) {
         val appContext = context.applicationContext
         ensureInitialized(appContext)
@@ -187,6 +214,7 @@ object WidgetSyncManager {
             itemId = itemId,
             checklistId = checklistId,
             direction = direction,
+            targetChecked = targetChecked,
             onSchedulePersist = { persist -> pendingPersist = persist },
         )
         if (didRunFast) {
@@ -221,28 +249,27 @@ object WidgetSyncManager {
         itemId: Long,
         checklistId: Long,
         direction: Int,
+        targetChecked: Boolean? = null,
     ): FastCommandStep? {
         return when (command) {
             TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM -> {
                 if (itemId <= 0L) return null
                 val activeId = current.activeChecklist?.id ?: return null
                 val listItems = current.itemsByChecklist[activeId].orEmpty()
-                var targetChecked: Boolean? = null
+                var resolvedChecked: Boolean? = null
                 val updatedList = listItems.map { item ->
                     if (item.id == itemId) {
-                        val next = !item.isChecked
-                        targetChecked = next
+                        val next = targetChecked ?: !item.isChecked
+                        resolvedChecked = next
                         item.copy(isChecked = next)
                     } else {
                         item
                     }
                 }
-                val finalTargetChecked = targetChecked ?: return null
-                val wasShowingList = listItems.isNotEmpty() &&
-                    (!current.showUncheckedOnly || listItems.any { !it.isChecked })
-                val willShowList = updatedList.isNotEmpty() &&
-                    (!current.showUncheckedOnly || updatedList.any { !it.isChecked })
-                val isInPlaceHeaderOnly = !current.showUncheckedOnly && wasShowingList == willShowList
+                val finalTargetChecked = resolvedChecked ?: return null
+                val isSingleTileInPlace = !current.showUncheckedOnly &&
+                    listItems.isNotEmpty() &&
+                    updatedList.isNotEmpty()
                 clearResetConfirmLocked()
                 val nextMap = current.itemsByChecklist.toMutableMap().apply {
                     put(activeId, updatedList)
@@ -254,7 +281,8 @@ object WidgetSyncManager {
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
-                    headerOnlyUpdate = isInPlaceHeaderOnly,
+                    singleTileItemId = if (isSingleTileInPlace) itemId else -1L,
+                    singleTileNewChecked = finalTargetChecked,
                     persistAction = { ctx ->
                         AppDatabase.getInstance(ctx).checklistDao()
                             .updateItemChecked(itemId = itemId, isChecked = finalTargetChecked)
@@ -451,7 +479,8 @@ object WidgetSyncManager {
 
     private data class FastCommandStep(
         val nextSnapshot: WidgetUiSnapshot,
-        val headerOnlyUpdate: Boolean = false,
+        val singleTileItemId: Long = -1L,
+        val singleTileNewChecked: Boolean = false,
         val persistAction: (suspend (Context) -> Unit)? = null,
         val stage1Generation: Long = 0L,
         val stage1ChecklistId: Long = 0L,

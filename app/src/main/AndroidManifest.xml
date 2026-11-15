@@ -29,11 +29,6 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/total_check_widget_info" />
         </receiver>
-
-        <service
-            android:name=".data.widget.TotalCheckWidgetViewsService"
-            android:exported="false"
-            android:permission="android.permission.BIND_REMOTEVIEWS" />
     </application>
 
 </manifest>
