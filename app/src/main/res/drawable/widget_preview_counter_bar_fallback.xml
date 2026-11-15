@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="220dp"
+    android:height="56dp"
+    android:viewportWidth="220"
+    android:viewportHeight="56">
+
+    <!-- Outer Style C Rounded Surface -->
+    <path
+        android:fillColor="#0E1116"
+        android:pathData="M18,2 L202,2 Q218,2 218,18 L218,38 Q218,54 202,54 L18,54 Q2,54 2,38 L2,18 Q2,2 18,2 Z"
+        android:strokeColor="#27303D"
+        android:strokeWidth="1.5" />
+
+    <!-- Title Bar -->
+    <path
+        android:fillColor="#E2E8F0"
+        android:pathData="M18,23 L76,23 A5,5 0 0,1 76,33 L18,33 A5,5 0 0,1 18,23 Z" />
+
+    <!-- Remaining Count Pill -->
+    <path
+        android:fillColor="#3A2B11"
+        android:pathData="M96,15 L140,15 A13,13 0 0,1 140,41 L96,41 A13,13 0 0,1 96,15 Z" />
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M106,25 L130,25 A3,3 0 0,1 130,31 L106,31 A3,3 0 0,1 106,25 Z" />
+
+    <!-- Switch Buttons (< >) -->
+    <path
+        android:fillColor="#1C222B"
+        android:pathData="M156,15 L168,15 A11,11 0 0,1 168,41 L156,41 A11,11 0 0,1 156,15 Z" />
+    <path
+        android:fillColor="#1C222B"
+        android:pathData="M184,15 L196,15 A11,11 0 0,1 196,41 L184,41 A11,11 0 0,1 184,15 Z" />
+</vector>

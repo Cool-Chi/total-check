@@ -23,11 +23,20 @@ import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
 
 private enum class WidgetSizeTier {
-    MICRO,
     COMPACT,
     STANDARD,
     EXPANDED
 }
+
+private data class CounterFlipSlotViewIds(
+    val openAppId: Int,
+    val titleId: Int,
+    val wideInfoId: Int,
+    val progressActiveId: Int,
+    val progressDoneId: Int,
+    val ratioId: Int,
+    val badgeId: Int,
+)
 
 private data class FlipSlotViewIds(
     val listViewId: Int,
@@ -70,6 +79,26 @@ object DirectWidgetRenderer {
         btnShowAllId = R.id.widget_btn_show_all_1,
     )
 
+    private val COUNTER_SLOT_0_IDS = CounterFlipSlotViewIds(
+        openAppId = R.id.widget_counter_open_app_0,
+        titleId = R.id.widget_counter_title_0,
+        wideInfoId = R.id.widget_counter_wide_info_0,
+        progressActiveId = R.id.widget_counter_progress_active_0,
+        progressDoneId = R.id.widget_counter_progress_done_0,
+        ratioId = R.id.widget_counter_ratio_0,
+        badgeId = R.id.widget_counter_badge_0,
+    )
+
+    private val COUNTER_SLOT_1_IDS = CounterFlipSlotViewIds(
+        openAppId = R.id.widget_counter_open_app_1,
+        titleId = R.id.widget_counter_title_1,
+        wideInfoId = R.id.widget_counter_wide_info_1,
+        progressActiveId = R.id.widget_counter_progress_active_1,
+        progressDoneId = R.id.widget_counter_progress_done_1,
+        ratioId = R.id.widget_counter_ratio_1,
+        badgeId = R.id.widget_counter_badge_1,
+    )
+
     fun renderAll(context: Context) {
         val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
         renderAll(context, snapshot, isContentFlip = false, isFilterFlip = false)
@@ -83,18 +112,29 @@ object DirectWidgetRenderer {
     ) {
         val appContext = context.applicationContext
         val manager = AppWidgetManager.getInstance(appContext)
-        val provider = ComponentName(appContext, TotalCheckWidgetReceiver::class.java)
-        val appWidgetIds = manager.getAppWidgetIds(provider)
-        if (appWidgetIds.isEmpty()) return
 
-        for (appWidgetId in appWidgetIds) {
-            renderSingleWidget(
+        val gridProvider = ComponentName(appContext, TotalCheckWidgetReceiver::class.java)
+        val gridWidgetIds = manager.getAppWidgetIds(gridProvider)
+        for (appWidgetId in gridWidgetIds) {
+            renderSingleGridWidget(
                 context = appContext,
                 manager = manager,
                 appWidgetId = appWidgetId,
                 snapshot = snapshot,
                 isContentFlip = isContentFlip,
                 isFilterFlip = isFilterFlip,
+            )
+        }
+
+        val counterProvider = ComponentName(appContext, TotalCheckCounterWidgetReceiver::class.java)
+        val counterWidgetIds = manager.getAppWidgetIds(counterProvider)
+        for (appWidgetId in counterWidgetIds) {
+            renderSingleCounterWidget(
+                context = appContext,
+                manager = manager,
+                appWidgetId = appWidgetId,
+                snapshot = snapshot,
+                isContentFlip = isContentFlip,
             )
         }
     }
@@ -108,7 +148,7 @@ object DirectWidgetRenderer {
         val appContext = context.applicationContext
         val manager = AppWidgetManager.getInstance(appContext)
         for (appWidgetId in appWidgetIds) {
-            renderSingleWidget(
+            renderSingleGridWidget(
                 context = appContext,
                 manager = manager,
                 appWidgetId = appWidgetId,
@@ -119,12 +159,31 @@ object DirectWidgetRenderer {
         }
     }
 
+    fun renderCounterWidgetsByIds(
+        context: Context,
+        appWidgetIds: IntArray,
+        snapshot: WidgetUiSnapshot
+    ) {
+        if (appWidgetIds.isEmpty()) return
+        val appContext = context.applicationContext
+        val manager = AppWidgetManager.getInstance(appContext)
+        for (appWidgetId in appWidgetIds) {
+            renderSingleCounterWidget(
+                context = appContext,
+                manager = manager,
+                appWidgetId = appWidgetId,
+                snapshot = snapshot,
+                isContentFlip = false,
+            )
+        }
+    }
+
     fun resolveColumnCountForWidget(context: Context, appWidgetId: Int): Int {
         val manager = AppWidgetManager.getInstance(context.applicationContext)
         val options = manager.getAppWidgetOptions(appWidgetId)
         val (widthDp, heightDp) = resolveDimensionsDp(context, options)
         val tier = resolveSizeTier(widthDp, heightDp)
-        return resolveColumnCount(tier, widthDp)
+        return resolveColumnCount(tier)
     }
 
     internal fun buildRowRemoteViews(
@@ -163,13 +222,13 @@ object DirectWidgetRenderer {
         return rowRv
     }
 
-    private fun resolveColumnCount(tier: WidgetSizeTier, widthDp: Float): Int = when (tier) {
+    private fun resolveColumnCount(tier: WidgetSizeTier): Int = when (tier) {
         WidgetSizeTier.COMPACT -> 1
-        WidgetSizeTier.EXPANDED -> if (widthDp >= 340f) 3 else 2
-        else -> 2
+        WidgetSizeTier.STANDARD -> 2
+        WidgetSizeTier.EXPANDED -> 3
     }
 
-    private fun renderSingleWidget(
+    private fun renderSingleGridWidget(
         context: Context,
         manager: AppWidgetManager,
         appWidgetId: Int,
@@ -199,18 +258,6 @@ object DirectWidgetRenderer {
         val checkedCount = totalCount - uncheckedCount
         val hasMultipleChecklists = snapshot.checklists.size > 1
 
-        if (tier == WidgetSizeTier.MICRO) {
-            val microRv = buildMicroRemoteViews(
-                context = context,
-                checklist = activeChecklist,
-                totalCount = totalCount,
-                uncheckedCount = uncheckedCount,
-                hasMultipleChecklists = hasMultipleChecklists
-            )
-            manager.updateAppWidget(appWidgetId, microRv)
-            return
-        }
-
         val visibleItems = if (snapshot.showUncheckedOnly) {
             checklistItems.filter { !it.isChecked }
         } else {
@@ -218,7 +265,7 @@ object DirectWidgetRenderer {
         }
         val showResetButton = tier == WidgetSizeTier.STANDARD || tier == WidgetSizeTier.EXPANDED
         val showExpandedBar = tier == WidgetSizeTier.EXPANDED
-        val columnCount = resolveColumnCount(tier, widthDp)
+        val columnCount = resolveColumnCount(tier)
         val flipSlot = snapshot.checklistFlipSlot and 1
         val activeSlotIds = if (flipSlot == 0) SLOT_0_IDS else SLOT_1_IDS
         val inactiveSlotIds = if (flipSlot == 0) SLOT_1_IDS else SLOT_0_IDS
@@ -256,63 +303,166 @@ object DirectWidgetRenderer {
         }
     }
 
-    private fun buildMicroRemoteViews(
+    private fun renderSingleCounterWidget(
+        context: Context,
+        manager: AppWidgetManager,
+        appWidgetId: Int,
+        snapshot: WidgetUiSnapshot,
+        isContentFlip: Boolean,
+    ) {
+        val activeChecklist = snapshot.activeChecklist
+        if (activeChecklist == null) {
+            val emptyRv = RemoteViews(context.packageName, R.layout.widget_empty).apply {
+                setOnClickPendingIntent(
+                    R.id.widget_empty_root,
+                    buildOpenAppPendingIntent(context, null)
+                )
+            }
+            manager.updateAppWidget(appWidgetId, emptyRv)
+            return
+        }
+
+        val options = manager.getAppWidgetOptions(appWidgetId)
+        val (widthDp, _) = resolveDimensionsDp(context, options)
+        val isWide = widthDp >= 220f
+
+        val checklistItems = snapshot.activeChecklistItems
+        val totalCount = checklistItems.size
+        val uncheckedCount = checklistItems.count { !it.isChecked }
+        val checkedCount = totalCount - uncheckedCount
+        val hasMultipleChecklists = snapshot.checklists.size > 1
+        val flipSlot = snapshot.checklistFlipSlot and 1
+        val activeSlotIds = if (flipSlot == 0) COUNTER_SLOT_0_IDS else COUNTER_SLOT_1_IDS
+        val inactiveSlotIds = if (flipSlot == 0) COUNTER_SLOT_1_IDS else COUNTER_SLOT_0_IDS
+
+        val counterRv = buildCounterBarRemoteViews(
+            context = context,
+            checklist = activeChecklist,
+            totalCount = totalCount,
+            checkedCount = checkedCount,
+            uncheckedCount = uncheckedCount,
+            isWide = isWide,
+            isResetConfirmActive = snapshot.isResetConfirmActive,
+            hasMultipleChecklists = hasMultipleChecklists,
+            flipSlot = flipSlot,
+            activeSlotIds = activeSlotIds,
+            inactiveSlotIds = inactiveSlotIds,
+            isContentFlip = isContentFlip,
+        )
+        manager.updateAppWidget(appWidgetId, counterRv)
+    }
+
+    private fun buildCounterBarRemoteViews(
         context: Context,
         checklist: ChecklistEntity,
         totalCount: Int,
+        checkedCount: Int,
         uncheckedCount: Int,
-        hasMultipleChecklists: Boolean
+        isWide: Boolean,
+        isResetConfirmActive: Boolean,
+        hasMultipleChecklists: Boolean,
+        flipSlot: Int,
+        activeSlotIds: CounterFlipSlotViewIds,
+        inactiveSlotIds: CounterFlipSlotViewIds,
+        isContentFlip: Boolean,
     ): RemoteViews {
-        return RemoteViews(context.packageName, R.layout.widget_micro).also { rv ->
-            bindMicroHeaderViews(
+        return RemoteViews(context.packageName, R.layout.widget_counter_bar).also { rv ->
+            bindCounterSlot(
                 context = context,
                 rv = rv,
+                slotIds = activeSlotIds,
                 checklist = checklist,
                 totalCount = totalCount,
+                checkedCount = checkedCount,
                 uncheckedCount = uncheckedCount,
-                hasMultipleChecklists = hasMultipleChecklists,
+                isWide = isWide,
+            )
+
+            if (isContentFlip) {
+                rv.setDisplayedChild(R.id.widget_counter_flipper, flipSlot)
+            } else {
+                bindCounterSlot(
+                    context = context,
+                    rv = rv,
+                    slotIds = inactiveSlotIds,
+                    checklist = checklist,
+                    totalCount = totalCount,
+                    checkedCount = checkedCount,
+                    uncheckedCount = uncheckedCount,
+                    isWide = isWide,
+                )
+            }
+
+            bindResetButtons(
+                context = context,
+                rv = rv,
+                resetButtonId = R.id.widget_counter_btn_reset,
+                confirmButtonId = R.id.widget_counter_btn_reset_confirm,
+                checklistId = checklist.id,
+                visible = isWide && totalCount > 0,
+                isResetConfirmActive = isResetConfirmActive,
+            )
+
+            bindSwitchButtons(
+                context = context,
+                rv = rv,
+                checklistId = checklist.id,
+                enabled = hasMultipleChecklists,
+                prevButtonId = R.id.widget_counter_btn_prev,
+                nextButtonId = R.id.widget_counter_btn_next,
             )
         }
     }
 
-    private fun bindMicroHeaderViews(
+    private fun bindCounterSlot(
         context: Context,
         rv: RemoteViews,
+        slotIds: CounterFlipSlotViewIds,
         checklist: ChecklistEntity,
         totalCount: Int,
+        checkedCount: Int,
         uncheckedCount: Int,
-        hasMultipleChecklists: Boolean
+        isWide: Boolean,
     ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
 
-        rv.setTextViewText(R.id.widget_micro_title, checklist.name)
-        rv.setOnClickPendingIntent(R.id.widget_micro_open_app, openAppIntent)
+        rv.setTextViewText(slotIds.titleId, checklist.name)
+        rv.setOnClickPendingIntent(slotIds.openAppId, openAppIntent)
 
         val badgeText = if (isAllDone) {
             context.getString(R.string.widget_all_set_short)
         } else {
             context.getString(R.string.widget_left_count, uncheckedCount)
         }
-        rv.setTextViewText(R.id.widget_micro_badge, badgeText)
+        rv.setTextViewText(slotIds.badgeId, badgeText)
         rv.setInt(
-            R.id.widget_micro_badge,
+            slotIds.badgeId,
             "setBackgroundResource",
             if (isAllDone) R.drawable.widget_pill_primary_container else R.drawable.widget_pill_tertiary_container
         )
         applyTextColor(
             context = context,
             rv = rv,
-            viewId = R.id.widget_micro_badge,
+            viewId = slotIds.badgeId,
             colorRes = if (isAllDone) R.color.widget_on_primary_container else R.color.widget_on_tertiary_container
         )
 
-        bindSwitchButtons(
-            context = context,
-            rv = rv,
-            checklistId = checklist.id,
-            enabled = hasMultipleChecklists
-        )
+        if (isWide && totalCount > 0) {
+            rv.setViewVisibility(slotIds.wideInfoId, View.VISIBLE)
+            bindProgressViews(
+                context = context,
+                rv = rv,
+                activeProgressId = slotIds.progressActiveId,
+                doneProgressId = slotIds.progressDoneId,
+                ratioViewId = slotIds.ratioId,
+                checkedCount = checkedCount,
+                totalCount = totalCount,
+                isAllDone = isAllDone,
+            )
+        } else {
+            rv.setViewVisibility(slotIds.wideInfoId, View.GONE)
+        }
     }
 
     private fun bindFullHeaderViews(
@@ -368,26 +518,15 @@ object DirectWidgetRenderer {
             rv.setDisplayedChild(R.id.widget_filter_pill_flipper, if (showUncheckedOnly) 1 else 0)
         }
 
-        if (showResetButton && totalCount > 0) {
-            val resetIntent = buildBroadcastPendingIntent(
-                context = context,
-                requestCode = REQ_RESET_STAGE,
-                command = TotalCheckWidgetReceiver.CMD_RESET_STAGE,
-                checklistId = checklist.id
-            )
-            if (isResetConfirmActive) {
-                rv.setViewVisibility(R.id.widget_btn_reset, View.GONE)
-                rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.VISIBLE)
-                rv.setOnClickPendingIntent(R.id.widget_btn_reset_confirm, resetIntent)
-            } else {
-                rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.GONE)
-                rv.setViewVisibility(R.id.widget_btn_reset, View.VISIBLE)
-                rv.setOnClickPendingIntent(R.id.widget_btn_reset, resetIntent)
-            }
-        } else {
-            rv.setViewVisibility(R.id.widget_btn_reset, View.GONE)
-            rv.setViewVisibility(R.id.widget_btn_reset_confirm, View.GONE)
-        }
+        bindResetButtons(
+            context = context,
+            rv = rv,
+            resetButtonId = R.id.widget_btn_reset,
+            confirmButtonId = R.id.widget_btn_reset_confirm,
+            checklistId = checklist.id,
+            visible = showResetButton && totalCount > 0,
+            isResetConfirmActive = isResetConfirmActive,
+        )
 
         bindSwitchButtons(
             context = context,
@@ -399,23 +538,15 @@ object DirectWidgetRenderer {
         // Tier 4 Secondary Progress & Quick Add Bar
         if (showExpandedBar) {
             rv.setViewVisibility(R.id.widget_expanded_bar, View.VISIBLE)
-            val progressPct = if (totalCount > 0) {
-                ((checkedCount * 100f) / totalCount.toFloat()).toInt().coerceIn(0, 100)
-            } else {
-                0
-            }
-            if (isAllDone) {
-                rv.setViewVisibility(R.id.widget_progress_active, View.GONE)
-                rv.setViewVisibility(R.id.widget_progress_done, View.VISIBLE)
-                rv.setProgressBar(R.id.widget_progress_done, 100, progressPct, false)
-            } else {
-                rv.setViewVisibility(R.id.widget_progress_done, View.GONE)
-                rv.setViewVisibility(R.id.widget_progress_active, View.VISIBLE)
-                rv.setProgressBar(R.id.widget_progress_active, 100, progressPct, false)
-            }
-            rv.setTextViewText(
-                R.id.widget_progress_ratio,
-                context.getString(R.string.widget_progress_ratio, checkedCount, totalCount)
+            bindProgressViews(
+                context = context,
+                rv = rv,
+                activeProgressId = R.id.widget_progress_active,
+                doneProgressId = R.id.widget_progress_done,
+                ratioViewId = R.id.widget_progress_ratio,
+                checkedCount = checkedCount,
+                totalCount = totalCount,
+                isAllDone = isAllDone,
             )
             rv.setOnClickPendingIntent(R.id.widget_progress_pill, openAppIntent)
             rv.setOnClickPendingIntent(R.id.widget_btn_add_short, openAppIntent)
@@ -679,22 +810,85 @@ object DirectWidgetRenderer {
         }
     }
 
+    private fun bindProgressViews(
+        context: Context,
+        rv: RemoteViews,
+        activeProgressId: Int,
+        doneProgressId: Int,
+        ratioViewId: Int,
+        checkedCount: Int,
+        totalCount: Int,
+        isAllDone: Boolean,
+    ) {
+        val progressPct = if (totalCount > 0) {
+            ((checkedCount * 100f) / totalCount.toFloat()).toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        if (isAllDone) {
+            rv.setViewVisibility(activeProgressId, View.GONE)
+            rv.setViewVisibility(doneProgressId, View.VISIBLE)
+            rv.setProgressBar(doneProgressId, 100, progressPct, false)
+        } else {
+            rv.setViewVisibility(doneProgressId, View.GONE)
+            rv.setViewVisibility(activeProgressId, View.VISIBLE)
+            rv.setProgressBar(activeProgressId, 100, progressPct, false)
+        }
+        rv.setTextViewText(
+            ratioViewId,
+            context.getString(R.string.widget_progress_ratio, checkedCount, totalCount)
+        )
+    }
+
+    private fun bindResetButtons(
+        context: Context,
+        rv: RemoteViews,
+        resetButtonId: Int,
+        confirmButtonId: Int,
+        checklistId: Long,
+        visible: Boolean,
+        isResetConfirmActive: Boolean,
+    ) {
+        if (!visible) {
+            rv.setViewVisibility(resetButtonId, View.GONE)
+            rv.setViewVisibility(confirmButtonId, View.GONE)
+            return
+        }
+        val resetIntent = buildBroadcastPendingIntent(
+            context = context,
+            requestCode = REQ_RESET_STAGE,
+            command = TotalCheckWidgetReceiver.CMD_RESET_STAGE,
+            checklistId = checklistId
+        )
+        if (isResetConfirmActive) {
+            rv.setViewVisibility(resetButtonId, View.GONE)
+            rv.setViewVisibility(confirmButtonId, View.VISIBLE)
+            rv.setOnClickPendingIntent(confirmButtonId, resetIntent)
+        } else {
+            rv.setViewVisibility(confirmButtonId, View.GONE)
+            rv.setViewVisibility(resetButtonId, View.VISIBLE)
+            rv.setOnClickPendingIntent(resetButtonId, resetIntent)
+        }
+    }
+
     private fun bindSwitchButtons(
         context: Context,
         rv: RemoteViews,
         checklistId: Long,
-        enabled: Boolean
+        enabled: Boolean,
+        prevButtonId: Int = R.id.widget_btn_prev,
+        nextButtonId: Int = R.id.widget_btn_next,
     ) {
         val textColorRes = if (enabled) {
             R.color.widget_on_surface
         } else {
             R.color.widget_on_surface_variant
         }
-        applyTextColor(context, rv, R.id.widget_btn_prev, textColorRes)
-        applyTextColor(context, rv, R.id.widget_btn_next, textColorRes)
+        applyTextColor(context, rv, prevButtonId, textColorRes)
+        applyTextColor(context, rv, nextButtonId, textColorRes)
 
         rv.setOnClickPendingIntent(
-            R.id.widget_btn_prev,
+            prevButtonId,
             buildBroadcastPendingIntent(
                 context = context,
                 requestCode = REQ_PREV_CHECKLIST,
@@ -704,7 +898,7 @@ object DirectWidgetRenderer {
             )
         )
         rv.setOnClickPendingIntent(
-            R.id.widget_btn_next,
+            nextButtonId,
             buildBroadcastPendingIntent(
                 context = context,
                 requestCode = REQ_NEXT_CHECKLIST,
@@ -814,8 +1008,7 @@ object DirectWidgetRenderer {
 
     private fun resolveSizeTier(widthDp: Float, heightDp: Float): WidgetSizeTier {
         return when {
-            widthDp < 180f && heightDp < 110f -> WidgetSizeTier.MICRO
-            widthDp < 240f || heightDp < 140f -> WidgetSizeTier.COMPACT
+            widthDp < 240f -> WidgetSizeTier.COMPACT
             widthDp >= 320f && heightDp >= 220f -> WidgetSizeTier.EXPANDED
             else -> WidgetSizeTier.STANDARD
         }

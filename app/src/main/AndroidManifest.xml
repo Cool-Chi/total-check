@@ -30,6 +30,18 @@
                 android:resource="@xml/widget_info_checklist_grid" />
         </receiver>
 
+        <receiver
+            android:name=".data.widget.TotalCheckCounterWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_counter_bar_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_counter_bar" />
+        </receiver>
+
         <service
             android:name=".data.widget.TotalCheckWidgetViewsService"
             android:exported="false"
