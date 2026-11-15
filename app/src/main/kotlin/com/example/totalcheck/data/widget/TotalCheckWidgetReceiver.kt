@@ -15,6 +15,10 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_WIDGET_COMMAND) {
             val appContext = context.applicationContext
+            val appWidgetId = intent.getIntExtra(
+                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                AppWidgetManager.INVALID_APPWIDGET_ID
+            )
             val command = intent.getStringExtra(EXTRA_COMMAND) ?: return
             val itemId = intent.getLongExtra(EXTRA_ITEM_ID, -1L)
             val checklistId = intent.getLongExtra(EXTRA_CHECKLIST_ID, -1L)
@@ -22,6 +26,7 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
 
             val handledFast = WidgetSyncManager.tryHandleFastCommand(
                 context = appContext,
+                appWidgetId = appWidgetId,
                 command = command,
                 itemId = itemId,
                 checklistId = checklistId,
@@ -42,6 +47,7 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
                     try {
                         WidgetSyncManager.handleColdCommand(
                             context = appContext,
+                            appWidgetId = appWidgetId,
                             command = command,
                             itemId = itemId,
                             checklistId = checklistId,
@@ -56,6 +62,11 @@ class TotalCheckWidgetReceiver : AppWidgetProvider() {
         }
 
         super.onReceive(context, intent)
+    }
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        WidgetSyncManager.onWidgetsDeleted(context.applicationContext, appWidgetIds)
+        super.onDeleted(context, appWidgetIds)
     }
 
     override fun onUpdate(

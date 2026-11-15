@@ -1,6 +1,8 @@
 package com.example.totalcheck.data.widget
 
+import android.appwidget.AppWidgetManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.os.SystemClock
 import com.example.totalcheck.data.local.AppDatabase
@@ -17,24 +19,34 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class WidgetUiSnapshot(
-    val checklists: List<ChecklistEntity>,
-    val activeChecklist: ChecklistEntity?,
-    val activeChecklistIndex: Int,
-    val itemsByChecklist: Map<Long, List<CheckItemEntity>>,
-    val showUncheckedOnly: Boolean,
-    val isResetConfirmActive: Boolean,
+data class WidgetInstanceState(
+    val selectedChecklistId: Long? = null,
+    val showUncheckedOnly: Boolean = false,
+    val isResetConfirmActive: Boolean = false,
     val checklistFlipSlot: Int = 0,
     val lastToggledItemId: Long? = null,
+)
+
+data class WidgetUiSnapshot(
+    val checklists: List<ChecklistEntity>,
+    val itemsByChecklist: Map<Long, List<CheckItemEntity>>,
+    val widgetStates: Map<Int, WidgetInstanceState> = emptyMap(),
 ) {
-    val activeChecklistItems: List<CheckItemEntity>
-        get() = activeChecklist?.let { itemsByChecklist[it.id] }.orEmpty()
+    fun stateForWidget(appWidgetId: Int): WidgetInstanceState =
+        widgetStates[appWidgetId] ?: WidgetInstanceState()
+
+    fun resolveActiveChecklist(appWidgetId: Int): ChecklistEntity? {
+        val preferredId = widgetStates[appWidgetId]?.selectedChecklistId
+        return checklists.firstOrNull { it.id == preferredId } ?: checklists.firstOrNull()
+    }
+
+    fun itemsForChecklist(checklistId: Long): List<CheckItemEntity> =
+        itemsByChecklist[checklistId].orEmpty()
 }
 
 object WidgetSyncManager {
@@ -50,11 +62,23 @@ object WidgetSyncManager {
     private val _snapshotFlow = MutableStateFlow<WidgetUiSnapshot?>(null)
     val snapshotFlow: StateFlow<WidgetUiSnapshot?> = _snapshotFlow.asStateFlow()
 
-    private var resetConfirmChecklistId: Long? = null
-    private var resetConfirmDeadlineElapsed: Long = 0L
-    private var resetGeneration: Long = 0L
-    private var toggleGeneration: Long = 0L
-    private var resetRevertJob: Job? = null
+    private val resetConfirmChecklistByWidget = mutableMapOf<Int, Long>()
+    private val resetConfirmDeadlineByWidget = mutableMapOf<Int, Long>()
+    private val resetGenerationByWidget = mutableMapOf<Int, Long>()
+    private val resetRevertJobByWidget = mutableMapOf<Int, Job>()
+    private val toggleGenerationByWidget = mutableMapOf<Int, Long>()
+
+    fun getAllActiveWidgetIds(context: Context): IntArray {
+        val appContext = context.applicationContext
+        val manager = AppWidgetManager.getInstance(appContext)
+        val gridIds = manager.getAppWidgetIds(
+            ComponentName(appContext, TotalCheckWidgetReceiver::class.java)
+        )
+        val counterIds = manager.getAppWidgetIds(
+            ComponentName(appContext, TotalCheckCounterWidgetReceiver::class.java)
+        )
+        return gridIds + counterIds
+    }
 
     suspend fun ensureInitialized(context: Context): WidgetUiSnapshot {
         _snapshotFlow.value?.let { return it }
@@ -78,43 +102,57 @@ object WidgetSyncManager {
                     seedIfEmpty = false,
                     preserveResetState = true,
                 )
-                var isContentFlip = false
-                var isFilterFlip = false
                 val finalSnapshot = synchronized(snapshotLock) {
                     val previous = _snapshotFlow.value
-                    val activeId = refreshed.activeChecklist?.id
-                    val stillConfirming = activeId != null &&
-                        resetConfirmChecklistId == activeId &&
-                        SystemClock.elapsedRealtime() < resetConfirmDeadlineElapsed &&
-                        (previous?.isResetConfirmActive == true)
-                    if (!stillConfirming) {
-                        clearResetConfirmLocked()
+                    val now = SystemClock.elapsedRealtime()
+                    val mergedStates = refreshed.widgetStates.mapValues { (widgetId, state) ->
+                        val prevState = previous?.stateForWidget(widgetId)
+                        val activeId = refreshed.resolveActiveChecklist(widgetId)?.id
+                        val stillConfirming = activeId != null &&
+                            resetConfirmChecklistByWidget[widgetId] == activeId &&
+                            now < (resetConfirmDeadlineByWidget[widgetId] ?: 0L) &&
+                            (prevState?.isResetConfirmActive == true)
+                        if (!stillConfirming) {
+                            clearResetConfirmLocked(widgetId)
+                        }
+                        state.copy(
+                            isResetConfirmActive = stillConfirming,
+                            checklistFlipSlot = prevState?.checklistFlipSlot ?: 0,
+                        )
                     }
-                    val checklistChanged = previous?.activeChecklist?.id != null &&
-                        activeId != null &&
-                        previous.activeChecklist.id != activeId
-                    val filterChanged = previous != null &&
-                        previous.showUncheckedOnly != refreshed.showUncheckedOnly
-                    isContentFlip = checklistChanged || filterChanged
-                    isFilterFlip = filterChanged
-                    val nextFlipSlot = if (isContentFlip) {
-                        1 - ((previous?.checklistFlipSlot ?: 0) and 1)
-                    } else {
-                        previous?.checklistFlipSlot ?: 0
-                    }
-                    refreshed.copy(
-                        isResetConfirmActive = stillConfirming,
-                        checklistFlipSlot = nextFlipSlot,
-                    ).also {
+                    refreshed.copy(widgetStates = mergedStates).also {
                         _snapshotFlow.value = it
                     }
                 }
                 DirectWidgetRenderer.renderAll(
                     context = appContext,
                     snapshot = finalSnapshot,
-                    isContentFlip = isContentFlip,
-                    isFilterFlip = isFilterFlip,
+                    isContentFlip = false,
+                    isFilterFlip = false,
                 )
+            }
+        }
+    }
+
+    fun onWidgetsDeleted(context: Context, appWidgetIds: IntArray) {
+        if (appWidgetIds.isEmpty()) return
+        val appContext = context.applicationContext
+        synchronized(snapshotLock) {
+            for (id in appWidgetIds) {
+                clearResetConfirmLocked(id)
+                toggleGenerationByWidget.remove(id)
+            }
+            val current = _snapshotFlow.value
+            if (current != null) {
+                val nextMap = current.widgetStates.toMutableMap().apply {
+                    for (id in appWidgetIds) remove(id)
+                }
+                _snapshotFlow.value = current.copy(widgetStates = nextMap)
+            }
+        }
+        scope.launch {
+            runCatching {
+                UserPreferencesRepository(appContext).clearWidgetPreferences(appWidgetIds)
             }
         }
     }
@@ -125,17 +163,20 @@ object WidgetSyncManager {
      */
     fun tryHandleFastCommand(
         context: Context,
+        appWidgetId: Int,
         command: String,
         itemId: Long,
         checklistId: Long,
         direction: Int,
         onScheduleAsync: (suspend (Context) -> Unit) -> Unit,
     ): Boolean {
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return true
         val appContext = context.applicationContext
         val step = synchronized(snapshotLock) {
             val current = _snapshotFlow.value ?: return false
             computeCommandStepLocked(
                 current = current,
+                appWidgetId = appWidgetId,
                 command = command,
                 itemId = itemId,
                 checklistId = checklistId,
@@ -157,7 +198,11 @@ object WidgetSyncManager {
                 }
                 delay(step.delayForRippleMs)
                 val latestSnapshot = synchronized(snapshotLock) {
-                    if (toggleGeneration == expectedToggleGen) _snapshotFlow.value else null
+                    if (toggleGenerationByWidget[appWidgetId] == expectedToggleGen) {
+                        _snapshotFlow.value
+                    } else {
+                        null
+                    }
                 }
                 if (latestSnapshot != null) {
                     DirectWidgetRenderer.renderAll(
@@ -170,13 +215,25 @@ object WidgetSyncManager {
                 persistJob?.join()
             }
         } else {
-            // Render & push RemoteViews immediately before BroadcastReceiver.onReceive() returns.
-            DirectWidgetRenderer.renderAll(
-                context = appContext,
-                snapshot = step.nextSnapshot,
-                isContentFlip = step.isContentFlip,
-                isFilterFlip = step.isFilterFlip,
-            )
+            val targetId = step.targetAppWidgetId
+            if (targetId != null) {
+                // Pure panel control event: update ONLY the interacted widget instance.
+                DirectWidgetRenderer.renderSingleWidgetById(
+                    context = appContext,
+                    appWidgetId = targetId,
+                    snapshot = step.nextSnapshot,
+                    isContentFlip = step.isContentFlip,
+                    isFilterFlip = step.isFilterFlip,
+                )
+            } else {
+                // Underlying data mutation event: sync all widgets on the home screen.
+                DirectWidgetRenderer.renderAll(
+                    context = appContext,
+                    snapshot = step.nextSnapshot,
+                    isContentFlip = false,
+                    isFilterFlip = false,
+                )
+            }
             step.persistAction?.let { persist ->
                 onScheduleAsync { ctx ->
                     dbWriteMutex.withLock {
@@ -188,16 +245,16 @@ object WidgetSyncManager {
 
         if (step.stage1Generation != 0L) {
             synchronized(snapshotLock) {
-                if (resetGeneration == step.stage1Generation &&
-                    resetConfirmChecklistId == step.stage1ChecklistId
+                if (resetGenerationByWidget[appWidgetId] == step.stage1Generation &&
+                    resetConfirmChecklistByWidget[appWidgetId] == step.stage1ChecklistId
                 ) {
-                    resetConfirmDeadlineElapsed =
+                    resetConfirmDeadlineByWidget[appWidgetId] =
                         SystemClock.elapsedRealtime() + RESET_CONFIRM_WINDOW_MS
-                    resetRevertJob?.cancel()
+                    resetRevertJobByWidget[appWidgetId]?.cancel()
                     val expectedGen = step.stage1Generation
-                    resetRevertJob = scope.launch {
+                    resetRevertJobByWidget[appWidgetId] = scope.launch {
                         delay(RESET_CONFIRM_REVERT_DELAY_MS)
-                        revertResetConfirmIfMatching(appContext, expectedGen)
+                        revertResetConfirmIfMatching(appContext, appWidgetId, expectedGen)
                     }
                 }
             }
@@ -208,6 +265,7 @@ object WidgetSyncManager {
 
     suspend fun handleColdCommand(
         context: Context,
+        appWidgetId: Int,
         command: String,
         itemId: Long,
         checklistId: Long,
@@ -218,6 +276,7 @@ object WidgetSyncManager {
         var pendingAsync: (suspend (Context) -> Unit)? = null
         val didRunFast = tryHandleFastCommand(
             context = appContext,
+            appWidgetId = appWidgetId,
             command = command,
             itemId = itemId,
             checklistId = checklistId,
@@ -246,15 +305,19 @@ object WidgetSyncManager {
 
     private fun computeCommandStepLocked(
         current: WidgetUiSnapshot,
+        appWidgetId: Int,
         command: String,
         itemId: Long,
         checklistId: Long,
         direction: Int,
     ): FastCommandStep? {
+        val widgetState = current.stateForWidget(appWidgetId)
+        val activeChecklist = current.resolveActiveChecklist(appWidgetId)
+
         return when (command) {
             TotalCheckWidgetReceiver.CMD_TOGGLE_ITEM -> {
                 if (itemId <= 0L) return null
-                val activeId = current.activeChecklist?.id ?: return null
+                val activeId = activeChecklist?.id ?: return null
                 val listItems = current.itemsByChecklist[activeId].orEmpty()
                 var resolvedChecked: Boolean? = null
                 val updatedList = listItems.map { item ->
@@ -267,21 +330,30 @@ object WidgetSyncManager {
                     }
                 }
                 val finalChecked = resolvedChecked ?: return null
-                clearResetConfirmLocked()
-                toggleGeneration++
-                val nextMap = current.itemsByChecklist.toMutableMap().apply {
+                clearResetConfirmLocked(appWidgetId)
+                val nextToggleGen = (toggleGenerationByWidget[appWidgetId] ?: 0L) + 1L
+                toggleGenerationByWidget[appWidgetId] = nextToggleGen
+                val nextItemsMap = current.itemsByChecklist.toMutableMap().apply {
                     put(activeId, updatedList)
                 }
+                val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                    put(
+                        appWidgetId,
+                        widgetState.copy(
+                            isResetConfirmActive = false,
+                            lastToggledItemId = itemId,
+                        )
+                    )
+                }
                 val nextSnapshot = current.copy(
-                    itemsByChecklist = nextMap,
-                    isResetConfirmActive = false,
-                    lastToggledItemId = itemId,
+                    itemsByChecklist = nextItemsMap,
+                    widgetStates = nextStatesMap,
                 )
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
                     delayForRippleMs = TOGGLE_RIPPLE_DELAY_MS,
-                    toggleGeneration = toggleGeneration,
+                    toggleGeneration = nextToggleGen,
                     persistAction = { ctx ->
                         AppDatabase.getInstance(ctx).checklistDao()
                             .updateItemChecked(itemId = itemId, isChecked = finalChecked)
@@ -290,47 +362,63 @@ object WidgetSyncManager {
             }
 
             TotalCheckWidgetReceiver.CMD_TOGGLE_FILTER -> {
-                val nextFilter = !current.showUncheckedOnly
-                clearResetConfirmLocked()
-                val nextFlipSlot = 1 - (current.checklistFlipSlot and 1)
-                val nextSnapshot = current.copy(
-                    showUncheckedOnly = nextFilter,
-                    isResetConfirmActive = false,
-                    checklistFlipSlot = nextFlipSlot,
-                    lastToggledItemId = null,
-                )
+                val nextFilter = !widgetState.showUncheckedOnly
+                clearResetConfirmLocked(appWidgetId)
+                val nextFlipSlot = 1 - (widgetState.checklistFlipSlot and 1)
+                val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                    put(
+                        appWidgetId,
+                        widgetState.copy(
+                            showUncheckedOnly = nextFilter,
+                            isResetConfirmActive = false,
+                            checklistFlipSlot = nextFlipSlot,
+                            lastToggledItemId = null,
+                        )
+                    )
+                }
+                val nextSnapshot = current.copy(widgetStates = nextStatesMap)
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
+                    targetAppWidgetId = appWidgetId,
                     isContentFlip = true,
                     isFilterFlip = true,
                     persistAction = { ctx ->
-                        UserPreferencesRepository(ctx).setWidgetShowUncheckedOnly(nextFilter)
+                        UserPreferencesRepository(ctx)
+                            .setWidgetShowUncheckedOnly(appWidgetId, nextFilter)
                     },
                 )
             }
 
             TotalCheckWidgetReceiver.CMD_SHOW_ALL -> {
-                clearResetConfirmLocked()
-                val didChangeFilter = current.showUncheckedOnly
+                clearResetConfirmLocked(appWidgetId)
+                val didChangeFilter = widgetState.showUncheckedOnly
                 val nextFlipSlot = if (didChangeFilter) {
-                    1 - (current.checklistFlipSlot and 1)
+                    1 - (widgetState.checklistFlipSlot and 1)
                 } else {
-                    current.checklistFlipSlot and 1
+                    widgetState.checklistFlipSlot and 1
                 }
-                val nextSnapshot = current.copy(
-                    showUncheckedOnly = false,
-                    isResetConfirmActive = false,
-                    checklistFlipSlot = nextFlipSlot,
-                    lastToggledItemId = null,
-                )
+                val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                    put(
+                        appWidgetId,
+                        widgetState.copy(
+                            showUncheckedOnly = false,
+                            isResetConfirmActive = false,
+                            checklistFlipSlot = nextFlipSlot,
+                            lastToggledItemId = null,
+                        )
+                    )
+                }
+                val nextSnapshot = current.copy(widgetStates = nextStatesMap)
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
+                    targetAppWidgetId = appWidgetId,
                     isContentFlip = didChangeFilter,
                     isFilterFlip = didChangeFilter,
                     persistAction = { ctx ->
-                        UserPreferencesRepository(ctx).setWidgetShowUncheckedOnly(false)
+                        UserPreferencesRepository(ctx)
+                            .setWidgetShowUncheckedOnly(appWidgetId, false)
                     },
                 )
             }
@@ -338,47 +426,53 @@ object WidgetSyncManager {
             TotalCheckWidgetReceiver.CMD_SWITCH_CHECKLIST -> {
                 val checklists = current.checklists
                 if (checklists.size <= 1) return null
-                val referenceId = checklistId.takeIf { it > 0L } ?: current.activeChecklist?.id
+                val referenceId = checklistId.takeIf { it > 0L } ?: activeChecklist?.id
                 val currentIdx = checklists.indexOfFirst { it.id == referenceId }.let {
                     if (it < 0) 0 else it
                 }
                 val nextIdx = Math.floorMod(currentIdx + direction, checklists.size)
                 val targetChecklist = checklists[nextIdx]
-                val didSwitch = targetChecklist.id != current.activeChecklist?.id
-                clearResetConfirmLocked()
+                val didSwitch = targetChecklist.id != activeChecklist?.id
+                clearResetConfirmLocked(appWidgetId)
                 val nextFlipSlot = if (didSwitch) {
-                    1 - (current.checklistFlipSlot and 1)
+                    1 - (widgetState.checklistFlipSlot and 1)
                 } else {
-                    current.checklistFlipSlot and 1
+                    widgetState.checklistFlipSlot and 1
                 }
-                val nextSnapshot = current.copy(
-                    activeChecklist = targetChecklist,
-                    activeChecklistIndex = nextIdx,
-                    isResetConfirmActive = false,
-                    checklistFlipSlot = nextFlipSlot,
-                    lastToggledItemId = null,
-                )
+                val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                    put(
+                        appWidgetId,
+                        widgetState.copy(
+                            selectedChecklistId = targetChecklist.id,
+                            isResetConfirmActive = false,
+                            checklistFlipSlot = nextFlipSlot,
+                            lastToggledItemId = null,
+                        )
+                    )
+                }
+                val nextSnapshot = current.copy(widgetStates = nextStatesMap)
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
+                    targetAppWidgetId = appWidgetId,
                     isContentFlip = didSwitch,
                     persistAction = { ctx ->
                         UserPreferencesRepository(ctx)
-                            .setWidgetSelectedChecklistId(targetChecklist.id)
+                            .setWidgetSelectedChecklistId(appWidgetId, targetChecklist.id)
                     },
                 )
             }
 
             TotalCheckWidgetReceiver.CMD_RESET_STAGE -> {
-                val targetId = checklistId.takeIf { it > 0L } ?: current.activeChecklist?.id ?: return null
+                val targetId = checklistId.takeIf { it > 0L } ?: activeChecklist?.id ?: return null
                 val nowElapsed = SystemClock.elapsedRealtime()
-                val isConfirming = resetConfirmChecklistId == targetId &&
-                    nowElapsed < resetConfirmDeadlineElapsed &&
-                    current.isResetConfirmActive
+                val isConfirming = resetConfirmChecklistByWidget[appWidgetId] == targetId &&
+                    nowElapsed < (resetConfirmDeadlineByWidget[appWidgetId] ?: 0L) &&
+                    widgetState.isResetConfirmActive
 
                 if (isConfirming) {
-                    clearResetConfirmLocked()
-                    val nextSnapshot = withResetChecklist(current, targetId)
+                    clearResetConfirmLocked(appWidgetId)
+                    val nextSnapshot = withResetChecklist(current, appWidgetId, targetId)
                     _snapshotFlow.value = nextSnapshot
                     FastCommandStep(
                         nextSnapshot = nextSnapshot,
@@ -388,14 +482,18 @@ object WidgetSyncManager {
                         },
                     )
                 } else {
-                    clearResetConfirmLocked()
-                    val gen = resetGeneration
-                    resetConfirmChecklistId = targetId
-                    resetConfirmDeadlineElapsed = nowElapsed + RESET_CONFIRM_WINDOW_MS
-                    val nextSnapshot = current.copy(isResetConfirmActive = true)
+                    clearResetConfirmLocked(appWidgetId)
+                    val gen = resetGenerationByWidget[appWidgetId] ?: 1L
+                    resetConfirmChecklistByWidget[appWidgetId] = targetId
+                    resetConfirmDeadlineByWidget[appWidgetId] = nowElapsed + RESET_CONFIRM_WINDOW_MS
+                    val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                        put(appWidgetId, widgetState.copy(isResetConfirmActive = true))
+                    }
+                    val nextSnapshot = current.copy(widgetStates = nextStatesMap)
                     _snapshotFlow.value = nextSnapshot
                     FastCommandStep(
                         nextSnapshot = nextSnapshot,
+                        targetAppWidgetId = appWidgetId,
                         stage1Generation = gen,
                         stage1ChecklistId = targetId,
                     )
@@ -403,9 +501,9 @@ object WidgetSyncManager {
             }
 
             TotalCheckWidgetReceiver.CMD_FORCE_RESET -> {
-                val targetId = checklistId.takeIf { it > 0L } ?: current.activeChecklist?.id ?: return null
-                clearResetConfirmLocked()
-                val nextSnapshot = withResetChecklist(current, targetId)
+                val targetId = checklistId.takeIf { it > 0L } ?: activeChecklist?.id ?: return null
+                clearResetConfirmLocked(appWidgetId)
+                val nextSnapshot = withResetChecklist(current, appWidgetId, targetId)
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
@@ -422,49 +520,61 @@ object WidgetSyncManager {
 
     private fun withResetChecklist(
         snapshot: WidgetUiSnapshot,
+        sourceWidgetId: Int,
         checklistId: Long,
     ): WidgetUiSnapshot {
         val listItems = snapshot.itemsByChecklist[checklistId].orEmpty()
         val resetItems = listItems.map { item ->
             if (item.isChecked) item.copy(isChecked = false) else item
         }
-        val nextMap = snapshot.itemsByChecklist.toMutableMap().apply {
+        val nextItemsMap = snapshot.itemsByChecklist.toMutableMap().apply {
             put(checklistId, resetItems)
         }
+        val sourceState = snapshot.stateForWidget(sourceWidgetId)
+        val nextStatesMap = snapshot.widgetStates.toMutableMap().apply {
+            put(
+                sourceWidgetId,
+                sourceState.copy(isResetConfirmActive = false, lastToggledItemId = null)
+            )
+        }
         return snapshot.copy(
-            itemsByChecklist = nextMap,
-            isResetConfirmActive = false,
-            lastToggledItemId = null,
+            itemsByChecklist = nextItemsMap,
+            widgetStates = nextStatesMap,
         )
     }
 
     private fun revertResetConfirmIfMatching(
         appContext: Context,
+        appWidgetId: Int,
         expectedGeneration: Long,
     ) {
         val nextSnapshot = synchronized(snapshotLock) {
-            if (resetGeneration != expectedGeneration) return
-            clearResetConfirmLocked()
+            if (resetGenerationByWidget[appWidgetId] != expectedGeneration) return
+            clearResetConfirmLocked(appWidgetId)
             val current = _snapshotFlow.value ?: return
-            if (!current.isResetConfirmActive) return
-            current.copy(isResetConfirmActive = false).also {
+            val state = current.stateForWidget(appWidgetId)
+            if (!state.isResetConfirmActive) return
+            val nextStatesMap = current.widgetStates.toMutableMap().apply {
+                put(appWidgetId, state.copy(isResetConfirmActive = false))
+            }
+            current.copy(widgetStates = nextStatesMap).also {
                 _snapshotFlow.value = it
             }
         }
-        DirectWidgetRenderer.renderAll(
+        DirectWidgetRenderer.renderSingleWidgetById(
             context = appContext,
+            appWidgetId = appWidgetId,
             snapshot = nextSnapshot,
             isContentFlip = false,
             isFilterFlip = false,
         )
     }
 
-    private fun clearResetConfirmLocked() {
-        resetGeneration++
-        resetConfirmChecklistId = null
-        resetConfirmDeadlineElapsed = 0L
-        resetRevertJob?.cancel()
-        resetRevertJob = null
+    private fun clearResetConfirmLocked(appWidgetId: Int) {
+        resetGenerationByWidget[appWidgetId] = (resetGenerationByWidget[appWidgetId] ?: 0L) + 1L
+        resetConfirmChecklistByWidget.remove(appWidgetId)
+        resetConfirmDeadlineByWidget.remove(appWidgetId)
+        resetRevertJobByWidget.remove(appWidgetId)?.cancel()
     }
 
     private suspend fun loadSnapshotFromStorage(
@@ -477,36 +587,38 @@ object WidgetSyncManager {
         if (seedIfEmpty && dao.getChecklistCount() == 0) {
             ChecklistRepository(appContext, dao).seedInitialDataIfNeeded()
         }
-        val (checklists, prefs, allItems) = dbWriteMutex.withLock {
+        val activeWidgetIds = getAllActiveWidgetIds(appContext)
+        val (checklists, prefsByWidget, allItems) = dbWriteMutex.withLock {
             val loadedChecklists = dao.getAllChecklists()
-            val loadedPrefs = prefsRepo.widgetPreferences.first()
+            val loadedPrefs = prefsRepo.readAllWidgetStates(activeWidgetIds)
             val loadedItems = dao.getAllItems()
             SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems)
         }
-        val activeChecklist = checklists.firstOrNull { it.id == prefs.selectedChecklistId }
-            ?: checklists.firstOrNull()
-        val activeIdx = if (activeChecklist != null) {
-            checklists.indexOf(activeChecklist).coerceAtLeast(0)
-        } else {
-            0
-        }
         val itemsByChecklist = allItems.groupBy { it.checklistId }
-        val keepConfirm = preserveResetState &&
-            activeChecklist != null &&
-            resetConfirmChecklistId == activeChecklist.id &&
-            SystemClock.elapsedRealtime() < resetConfirmDeadlineElapsed
+        val now = SystemClock.elapsedRealtime()
+        val states = prefsByWidget.mapValues { (widgetId, prefs) ->
+            val resolvedChecklist = checklists.firstOrNull { it.id == prefs.selectedChecklistId }
+                ?: checklists.firstOrNull()
+            val keepConfirm = preserveResetState &&
+                resolvedChecklist != null &&
+                resetConfirmChecklistByWidget[widgetId] == resolvedChecklist.id &&
+                now < (resetConfirmDeadlineByWidget[widgetId] ?: 0L)
+            WidgetInstanceState(
+                selectedChecklistId = prefs.selectedChecklistId,
+                showUncheckedOnly = prefs.showUncheckedOnly,
+                isResetConfirmActive = keepConfirm,
+            )
+        }
         WidgetUiSnapshot(
             checklists = checklists,
-            activeChecklist = activeChecklist,
-            activeChecklistIndex = activeIdx,
             itemsByChecklist = itemsByChecklist,
-            showUncheckedOnly = prefs.showUncheckedOnly,
-            isResetConfirmActive = keepConfirm,
+            widgetStates = states,
         )
     }
 
     private data class FastCommandStep(
         val nextSnapshot: WidgetUiSnapshot,
+        val targetAppWidgetId: Int? = null,
         val isContentFlip: Boolean = false,
         val isFilterFlip: Boolean = false,
         val delayForRippleMs: Long = 0L,
@@ -518,7 +630,7 @@ object WidgetSyncManager {
 
     private data class SnapshotLoadTuple(
         val checklists: List<ChecklistEntity>,
-        val prefs: WidgetPreferences,
+        val prefsByWidget: Map<Int, WidgetPreferences>,
         val allItems: List<CheckItemEntity>,
     )
 }

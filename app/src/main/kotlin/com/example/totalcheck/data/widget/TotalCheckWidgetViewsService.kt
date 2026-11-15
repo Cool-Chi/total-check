@@ -32,8 +32,9 @@ private class TotalCheckViewsFactory(
         val snapshot = WidgetSyncManager.snapshotFlow.value ?: runBlocking {
             WidgetSyncManager.ensureInitialized(context)
         }
-        val items = snapshot.activeChecklistItems
-        val visibleItems = if (snapshot.showUncheckedOnly) {
+        val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
+        val items = activeChecklist?.let { snapshot.itemsForChecklist(it.id) }.orEmpty()
+        val visibleItems = if (snapshot.stateForWidget(appWidgetId).showUncheckedOnly) {
             items.filter { !it.isChecked }
         } else {
             items

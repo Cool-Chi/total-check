@@ -28,6 +28,11 @@ class TotalCheckCounterWidgetReceiver : AppWidgetProvider() {
         renderIds(context, intArrayOf(appWidgetId))
     }
 
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        WidgetSyncManager.onWidgetsDeleted(context.applicationContext, appWidgetIds)
+        super.onDeleted(context, appWidgetIds)
+    }
+
     private fun renderIds(context: Context, appWidgetIds: IntArray) {
         val appContext = context.applicationContext
         val warmSnapshot = WidgetSyncManager.snapshotFlow.value

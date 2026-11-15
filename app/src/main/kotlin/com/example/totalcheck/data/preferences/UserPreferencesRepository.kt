@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.userPreferencesDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -40,21 +41,6 @@ class UserPreferencesRepository(context: Context) {
 
     val useDynamicColor: Flow<Boolean> = themeConfig.map { it.useDynamicColor }
 
-    val widgetPreferences: Flow<WidgetPreferences> = dataStore.data.map { prefs ->
-        val rawChecklistId = prefs[KEY_WIDGET_SELECTED_CHECKLIST_ID]
-        WidgetPreferences(
-            selectedChecklistId = rawChecklistId?.takeIf { it > 0L },
-            showUncheckedOnly = prefs[KEY_WIDGET_SHOW_UNCHECKED_ONLY] ?: false,
-            resetConfirmUntilMillis = prefs[KEY_WIDGET_RESET_CONFIRM_UNTIL_MILLIS] ?: 0L
-        )
-    }
-
-    val widgetSelectedChecklistId: Flow<Long?> = widgetPreferences.map { it.selectedChecklistId }
-
-    val widgetShowUncheckedOnly: Flow<Boolean> = widgetPreferences.map { it.showUncheckedOnly }
-
-    val widgetResetConfirmUntilMillis: Flow<Long> = widgetPreferences.map { it.resetConfirmUntilMillis }
-
     suspend fun setDarkMode(enabled: Boolean) {
         dataStore.edit { prefs ->
             prefs[KEY_IS_DARK_MODE] = enabled
@@ -67,44 +53,64 @@ class UserPreferencesRepository(context: Context) {
         }
     }
 
-    suspend fun setWidgetSelectedChecklistId(checklistId: Long?) {
+    suspend fun readAllWidgetStates(appWidgetIds: IntArray): Map<Int, WidgetPreferences> {
+        if (appWidgetIds.isEmpty()) return emptyMap()
+        val prefs = dataStore.data.first()
+        return appWidgetIds.associateWith { id ->
+            WidgetPreferences(
+                selectedChecklistId = prefs[keySelectedChecklist(id)]?.takeIf { it > 0L },
+                showUncheckedOnly = prefs[keyShowUnchecked(id)] ?: false,
+                resetConfirmUntilMillis = prefs[keyResetConfirmUntil(id)] ?: 0L,
+            )
+        }
+    }
+
+    suspend fun setWidgetSelectedChecklistId(appWidgetId: Int, checklistId: Long?) {
         dataStore.edit { prefs ->
+            val selectedKey = keySelectedChecklist(appWidgetId)
             if (checklistId != null && checklistId > 0L) {
-                prefs[KEY_WIDGET_SELECTED_CHECKLIST_ID] = checklistId
+                prefs[selectedKey] = checklistId
             } else {
-                prefs.remove(KEY_WIDGET_SELECTED_CHECKLIST_ID)
+                prefs.remove(selectedKey)
             }
-            prefs[KEY_WIDGET_RESET_CONFIRM_UNTIL_MILLIS] = 0L
+            prefs[keyResetConfirmUntil(appWidgetId)] = 0L
         }
     }
 
-    suspend fun setWidgetShowUncheckedOnly(enabled: Boolean) {
+    suspend fun setWidgetShowUncheckedOnly(appWidgetId: Int, enabled: Boolean) {
         dataStore.edit { prefs ->
-            prefs[KEY_WIDGET_SHOW_UNCHECKED_ONLY] = enabled
+            prefs[keyShowUnchecked(appWidgetId)] = enabled
         }
     }
 
-    suspend fun toggleWidgetShowUncheckedOnly(): Boolean {
-        var nextState = false
+    suspend fun setWidgetResetConfirmUntilMillis(appWidgetId: Int, untilMillis: Long) {
         dataStore.edit { prefs ->
-            val current = prefs[KEY_WIDGET_SHOW_UNCHECKED_ONLY] ?: false
-            nextState = !current
-            prefs[KEY_WIDGET_SHOW_UNCHECKED_ONLY] = nextState
+            prefs[keyResetConfirmUntil(appWidgetId)] = untilMillis
         }
-        return nextState
     }
 
-    suspend fun setWidgetResetConfirmUntilMillis(untilMillis: Long) {
+    suspend fun clearWidgetPreferences(appWidgetIds: IntArray) {
+        if (appWidgetIds.isEmpty()) return
         dataStore.edit { prefs ->
-            prefs[KEY_WIDGET_RESET_CONFIRM_UNTIL_MILLIS] = untilMillis
+            for (id in appWidgetIds) {
+                prefs.remove(keySelectedChecklist(id))
+                prefs.remove(keyShowUnchecked(id))
+                prefs.remove(keyResetConfirmUntil(id))
+            }
         }
     }
 
     private companion object {
         val KEY_IS_DARK_MODE = booleanPreferencesKey("is_dark_mode")
         val KEY_USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
-        val KEY_WIDGET_SELECTED_CHECKLIST_ID = longPreferencesKey("widget_selected_checklist_id")
-        val KEY_WIDGET_SHOW_UNCHECKED_ONLY = booleanPreferencesKey("widget_show_unchecked_only")
-        val KEY_WIDGET_RESET_CONFIRM_UNTIL_MILLIS = longPreferencesKey("widget_reset_confirm_until_millis")
+
+        fun keySelectedChecklist(appWidgetId: Int) =
+            longPreferencesKey("widget_selected_checklist_$appWidgetId")
+
+        fun keyShowUnchecked(appWidgetId: Int) =
+            booleanPreferencesKey("widget_show_unchecked_$appWidgetId")
+
+        fun keyResetConfirmUntil(appWidgetId: Int) =
+            longPreferencesKey("widget_reset_confirm_until_$appWidgetId")
     }
 }

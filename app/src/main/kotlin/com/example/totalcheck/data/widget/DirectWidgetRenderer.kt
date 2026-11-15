@@ -31,11 +31,9 @@ private enum class WidgetSizeTier {
 private data class CounterFlipSlotViewIds(
     val openAppId: Int,
     val titleId: Int,
-    val wideInfoId: Int,
+    val countId: Int,
     val progressActiveId: Int,
     val progressDoneId: Int,
-    val ratioId: Int,
-    val badgeId: Int,
 )
 
 private data class FlipSlotViewIds(
@@ -50,14 +48,14 @@ private data class FlipSlotViewIds(
 
 object DirectWidgetRenderer {
 
-    private const val REQ_LIST_TEMPLATE = 1001
-    private const val REQ_TOGGLE_FILTER = 2001
-    private const val REQ_RESET_STAGE = 2002
-    private const val REQ_PREV_CHECKLIST = 2003
-    private const val REQ_NEXT_CHECKLIST = 2004
-    private const val REQ_FORCE_RESET = 2005
-    private const val REQ_SHOW_ALL = 2006
-    private const val REQ_OPEN_APP = 3001
+    private const val REQ_LIST_TEMPLATE_BASE = 10_000
+    private const val REQ_TOGGLE_FILTER_BASE = 20_000
+    private const val REQ_RESET_STAGE_BASE = 30_000
+    private const val REQ_PREV_CHECKLIST_BASE = 40_000
+    private const val REQ_NEXT_CHECKLIST_BASE = 50_000
+    private const val REQ_FORCE_RESET_BASE = 60_000
+    private const val REQ_SHOW_ALL_BASE = 70_000
+    private const val REQ_OPEN_APP_BASE = 80_000
 
     private val SLOT_0_IDS = FlipSlotViewIds(
         listViewId = R.id.widget_list_s0,
@@ -82,21 +80,17 @@ object DirectWidgetRenderer {
     private val COUNTER_SLOT_0_IDS = CounterFlipSlotViewIds(
         openAppId = R.id.widget_counter_open_app_0,
         titleId = R.id.widget_counter_title_0,
-        wideInfoId = R.id.widget_counter_wide_info_0,
+        countId = R.id.widget_counter_count_0,
         progressActiveId = R.id.widget_counter_progress_active_0,
         progressDoneId = R.id.widget_counter_progress_done_0,
-        ratioId = R.id.widget_counter_ratio_0,
-        badgeId = R.id.widget_counter_badge_0,
     )
 
     private val COUNTER_SLOT_1_IDS = CounterFlipSlotViewIds(
         openAppId = R.id.widget_counter_open_app_1,
         titleId = R.id.widget_counter_title_1,
-        wideInfoId = R.id.widget_counter_wide_info_1,
+        countId = R.id.widget_counter_count_1,
         progressActiveId = R.id.widget_counter_progress_active_1,
         progressDoneId = R.id.widget_counter_progress_done_1,
-        ratioId = R.id.widget_counter_ratio_1,
-        badgeId = R.id.widget_counter_badge_1,
     )
 
     fun renderAll(context: Context) {
@@ -139,6 +133,37 @@ object DirectWidgetRenderer {
         }
     }
 
+    fun renderSingleWidgetById(
+        context: Context,
+        appWidgetId: Int,
+        snapshot: WidgetUiSnapshot,
+        isContentFlip: Boolean = false,
+        isFilterFlip: Boolean = false,
+    ) {
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
+        val appContext = context.applicationContext
+        val manager = AppWidgetManager.getInstance(appContext)
+        val providerClass = manager.getAppWidgetInfo(appWidgetId)?.provider?.className
+        if (providerClass == TotalCheckCounterWidgetReceiver::class.java.name) {
+            renderSingleCounterWidget(
+                context = appContext,
+                manager = manager,
+                appWidgetId = appWidgetId,
+                snapshot = snapshot,
+                isContentFlip = isContentFlip,
+            )
+        } else {
+            renderSingleGridWidget(
+                context = appContext,
+                manager = manager,
+                appWidgetId = appWidgetId,
+                snapshot = snapshot,
+                isContentFlip = isContentFlip,
+                isFilterFlip = isFilterFlip,
+            )
+        }
+    }
+
     fun renderWidgetsByIds(
         context: Context,
         appWidgetIds: IntArray,
@@ -148,13 +173,14 @@ object DirectWidgetRenderer {
         val appContext = context.applicationContext
         val manager = AppWidgetManager.getInstance(appContext)
         for (appWidgetId in appWidgetIds) {
+            val widgetState = snapshot.stateForWidget(appWidgetId)
             renderSingleGridWidget(
                 context = appContext,
                 manager = manager,
                 appWidgetId = appWidgetId,
                 snapshot = snapshot,
                 isContentFlip = false,
-                isFilterFlip = snapshot.showUncheckedOnly,
+                isFilterFlip = widgetState.showUncheckedOnly,
             )
         }
     }
@@ -240,25 +266,26 @@ object DirectWidgetRenderer {
         val (widthDp, heightDp) = resolveDimensionsDp(context, options)
         val tier = resolveSizeTier(widthDp, heightDp)
 
-        val activeChecklist = snapshot.activeChecklist
+        val widgetState = snapshot.stateForWidget(appWidgetId)
+        val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
         if (activeChecklist == null) {
             val emptyRv = RemoteViews(context.packageName, R.layout.widget_empty).apply {
                 setOnClickPendingIntent(
                     R.id.widget_empty_root,
-                    buildOpenAppPendingIntent(context, null)
+                    buildOpenAppPendingIntent(context, null, appWidgetId)
                 )
             }
             manager.updateAppWidget(appWidgetId, emptyRv)
             return
         }
 
-        val checklistItems = snapshot.activeChecklistItems
+        val checklistItems = snapshot.itemsForChecklist(activeChecklist.id)
         val totalCount = checklistItems.size
         val uncheckedCount = checklistItems.count { !it.isChecked }
         val checkedCount = totalCount - uncheckedCount
         val hasMultipleChecklists = snapshot.checklists.size > 1
 
-        val visibleItems = if (snapshot.showUncheckedOnly) {
+        val visibleItems = if (widgetState.showUncheckedOnly) {
             checklistItems.filter { !it.isChecked }
         } else {
             checklistItems
@@ -266,7 +293,7 @@ object DirectWidgetRenderer {
         val showResetButton = tier == WidgetSizeTier.STANDARD || tier == WidgetSizeTier.EXPANDED
         val showExpandedBar = tier == WidgetSizeTier.EXPANDED
         val columnCount = resolveColumnCount(tier)
-        val flipSlot = snapshot.checklistFlipSlot and 1
+        val flipSlot = widgetState.checklistFlipSlot and 1
         val activeSlotIds = if (flipSlot == 0) SLOT_0_IDS else SLOT_1_IDS
         val inactiveSlotIds = if (flipSlot == 0) SLOT_1_IDS else SLOT_0_IDS
 
@@ -278,8 +305,8 @@ object DirectWidgetRenderer {
             checkedCount = checkedCount,
             uncheckedCount = uncheckedCount,
             visibleItems = visibleItems,
-            showUncheckedOnly = snapshot.showUncheckedOnly,
-            isResetConfirmActive = snapshot.isResetConfirmActive,
+            showUncheckedOnly = widgetState.showUncheckedOnly,
+            isResetConfirmActive = widgetState.isResetConfirmActive,
             hasMultipleChecklists = hasMultipleChecklists,
             showResetButton = showResetButton,
             showExpandedBar = showExpandedBar,
@@ -310,12 +337,13 @@ object DirectWidgetRenderer {
         snapshot: WidgetUiSnapshot,
         isContentFlip: Boolean,
     ) {
-        val activeChecklist = snapshot.activeChecklist
+        val widgetState = snapshot.stateForWidget(appWidgetId)
+        val activeChecklist = snapshot.resolveActiveChecklist(appWidgetId)
         if (activeChecklist == null) {
             val emptyRv = RemoteViews(context.packageName, R.layout.widget_empty).apply {
                 setOnClickPendingIntent(
                     R.id.widget_empty_root,
-                    buildOpenAppPendingIntent(context, null)
+                    buildOpenAppPendingIntent(context, null, appWidgetId)
                 )
             }
             manager.updateAppWidget(appWidgetId, emptyRv)
@@ -326,23 +354,24 @@ object DirectWidgetRenderer {
         val (widthDp, _) = resolveDimensionsDp(context, options)
         val isWide = widthDp >= 220f
 
-        val checklistItems = snapshot.activeChecklistItems
+        val checklistItems = snapshot.itemsForChecklist(activeChecklist.id)
         val totalCount = checklistItems.size
         val uncheckedCount = checklistItems.count { !it.isChecked }
         val checkedCount = totalCount - uncheckedCount
         val hasMultipleChecklists = snapshot.checklists.size > 1
-        val flipSlot = snapshot.checklistFlipSlot and 1
+        val flipSlot = widgetState.checklistFlipSlot and 1
         val activeSlotIds = if (flipSlot == 0) COUNTER_SLOT_0_IDS else COUNTER_SLOT_1_IDS
         val inactiveSlotIds = if (flipSlot == 0) COUNTER_SLOT_1_IDS else COUNTER_SLOT_0_IDS
 
         val counterRv = buildCounterBarRemoteViews(
             context = context,
+            appWidgetId = appWidgetId,
             checklist = activeChecklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
             uncheckedCount = uncheckedCount,
             isWide = isWide,
-            isResetConfirmActive = snapshot.isResetConfirmActive,
+            isResetConfirmActive = widgetState.isResetConfirmActive,
             hasMultipleChecklists = hasMultipleChecklists,
             flipSlot = flipSlot,
             activeSlotIds = activeSlotIds,
@@ -354,6 +383,7 @@ object DirectWidgetRenderer {
 
     private fun buildCounterBarRemoteViews(
         context: Context,
+        appWidgetId: Int,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -369,13 +399,13 @@ object DirectWidgetRenderer {
         return RemoteViews(context.packageName, R.layout.widget_counter_bar).also { rv ->
             bindCounterSlot(
                 context = context,
+                appWidgetId = appWidgetId,
                 rv = rv,
                 slotIds = activeSlotIds,
                 checklist = checklist,
                 totalCount = totalCount,
                 checkedCount = checkedCount,
                 uncheckedCount = uncheckedCount,
-                isWide = isWide,
             )
 
             if (isContentFlip) {
@@ -383,19 +413,20 @@ object DirectWidgetRenderer {
             } else {
                 bindCounterSlot(
                     context = context,
+                    appWidgetId = appWidgetId,
                     rv = rv,
                     slotIds = inactiveSlotIds,
                     checklist = checklist,
                     totalCount = totalCount,
                     checkedCount = checkedCount,
                     uncheckedCount = uncheckedCount,
-                    isWide = isWide,
                 )
             }
 
             bindResetButtons(
                 context = context,
                 rv = rv,
+                appWidgetId = appWidgetId,
                 resetButtonId = R.id.widget_counter_btn_reset,
                 confirmButtonId = R.id.widget_counter_btn_reset_confirm,
                 checklistId = checklist.id,
@@ -406,6 +437,7 @@ object DirectWidgetRenderer {
             bindSwitchButtons(
                 context = context,
                 rv = rv,
+                appWidgetId = appWidgetId,
                 checklistId = checklist.id,
                 enabled = hasMultipleChecklists,
                 prevButtonId = R.id.widget_counter_btn_prev,
@@ -416,58 +448,49 @@ object DirectWidgetRenderer {
 
     private fun bindCounterSlot(
         context: Context,
+        appWidgetId: Int,
         rv: RemoteViews,
         slotIds: CounterFlipSlotViewIds,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
-        isWide: Boolean,
     ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
-        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
+        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id, appWidgetId)
 
         rv.setTextViewText(slotIds.titleId, checklist.name)
         rv.setOnClickPendingIntent(slotIds.openAppId, openAppIntent)
 
-        val badgeText = if (isAllDone) {
-            context.getString(R.string.widget_all_set_short)
+        val countText = if (isAllDone) {
+            "\u2713 $checkedCount/$totalCount"
         } else {
             context.getString(R.string.widget_left_count, uncheckedCount)
         }
-        rv.setTextViewText(slotIds.badgeId, badgeText)
-        rv.setInt(
-            slotIds.badgeId,
-            "setBackgroundResource",
-            if (isAllDone) R.drawable.widget_pill_primary_container else R.drawable.widget_pill_tertiary_container
-        )
+        rv.setTextViewText(slotIds.countId, countText)
         applyTextColor(
             context = context,
             rv = rv,
-            viewId = slotIds.badgeId,
-            colorRes = if (isAllDone) R.color.widget_on_primary_container else R.color.widget_on_tertiary_container
+            viewId = slotIds.countId,
+            colorRes = if (isAllDone) R.color.widget_primary else R.color.widget_tertiary
         )
 
-        if (isWide && totalCount > 0) {
-            rv.setViewVisibility(slotIds.wideInfoId, View.VISIBLE)
-            bindProgressViews(
-                context = context,
-                rv = rv,
-                activeProgressId = slotIds.progressActiveId,
-                doneProgressId = slotIds.progressDoneId,
-                ratioViewId = slotIds.ratioId,
-                checkedCount = checkedCount,
-                totalCount = totalCount,
-                isAllDone = isAllDone,
-            )
-        } else {
-            rv.setViewVisibility(slotIds.wideInfoId, View.GONE)
-        }
+        bindProgressViews(
+            context = context,
+            rv = rv,
+            activeProgressId = slotIds.progressActiveId,
+            doneProgressId = slotIds.progressDoneId,
+            ratioViewId = null,
+            checkedCount = checkedCount,
+            totalCount = totalCount,
+            isAllDone = isAllDone,
+        )
     }
 
     private fun bindFullHeaderViews(
         context: Context,
         rv: RemoteViews,
+        appWidgetId: Int,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
@@ -480,7 +503,7 @@ object DirectWidgetRenderer {
         isFilterFlip: Boolean,
     ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
-        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
+        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id, appWidgetId)
 
         // Primary Header
         rv.setTextViewText(R.id.widget_header_title, checklist.name)
@@ -494,8 +517,9 @@ object DirectWidgetRenderer {
         }
         val filterIntent = buildBroadcastPendingIntent(
             context = context,
-            requestCode = REQ_TOGGLE_FILTER,
-            command = TotalCheckWidgetReceiver.CMD_TOGGLE_FILTER
+            requestCodeBase = REQ_TOGGLE_FILTER_BASE,
+            command = TotalCheckWidgetReceiver.CMD_TOGGLE_FILTER,
+            appWidgetId = appWidgetId,
         )
         rv.setTextViewText(R.id.widget_btn_filter_normal, filterLabel)
         rv.setInt(
@@ -521,6 +545,7 @@ object DirectWidgetRenderer {
         bindResetButtons(
             context = context,
             rv = rv,
+            appWidgetId = appWidgetId,
             resetButtonId = R.id.widget_btn_reset,
             confirmButtonId = R.id.widget_btn_reset_confirm,
             checklistId = checklist.id,
@@ -531,6 +556,7 @@ object DirectWidgetRenderer {
         bindSwitchButtons(
             context = context,
             rv = rv,
+            appWidgetId = appWidgetId,
             checklistId = checklist.id,
             enabled = hasMultipleChecklists
         )
@@ -576,11 +602,12 @@ object DirectWidgetRenderer {
         isFilterFlip: Boolean,
     ): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_full)
-        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
+        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id, appWidgetId)
 
         bindFullHeaderViews(
             context = context,
             rv = rv,
+            appWidgetId = appWidgetId,
             checklist = checklist,
             totalCount = totalCount,
             checkedCount = checkedCount,
@@ -657,17 +684,19 @@ object DirectWidgetRenderer {
                     slotIds.btnRecheckId,
                     buildBroadcastPendingIntent(
                         context = context,
-                        requestCode = REQ_FORCE_RESET,
+                        requestCodeBase = REQ_FORCE_RESET_BASE,
                         command = TotalCheckWidgetReceiver.CMD_FORCE_RESET,
-                        checklistId = checklist.id
+                        appWidgetId = appWidgetId,
+                        checklistId = checklist.id,
                     )
                 )
                 rv.setOnClickPendingIntent(
                     slotIds.btnShowAllId,
                     buildBroadcastPendingIntent(
                         context = context,
-                        requestCode = REQ_SHOW_ALL,
-                        command = TotalCheckWidgetReceiver.CMD_SHOW_ALL
+                        requestCodeBase = REQ_SHOW_ALL_BASE,
+                        command = TotalCheckWidgetReceiver.CMD_SHOW_ALL,
+                        appWidgetId = appWidgetId,
                     )
                 )
             }
@@ -679,6 +708,8 @@ object DirectWidgetRenderer {
 
                 val templateIntent = Intent(context, TotalCheckWidgetReceiver::class.java).apply {
                     action = TotalCheckWidgetReceiver.ACTION_WIDGET_COMMAND
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                    data = Uri.parse("totalcheck://widget/$appWidgetId/list")
                 }
                 val templateFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -687,7 +718,7 @@ object DirectWidgetRenderer {
                 }
                 val templatePendingIntent = PendingIntent.getBroadcast(
                     context,
-                    REQ_LIST_TEMPLATE,
+                    REQ_LIST_TEMPLATE_BASE + (appWidgetId and 0xFFFF),
                     templateIntent,
                     templateFlags
                 )
@@ -815,7 +846,7 @@ object DirectWidgetRenderer {
         rv: RemoteViews,
         activeProgressId: Int,
         doneProgressId: Int,
-        ratioViewId: Int,
+        ratioViewId: Int?,
         checkedCount: Int,
         totalCount: Int,
         isAllDone: Boolean,
@@ -834,15 +865,18 @@ object DirectWidgetRenderer {
             rv.setViewVisibility(activeProgressId, View.VISIBLE)
             rv.setProgressBar(activeProgressId, 100, progressPct, false)
         }
-        rv.setTextViewText(
-            ratioViewId,
-            context.getString(R.string.widget_progress_ratio, checkedCount, totalCount)
-        )
+        if (ratioViewId != null) {
+            rv.setTextViewText(
+                ratioViewId,
+                context.getString(R.string.widget_progress_ratio, checkedCount, totalCount)
+            )
+        }
     }
 
     private fun bindResetButtons(
         context: Context,
         rv: RemoteViews,
+        appWidgetId: Int,
         resetButtonId: Int,
         confirmButtonId: Int,
         checklistId: Long,
@@ -856,9 +890,10 @@ object DirectWidgetRenderer {
         }
         val resetIntent = buildBroadcastPendingIntent(
             context = context,
-            requestCode = REQ_RESET_STAGE,
+            requestCodeBase = REQ_RESET_STAGE_BASE,
             command = TotalCheckWidgetReceiver.CMD_RESET_STAGE,
-            checklistId = checklistId
+            appWidgetId = appWidgetId,
+            checklistId = checklistId,
         )
         if (isResetConfirmActive) {
             rv.setViewVisibility(resetButtonId, View.GONE)
@@ -874,6 +909,7 @@ object DirectWidgetRenderer {
     private fun bindSwitchButtons(
         context: Context,
         rv: RemoteViews,
+        appWidgetId: Int,
         checklistId: Long,
         enabled: Boolean,
         prevButtonId: Int = R.id.widget_btn_prev,
@@ -891,8 +927,9 @@ object DirectWidgetRenderer {
             prevButtonId,
             buildBroadcastPendingIntent(
                 context = context,
-                requestCode = REQ_PREV_CHECKLIST,
+                requestCodeBase = REQ_PREV_CHECKLIST_BASE,
                 command = TotalCheckWidgetReceiver.CMD_SWITCH_CHECKLIST,
+                appWidgetId = appWidgetId,
                 checklistId = checklistId,
                 direction = -1
             )
@@ -901,8 +938,9 @@ object DirectWidgetRenderer {
             nextButtonId,
             buildBroadcastPendingIntent(
                 context = context,
-                requestCode = REQ_NEXT_CHECKLIST,
+                requestCodeBase = REQ_NEXT_CHECKLIST_BASE,
                 command = TotalCheckWidgetReceiver.CMD_SWITCH_CHECKLIST,
+                appWidgetId = appWidgetId,
                 checklistId = checklistId,
                 direction = 1
             )
@@ -924,13 +962,15 @@ object DirectWidgetRenderer {
 
     private fun buildBroadcastPendingIntent(
         context: Context,
-        requestCode: Int,
+        requestCodeBase: Int,
         command: String,
+        appWidgetId: Int,
         checklistId: Long? = null,
         direction: Int? = null
     ): PendingIntent {
         val intent = Intent(context, TotalCheckWidgetReceiver::class.java).apply {
             action = TotalCheckWidgetReceiver.ACTION_WIDGET_COMMAND
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
             putExtra(TotalCheckWidgetReceiver.EXTRA_COMMAND, command)
             if (checklistId != null) {
                 putExtra(TotalCheckWidgetReceiver.EXTRA_CHECKLIST_ID, checklistId)
@@ -938,11 +978,11 @@ object DirectWidgetRenderer {
             if (direction != null) {
                 putExtra(TotalCheckWidgetReceiver.EXTRA_DIRECTION, direction)
             }
-            data = Uri.parse("totalcheck://widget/cmd/$command/${direction ?: 0}")
+            data = Uri.parse("totalcheck://widget/$appWidgetId/cmd/$command/${direction ?: 0}")
         }
         return PendingIntent.getBroadcast(
             context,
-            requestCode,
+            requestCodeBase + (appWidgetId and 0xFFFF),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -950,7 +990,8 @@ object DirectWidgetRenderer {
 
     private fun buildOpenAppPendingIntent(
         context: Context,
-        checklistId: Long?
+        checklistId: Long?,
+        appWidgetId: Int,
     ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or
@@ -959,11 +1000,11 @@ object DirectWidgetRenderer {
             if (checklistId != null && checklistId > 0L) {
                 putExtra(MainActivity.EXTRA_WIDGET_CHECKLIST_ID, checklistId)
             }
-            data = Uri.parse("totalcheck://widget/checklist/${checklistId ?: 0L}")
+            data = Uri.parse("totalcheck://widget/$appWidgetId/checklist/${checklistId ?: 0L}")
         }
         return PendingIntent.getActivity(
             context,
-            REQ_OPEN_APP,
+            REQ_OPEN_APP_BASE + (appWidgetId and 0xFFFF),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

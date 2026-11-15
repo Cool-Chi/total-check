@@ -24,3 +24,4 @@
 ## 4. 安全與版本控制規範
 - **金鑰隔離**：`app/build.gradle.kts` 必須從根目錄的 `keystore.properties` 讀取 Release 簽名設定，**嚴禁**在任何追蹤檔案中寫入明文密碼或金鑰路徑。
 - **Git 版控紀律**：每次完成任務修改並通過編譯安裝後，Agent 應直接呼叫本地 `git-workflow-and-versioning` Skill（`C:\Users\weiqi\.gemini\config\skills\git-workflow-and-versioning\SKILL.md`）執行原子化提交（Atomic Commit）並打上對應版本 Tag。
+- **版本號同步規則**：每次執行 Git Commit 與標記新版本 Tag（如 `vX.Y.Z`）之前，**必須先同步更新 `app/build.gradle.kts` 中的 `versionName = "X.Y.Z"` 並遞增 `versionCode`**，將 `build.gradle.kts` 納入同一次 Commit 中，確保安裝至手機的 APK 版本號與 Git Tag 永遠一致。
