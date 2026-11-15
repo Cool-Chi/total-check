@@ -10,6 +10,7 @@ import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.repository.ChecklistRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -85,7 +87,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mapped
         }
         merged.groupBy { it.checklistId }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = emptyMap()
