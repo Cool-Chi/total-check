@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/state_checked"
+        android:drawable="@drawable/widget_ic_check_checked"
+        android:state_checked="true" />
+    <item
+        android:id="@+id/state_unchecked"
+        android:drawable="@drawable/widget_ic_dot_unchecked" />
+    <transition
+        android:drawable="@drawable/widget_avd_unchecked_to_checked"
+        android:fromId="@id/state_unchecked"
+        android:toId="@id/state_checked" />
+    <transition
+        android:drawable="@drawable/widget_avd_checked_to_unchecked"
+        android:fromId="@id/state_checked"
+        android:toId="@id/state_unchecked" />
+</animated-selector>

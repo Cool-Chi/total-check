@@ -122,10 +122,6 @@ dependencies {
   ksp(libs.androidx.room.compiler)
   implementation(libs.androidx.datastore.preferences)
 
-  // Jetpack Glance AppWidget
-  implementation(libs.androidx.glance.appwidget)
-  implementation(libs.androidx.glance.material3)
-
   // Navigation
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)

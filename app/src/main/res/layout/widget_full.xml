@@ -1,0 +1,415 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:animateLayoutChanges="true"
+    android:background="@drawable/widget_bg_rounded"
+    android:clipToOutline="true"
+    android:orientation="vertical"
+    android:paddingBottom="10dp"
+    android:paddingEnd="12dp"
+    android:paddingStart="12dp"
+    android:paddingTop="10dp">
+
+    <!-- Primary Header Row (Enlarged 32dp Comfort Touch Targets) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:animateLayoutChanges="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/widget_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingBottom="2dp"
+            android:paddingTop="2dp"
+            android:textColor="@color/widget_on_surface"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_btn_filter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/widget_pill_secondary_container"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingBottom="5dp"
+            android:paddingEnd="12dp"
+            android:paddingStart="12dp"
+            android:paddingTop="5dp"
+            android:textColor="@color/widget_on_secondary_container"
+            android:textSize="12.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_btn_reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/widget_pill_surface_variant"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:minWidth="36dp"
+            android:paddingBottom="5dp"
+            android:paddingEnd="12dp"
+            android:paddingStart="12dp"
+            android:paddingTop="5dp"
+            android:text="@string/widget_reset_icon"
+            android:textColor="@color/widget_on_surface_variant"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_btn_prev"
+            android:layout_width="34dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/widget_pill_surface_variant"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="@string/widget_prev_checklist"
+            android:textColor="@color/widget_on_surface"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_btn_next"
+            android:layout_width="34dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/widget_pill_surface_variant"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="@string/widget_next_checklist"
+            android:textColor="@color/widget_on_surface"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Tier 4 Secondary Progress & Quick Add Bar -->
+    <LinearLayout
+        android:id="@+id/widget_expanded_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:animateLayoutChanges="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/widget_progress_pill"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@drawable/widget_pill_surface"
+            android:gravity="center_vertical"
+            android:minHeight="32dp"
+            android:orientation="horizontal"
+            android:paddingBottom="6dp"
+            android:paddingEnd="12dp"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp">
+
+            <ProgressBar
+                android:id="@+id/widget_progress_active"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_active" />
+
+            <ProgressBar
+                android:id="@+id/widget_progress_done"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="100"
+                android:progressDrawable="@drawable/widget_progress_done"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/widget_progress_ratio"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:maxLines="1"
+                android:textColor="@color/widget_on_surface_variant"
+                android:textSize="11.5sp"
+                android:textStyle="normal" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/widget_btn_add_short"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/widget_pill_primary_container"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingBottom="6dp"
+            android:paddingEnd="14dp"
+            android:paddingStart="14dp"
+            android:paddingTop="6dp"
+            android:text="@string/widget_action_add_short"
+            android:textColor="@color/widget_on_primary_container"
+            android:textSize="12.5sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Dual-Slot Content Region for Smooth < > Checklist Transitions -->
+    <ViewFlipper
+        android:id="@+id/widget_content_flipper"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
+        android:autoStart="false"
+        android:inAnimation="@anim/widget_flipper_in"
+        android:measureAllChildren="false"
+        android:outAnimation="@anim/widget_flipper_out">
+
+        <!-- Flip Slot 0 -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:animateLayoutChanges="true">
+
+            <ListView
+                android:id="@+id/widget_list_view_0"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:cacheColorHint="@android:color/transparent"
+                android:divider="@null"
+                android:dividerHeight="0dp"
+                android:listSelector="@android:color/transparent"
+                android:scrollbars="none" />
+
+            <FrameLayout
+                android:id="@+id/widget_empty_state_0"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_empty_state_pill_0"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:background="@drawable/widget_pill_surface_variant"
+                    android:gravity="center"
+                    android:maxLines="2"
+                    android:paddingBottom="10dp"
+                    android:paddingEnd="16dp"
+                    android:paddingStart="16dp"
+                    android:paddingTop="10dp"
+                    android:text="@string/widget_empty_checklist_hint"
+                    android:textColor="@color/widget_on_surface"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/widget_all_set_state_0"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingEnd="4dp"
+                android:paddingStart="4dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_all_set_badge_0"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/widget_pill_primary_container"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:paddingBottom="7dp"
+                    android:paddingEnd="14dp"
+                    android:paddingStart="14dp"
+                    android:paddingTop="7dp"
+                    android:textColor="@color/widget_on_primary_container"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:weightSum="2">
+
+                    <TextView
+                        android:id="@+id/widget_btn_recheck_0"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_pill_surface_variant"
+                        android:ellipsize="end"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:paddingBottom="9dp"
+                        android:paddingEnd="10dp"
+                        android:paddingStart="10dp"
+                        android:paddingTop="9dp"
+                        android:text="@string/widget_action_recheck"
+                        android:textColor="@color/widget_on_surface"
+                        android:textSize="12.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_btn_show_all_0"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_pill_secondary_container"
+                        android:ellipsize="end"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:paddingBottom="9dp"
+                        android:paddingEnd="10dp"
+                        android:paddingStart="10dp"
+                        android:paddingTop="9dp"
+                        android:text="@string/widget_action_show_all"
+                        android:textColor="@color/widget_on_secondary_container"
+                        android:textSize="12.5sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Flip Slot 1 -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:animateLayoutChanges="true">
+
+            <ListView
+                android:id="@+id/widget_list_view_1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:cacheColorHint="@android:color/transparent"
+                android:divider="@null"
+                android:dividerHeight="0dp"
+                android:listSelector="@android:color/transparent"
+                android:scrollbars="none" />
+
+            <FrameLayout
+                android:id="@+id/widget_empty_state_1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_empty_state_pill_1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:background="@drawable/widget_pill_surface_variant"
+                    android:gravity="center"
+                    android:maxLines="2"
+                    android:paddingBottom="10dp"
+                    android:paddingEnd="16dp"
+                    android:paddingStart="16dp"
+                    android:paddingTop="10dp"
+                    android:text="@string/widget_empty_checklist_hint"
+                    android:textColor="@color/widget_on_surface"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/widget_all_set_state_1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingEnd="4dp"
+                android:paddingStart="4dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_all_set_badge_1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/widget_pill_primary_container"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:paddingBottom="7dp"
+                    android:paddingEnd="14dp"
+                    android:paddingStart="14dp"
+                    android:paddingTop="7dp"
+                    android:textColor="@color/widget_on_primary_container"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:weightSum="2">
+
+                    <TextView
+                        android:id="@+id/widget_btn_recheck_1"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_pill_surface_variant"
+                        android:ellipsize="end"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:paddingBottom="9dp"
+                        android:paddingEnd="10dp"
+                        android:paddingStart="10dp"
+                        android:paddingTop="9dp"
+                        android:text="@string/widget_action_recheck"
+                        android:textColor="@color/widget_on_surface"
+                        android:textSize="12.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_btn_show_all_1"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/widget_pill_secondary_container"
+                        android:ellipsize="end"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:paddingBottom="9dp"
+                        android:paddingEnd="10dp"
+                        android:paddingStart="10dp"
+                        android:paddingTop="9dp"
+                        android:text="@string/widget_action_show_all"
+                        android:textColor="@color/widget_on_secondary_container"
+                        android:textSize="12.5sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+        </FrameLayout>
+    </ViewFlipper>
+</LinearLayout>
