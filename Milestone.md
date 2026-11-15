@@ -24,7 +24,8 @@
 | `v0.10.0` | **M5（項目欄位動畫、堆疊排列與互動重構）** | 自訂 `StackedCardScrollLayout`（深度堆疊壓縮、層次暗化、點擊展開與 `ItemReflowAnim` / `NeighborRippleWave` 重排與鄰近波紋）、`Hold-to-Delete Perimeter Ring`（150ms 延遲 + 1000ms 外圈進度環刪除 + 300ms 退回）、`Drag-to-Reorder` 拖曳排序與懸浮層（含鍵盤/TalkBack 無障礙移動與 `ChecklistDao.updateItems` 批次持久化）、滾動方向感知 `QuickInputBar` 自動隱藏與 `BackHandler` 退出編輯 |
 | `v0.11.0` | **M6（頂部導覽列與其餘介面交互動效優化）** | 頂部 `ExpandingChecklistTabBar` 長按拖曳排序與 `TabReflowAnim` 彈簧讓位、`SlideOutCancelModifier`（`0.94f` 按壓下沉與 `44.dp` 滑出衰減取消）、自訂 `ScopedModalOverlay`（記憶軟鍵盤高度達成輸入彈窗首幀零二次跳動、背景 IME 凍結）、進度卡整合清單改名/刪除與刪除清單 `Snackbar` 連同項目復原、`StackedCardScrollLayout` 邊界過捲動手風琴拉伸回彈（Overscroll Accordion），以及中英雙語字串資源（`values` / `values-b+zh+Hant` / `values-zh`） |
 | `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析引擎與即時預覽快速匯入）** | 新增高容錯雙模式解析器 `ChecklistTextParser`、`ChecklistDao.createChecklistWithItems` 批次匯入交易、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（含 `LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調與 Sticky Header/Footer 防遮擋）及應用程式圖標 |
-| `v0.13.0` ~ `v0.13.2` | **M8（桌面小工具 Native Direct RemoteViews）** | 以原生 `DirectWidgetRenderer` 取代 Jetpack Glance 達成毫秒級響應、改用「具名固定槽位矩陣（`widget_tile_0`..`15` + `widget_overflow_pill`）」取代 `ListView` 搭配單一 `<CheckBox>` `180ms` AVD 形變、`updateSingleTileInPlace` 單點 `setCompoundButtonChecked` 局部更新（`partiallyUpdateAppWidget`）徹底消除列表重繪跳動、實作雙槽 `<ViewFlipper>` 組別切換轉場、打通 `WidgetSyncManager` 雙向即時同步、`MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位及三語系資源 |
+| `v0.13.0` ~ `v0.13.5` | **M8（桌面小工具 Native Direct RemoteViews + Polish & Scroll Fix）** | 以原生 `DirectWidgetRenderer` 取代 Jetpack Glance 達成毫秒級響應，採用「雙槽位 `<ViewFlipper>` 內嵌原生 `<ListView>` + 純 `<TextView>` Bento 膠囊列」（API 31+ `RemoteCollectionItems` + API 26–30 `TotalCheckWidgetViewsService`）解決 Launcher 攔截垂直滑動手勢並徹底消滅重繪閃爍；整合 `85ms` ripple 綻放延遲、`toggleGeneration` 連點合併、`↺ ⇄ 確認?` 兩段式 `animateLayoutChanges` 過渡、鎖定寬度 `尚缺 X` 篩選 `<ViewFlipper>`、`WidgetSyncManager` 雙向同步與 `MainActivity.EXTRA_WIDGET_CHECKLIST_ID` 跳轉定位 |
+| `v0.14.0` | **M8 Extension（動態預覽佈局 `previewLayout` 與多 Widget 命名規範）** | 新增 Android 12–16/17 純靜態高擬真 `widget_preview_checklist_grid.xml`（呈現 3x2 雙欄雙態對比）與 API < 31 風格 C 向量備援圖 `widget_preview_checklist_grid_fallback.xml`；將 Provider Metadata 結構化升級為 `widget_info_checklist_grid.xml`，並於三語系補齊 `widget_checklist_grid_name`、`widget_checklist_grid_description` 及 `widget_preview_*` 資源（保留 `TotalCheckWidgetReceiver` 類別路徑確保已釘選小工具無縫升級） |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -36,8 +37,9 @@ app/src/main/kotlin/com/example/totalcheck/
 │   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + Widget 狀態: widgetSelectedChecklistId, widgetShowUncheckedOnly, widgetResetConfirmUntilMillis)
 │   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 批次匯入與排序持久化 + 刪除清單快照復原 + seedInitialDataIfNeeded + 重置快照 + WidgetSyncManager 通知
 │   └── widget/
-│       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + 單點局部/全量刷新分流與 5 秒重置超時恢復
-│       ├── DirectWidgetRenderer.kt        # 原生 RemoteViews 四級響應式具名槽位渲染器（含 updateSingleTileInPlace / updateHeaderOnly 局部更新）
+│       ├── WidgetSyncManager.kt           # 記憶體快取熱路徑 + 非同步 DB 寫入鎖 + 85ms ripple 延遲與 toggleGeneration 合併 + 5 秒重置超時恢復
+│       ├── DirectWidgetRenderer.kt        # 原生 RemoteViews 四級響應式雙槽位 ListView / TextView 渲染器
+│       ├── TotalCheckWidgetViewsService.kt # API 26-30 RemoteViewsService 捲動列回退工廠
 │       └── TotalCheckWidgetReceiver.kt    # AppWidgetProvider 廣播與指令接收器
 └── ui/
     ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
@@ -46,14 +48,17 @@ app/src/main/kotlin/com/example/totalcheck/
 
 ## 4. M8 已完成交付說明（桌面小工具 Native Direct RemoteViews）
 
-- **單一全域動態 Widget（四級自適應具名固定槽位版型）**：
+- **多 Widget 擴充命名規範與動態預覽（M8 Extension）**：
+  - Provider Metadata 統一採用 `res/xml/widget_info_<variant>.xml`（本體為 `widget_info_checklist_grid.xml`），對應 `widget_<variant>_name`、`widget_<variant>_description`、`res/layout/widget_preview_<variant>.xml` 與 `res/drawable/widget_preview_<variant>_fallback.xml`。
+  - `widget_preview_checklist_grid.xml` 嚴格使用純靜態 `<LinearLayout>` + `<TextView>`（禁用 `<ListView>` / `<ViewFlipper>`）還原 3x2 雙欄雙態對比（亮底未勾選 + 暗底已勾選），並於 `widget_info_checklist_grid.xml` 設定 `tools:targetApi="31"` 之 `previewLayout` / `description` 與向下相容 `previewImage`。
+- **單一全域動態 Widget（四級自適應版型）**：
   - **Tier 1 (`Micro`, 寬 `< 180.dp` 且 高 `< 110.dp`, 對應 `2x1`)**：純儀表板（清單名稱、大型 `尚缺 X` / `✓ 全部備齊` 膠囊、`< >` 組別切換鈕，點擊主體直接進入 App）。
-  - **Tier 2 (`Compact`, 寬 `< 240.dp` 或 高 `< 140.dp`, 對應 `2x2` / `3x1`)**：迷你頂欄（清單名 + `尚缺 X` 切換過濾 + `< >`）+ 單欄靜態膠囊列（最多 6 項，超出顯示 `widget_overflow_pill`）。
-  - **Tier 3 (`Standard`, 寬 `>= 240.dp` 且 高 `>= 140.dp`, 對應 `3x2` / `4x2`)**：完整頂欄（清單名 + `尚缺 X` 過濾切換 + 兩段式防誤觸重置 `↺` + `< >`）+ 雙欄具名小方塊矩陣（最多 10 項，超出顯示 `widget_overflow_pill` 點擊進入 App）。
-  - **Tier 4 (`Expanded`, 寬 `>= 320.dp` 且 高 `>= 220.dp`, 對應 `4x3` / `4x4`+)**：雙層頂欄（額外展開視覺化 `ProgressBar` 膠囊進度條與 `+ 新增` 快速入口）+ 2~3 欄（寬 `>= 340.dp` 時 3 欄，最多 15 項）高密度具名方塊矩陣與溢位提示膠囊。
-- **互動、動畫與單點局部更新規範**：
-  - **原地狀態轉場 + 單點 `setCompoundButtonChecked` 局部更新 (`partiallyUpdateAppWidget`)**：項目維持 `ORDER BY sortOrder ASC, id DESC` 原始順序；每格採用具名 `<CheckBox>` 槽位結合水波紋、`180ms` 底色漸變與 `● ⇄ ✓` AVD 向量形變。一般模式下點擊勾選透過 `WidgetSyncManager.notifySingleTileChanged()` 呼叫 `DirectWidgetRenderer.updateSingleTileInPlace()`，僅針對頂欄與被點擊的那一顆 `widget_tile_k` 推送 `setCompoundButtonChecked`、刪除線文字與反轉後的點擊 `PendingIntent`，借助 `CompoundButton.setChecked()` 短路保護做到 0 鄰居重繪、0 跳動且 100% 狀態持久化；僅於「只看未帶」移除項目、空面板轉換、重置或主程式變更時觸發 `notifyDataChanged()` 全量更新。
-  - **雙槽位 `<ViewFlipper>` 切換轉場**：點擊 `<` / `>` 切換清單時翻轉 `checklistFlipSlot`（`0 ⇄ 1`），呈現 180ms 淡入微縮放轉場，且 `android:animateLayoutChanges="true"` 僅限縮於頂欄容器。
-  - **兩段式防誤觸重置（`↺`）**：點擊第一下轉為紅底（`errorContainer`）`確認?`（維持 5 秒有效期限並排程自動復原，超時僅執行 `updateHeaderOnly`），期限內再次點擊才執行歸零。
+  - **Tier 2 (`Compact`, 寬 `< 240.dp` 或 高 `< 140.dp`, 對應 `2x2` / `3x1`)**：迷你頂欄（清單名 + `尚缺 X` 切換過濾 + `< >`）+ 單欄可捲動 `<ListView>` 膠囊列。
+  - **Tier 3 (`Standard`, 寬 `>= 240.dp` 且 高 `>= 140.dp`, 對應 `3x2` / `4x2`)**：完整頂欄（清單名 + `尚缺 X` 過濾切換 + 兩段式防誤觸重置 `↺` + `< >`）+ 雙欄可捲動 `<ListView>` Bento 膠囊網格。
+  - **Tier 4 (`Expanded`, 寬 `>= 320.dp` 且 高 `>= 220.dp`, 對應 `4x3` / `4x4`+)**：雙層頂欄（額外展開視覺化 `ProgressBar` 膠囊進度條與 `+ 新增` 快速入口）+ 2~3 欄（寬 `>= 340.dp` 時 3 欄）高密度可捲動 Bento 膠囊網格。
+- **互動、捲動與動效規範**：
+  - **原生 `<ListView>` 捲動容器 + 純 `<TextView>` 膠囊列**：透過 `AdapterView` 攔截桌面垂直滑動手勢（避免 Pixel Launcher 誤觸通知欄/抽屜），API 31+ 使用 `RemoteCollectionItems`（`hasStableIds = true`、`viewTypeCount = 3`）搭配 `PendingIntentTemplate` + `FillInIntent`；一般勾選維持 `ORDER BY sortOrder ASC, id DESC` 原始順序，等待 `85ms` ripple 綻放後原地全量刷新（不呼叫 `ViewFlipper.setDisplayedChild`）以保持捲動位置與鄰居方塊穩定。
+  - **雙槽位 `<ViewFlipper>` 切換轉場**：僅於 `<` / `>` 切換清單或點擊 `尚缺 X` 篩選時翻轉 `checklistFlipSlot`（`0 ⇄ 1`），呈現 180ms 淡入微縮放轉場；且 `尚缺 X` 膠囊鎖定精簡計數寬度，避免切換時擠壓左側清單標題。
+  - **兩段式防誤觸重置（`↺`）**：頂欄右側按鈕區以獨立 `LinearLayout` 啟用 `android:animateLayoutChanges="true"`，點擊 `↺` 後切換為紅底（`errorContainer`）`確認?` 並維持 5 秒有效期限，超時自動復原。
   - **空面板與全部備齊徽章**：當清單無項目時顯示「尚無清點項目，點擊新增」入口；當 `尚缺 0` 且開啟「只看未帶」時，中央顯示 `✓ 全部備齊 (共 N 項)` 膠囊徽章與 `[ ↺ 重新清點 ]` / `[ 顯示全部項目 ]` 快捷鈕。
   - **色彩與點擊連動**：採用 Android 系統日夜模式色盤（`values-v31` / `values-night-v31` 支援 Material You 動態取色）；平時獨立記憶 `widgetSelectedChecklistId`，直接點擊 Widget 標題／進度列進入 App 時透過 `EXTRA_WIDGET_CHECKLIST_ID` 同步定位主畫面 `HorizontalPager`。
