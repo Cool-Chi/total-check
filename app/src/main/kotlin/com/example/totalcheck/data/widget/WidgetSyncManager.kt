@@ -98,6 +98,25 @@ object WidgetSyncManager {
     }
 
     /**
+     * Updates only the widget header bar via AppWidgetManager.partiallyUpdateAppWidget,
+     * keeping the ListView and active CheckBox AVD animations completely untouched.
+     */
+    fun notifyHeaderOnlyChanged(context: Context) {
+        val appContext = context.applicationContext
+        val warmSnapshot = _snapshotFlow.value
+        if (warmSnapshot != null) {
+            DirectWidgetRenderer.updateHeaderOnly(appContext, warmSnapshot)
+            return
+        }
+        scope.launch {
+            runCatching {
+                val loaded = ensureInitialized(appContext)
+                DirectWidgetRenderer.updateHeaderOnly(appContext, loaded)
+            }
+        }
+    }
+
+    /**
      * Synchronous < 3ms hot path called directly inside BroadcastReceiver.onReceive().
      * Returns true if snapshot was already warm in memory and the widget UI was updated
      * immediately on the caller thread; false if a cold DB load is required first.
@@ -123,7 +142,11 @@ object WidgetSyncManager {
         } ?: return true // Command is a valid no-op on warm snapshot.
 
         // Render & push RemoteViews immediately before BroadcastReceiver.onReceive() returns.
-        DirectWidgetRenderer.renderAllWidgets(appContext, step.nextSnapshot)
+        if (step.headerOnlyUpdate) {
+            notifyHeaderOnlyChanged(appContext)
+        } else {
+            DirectWidgetRenderer.renderAllWidgets(appContext, step.nextSnapshot)
+        }
 
         if (step.stage1Generation != 0L) {
             synchronized(snapshotLock) {
@@ -215,6 +238,11 @@ object WidgetSyncManager {
                     }
                 }
                 val finalTargetChecked = targetChecked ?: return null
+                val wasShowingList = listItems.isNotEmpty() &&
+                    (!current.showUncheckedOnly || listItems.any { !it.isChecked })
+                val willShowList = updatedList.isNotEmpty() &&
+                    (!current.showUncheckedOnly || updatedList.any { !it.isChecked })
+                val isInPlaceHeaderOnly = !current.showUncheckedOnly && wasShowingList == willShowList
                 clearResetConfirmLocked()
                 val nextMap = current.itemsByChecklist.toMutableMap().apply {
                     put(activeId, updatedList)
@@ -226,6 +254,7 @@ object WidgetSyncManager {
                 _snapshotFlow.value = nextSnapshot
                 FastCommandStep(
                     nextSnapshot = nextSnapshot,
+                    headerOnlyUpdate = isInPlaceHeaderOnly,
                     persistAction = { ctx ->
                         AppDatabase.getInstance(ctx).checklistDao()
                             .updateItemChecked(itemId = itemId, isChecked = finalTargetChecked)
@@ -371,7 +400,7 @@ object WidgetSyncManager {
                 _snapshotFlow.value = it
             }
         }
-        DirectWidgetRenderer.renderAllWidgets(appContext, nextSnapshot)
+        DirectWidgetRenderer.updateHeaderOnly(appContext, nextSnapshot)
     }
 
     private fun clearResetConfirmLocked() {
@@ -422,6 +451,7 @@ object WidgetSyncManager {
 
     private data class FastCommandStep(
         val nextSnapshot: WidgetUiSnapshot,
+        val headerOnlyUpdate: Boolean = false,
         val persistAction: (suspend (Context) -> Unit)? = null,
         val stage1Generation: Long = 0L,
         val stage1ChecklistId: Long = 0L,

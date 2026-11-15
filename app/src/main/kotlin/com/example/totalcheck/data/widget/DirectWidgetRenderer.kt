@@ -108,6 +108,71 @@ object DirectWidgetRenderer {
         }
     }
 
+    /**
+     * Partially updates only the widget header (title, remaining badge, reset button, switch buttons,
+     * and Tier 4 progress bar) without touching ViewFlipper or ListView collection items.
+     */
+    fun updateHeaderOnly(context: Context) {
+        val snapshot = WidgetSyncManager.snapshotFlow.value ?: return
+        updateHeaderOnly(context, snapshot)
+    }
+
+    internal fun updateHeaderOnly(
+        context: Context,
+        snapshot: WidgetUiSnapshot
+    ) {
+        val activeChecklist = snapshot.activeChecklist ?: return
+        val appContext = context.applicationContext
+        val manager = AppWidgetManager.getInstance(appContext)
+        val provider = ComponentName(appContext, TotalCheckWidgetReceiver::class.java)
+        val appWidgetIds = manager.getAppWidgetIds(provider)
+        if (appWidgetIds.isEmpty()) return
+
+        val checklistItems = snapshot.activeChecklistItems
+        val totalCount = checklistItems.size
+        val uncheckedCount = checklistItems.count { !it.isChecked }
+        val checkedCount = totalCount - uncheckedCount
+        val hasMultipleChecklists = snapshot.checklists.size > 1
+
+        for (appWidgetId in appWidgetIds) {
+            val options = manager.getAppWidgetOptions(appWidgetId)
+            val (widthDp, heightDp) = resolveDimensionsDp(appContext, options)
+            val tier = resolveSizeTier(widthDp, heightDp)
+
+            val headerRv = if (tier == WidgetSizeTier.MICRO) {
+                RemoteViews(appContext.packageName, R.layout.widget_micro).also { rv ->
+                    bindMicroHeaderViews(
+                        context = appContext,
+                        rv = rv,
+                        checklist = activeChecklist,
+                        totalCount = totalCount,
+                        uncheckedCount = uncheckedCount,
+                        hasMultipleChecklists = hasMultipleChecklists,
+                    )
+                }
+            } else {
+                val showResetButton = tier == WidgetSizeTier.STANDARD || tier == WidgetSizeTier.EXPANDED
+                val showExpandedBar = tier == WidgetSizeTier.EXPANDED
+                RemoteViews(appContext.packageName, R.layout.widget_full).also { rv ->
+                    bindFullHeaderViews(
+                        context = appContext,
+                        rv = rv,
+                        checklist = activeChecklist,
+                        totalCount = totalCount,
+                        checkedCount = checkedCount,
+                        uncheckedCount = uncheckedCount,
+                        showUncheckedOnly = snapshot.showUncheckedOnly,
+                        isResetConfirmActive = snapshot.isResetConfirmActive,
+                        hasMultipleChecklists = hasMultipleChecklists,
+                        showResetButton = showResetButton,
+                        showExpandedBar = showExpandedBar,
+                    )
+                }
+            }
+            manager.partiallyUpdateAppWidget(appWidgetId, headerRv)
+        }
+    }
+
     fun resolveColumnCountForWidget(context: Context, appWidgetId: Int): Int {
         val manager = AppWidgetManager.getInstance(context)
         val options = manager.getAppWidgetOptions(appWidgetId)
@@ -243,8 +308,27 @@ object DirectWidgetRenderer {
         uncheckedCount: Int,
         hasMultipleChecklists: Boolean
     ): RemoteViews {
+        return RemoteViews(context.packageName, R.layout.widget_micro).also { rv ->
+            bindMicroHeaderViews(
+                context = context,
+                rv = rv,
+                checklist = checklist,
+                totalCount = totalCount,
+                uncheckedCount = uncheckedCount,
+                hasMultipleChecklists = hasMultipleChecklists,
+            )
+        }
+    }
+
+    private fun bindMicroHeaderViews(
+        context: Context,
+        rv: RemoteViews,
+        checklist: ChecklistEntity,
+        totalCount: Int,
+        uncheckedCount: Int,
+        hasMultipleChecklists: Boolean
+    ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
-        val rv = RemoteViews(context.packageName, R.layout.widget_micro)
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
 
         rv.setTextViewText(R.id.widget_micro_title, checklist.name)
@@ -274,28 +358,22 @@ object DirectWidgetRenderer {
             checklistId = checklist.id,
             enabled = hasMultipleChecklists
         )
-        return rv
     }
 
-    private fun buildFullRemoteViews(
+    private fun bindFullHeaderViews(
         context: Context,
-        appWidgetId: Int,
+        rv: RemoteViews,
         checklist: ChecklistEntity,
         totalCount: Int,
         checkedCount: Int,
         uncheckedCount: Int,
-        visibleItems: List<CheckItemEntity>,
         showUncheckedOnly: Boolean,
         isResetConfirmActive: Boolean,
         hasMultipleChecklists: Boolean,
         showResetButton: Boolean,
         showExpandedBar: Boolean,
-        columnCount: Int,
-        flipSlot: Int,
-        slotIds: FlipSlotViewIds,
-    ): RemoteViews {
+    ) {
         val isAllDone = totalCount > 0 && uncheckedCount == 0
-        val rv = RemoteViews(context.packageName, R.layout.widget_full)
         val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
 
         // Primary Header
@@ -404,6 +482,41 @@ object DirectWidgetRenderer {
         } else {
             rv.setViewVisibility(R.id.widget_expanded_bar, View.GONE)
         }
+    }
+
+    private fun buildFullRemoteViews(
+        context: Context,
+        appWidgetId: Int,
+        checklist: ChecklistEntity,
+        totalCount: Int,
+        checkedCount: Int,
+        uncheckedCount: Int,
+        visibleItems: List<CheckItemEntity>,
+        showUncheckedOnly: Boolean,
+        isResetConfirmActive: Boolean,
+        hasMultipleChecklists: Boolean,
+        showResetButton: Boolean,
+        showExpandedBar: Boolean,
+        columnCount: Int,
+        flipSlot: Int,
+        slotIds: FlipSlotViewIds,
+    ): RemoteViews {
+        val rv = RemoteViews(context.packageName, R.layout.widget_full)
+        val openAppIntent = buildOpenAppPendingIntent(context, checklist.id)
+
+        bindFullHeaderViews(
+            context = context,
+            rv = rv,
+            checklist = checklist,
+            totalCount = totalCount,
+            checkedCount = checkedCount,
+            uncheckedCount = uncheckedCount,
+            showUncheckedOnly = showUncheckedOnly,
+            isResetConfirmActive = isResetConfirmActive,
+            hasMultipleChecklists = hasMultipleChecklists,
+            showResetButton = showResetButton,
+            showExpandedBar = showExpandedBar,
+        )
 
         // Bind only the active ViewFlipper slot so switching < > crossfades old slot -> new slot cleanly.
         rv.setDisplayedChild(R.id.widget_content_flipper, flipSlot)
