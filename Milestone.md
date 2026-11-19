@@ -8,7 +8,7 @@
 - **資料與狀態**：Room `2.8.5`（`AppDatabase` 單例 + `ChecklistRepository`）、Preferences DataStore `1.3.0`（`UserPreferencesRepository`）、`MainViewModel`（`StateFlow`）。
 - **核心設計**：風格 C（`24.dp` 觸感膠囊模組、大型進度數字、飽和色「待備 / ✓ 已備」標籤）、原地勾選狀態轉場（不隨勾選沉底）。
 
-## 2. 已完成里程碑（`v0.0.1` ~ `v0.19.0`）
+## 2. 已完成里程碑（`v0.0.1` ~ `v0.20.0`）
 
 | 版本標籤 | 里程碑 | 核心交付內容 |
 |---|---|---|
@@ -21,7 +21,7 @@
 | `v0.11.0` | **M6（頂部導覽與全域交互優化）** | `ExpandingChecklistTabBar` 長按拖曳重排、`SlideOutCancelModifier`（`0.94f` 下沉與 `44.dp` 滑出取消）、`ScopedModalOverlay`（記憶鍵盤高度首幀零跳動）、邊界手風琴過捲動（Overscroll Accordion）與三語系資源 |
 | `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析與快速匯入）** | 高容錯雙模式解析器 `ChecklistTextParser`、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（`LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調）及 App 圖標 |
 | `v0.13.0` ~ `v0.16.0` | **M8（原生 Direct RemoteViews 雙桌面小工具與雙軌主題同步）** | 以原生 `DirectWidgetRenderer` 實作「工具清單網格（`2x2+` 三級響應式 + `<ListView>`）」與「清單極簡計數條（`2x1~4x1`）」；按 `appWidgetId` 隔離多實例狀態；`WidgetThemePalette` 無反射同步四象限主題色彩；`260ms` 水波紋延遲合併、底部空白列點擊入 App 與 `+ 新增` 自動聚焦鍵盤 |
-| `v0.17.0` ~ `v0.19.0` | **M9（智慧清點提醒、體驗精雕與自動復原架構）** | 完成 Room `v1 → v4` 無損升級（`reminders`、`isArchived`、時間戳擴充欄位與 `item_status_logs`）、`TactileDrumWheel` 3D 時間選擇器與四碼鍵盤直輸、單品提醒／自動復原雙模式 `LiquidTabBar`、項目封存與檢索、左滑置底、連刪加速與資訊卡純圖示統一 |
+| `v0.17.0` ~ `v0.20.0` | **M9（智慧清點提醒、封存自動復原與項目標籤系統）** | 完成 Room `v1 → v4` 無損升級（`reminders`、`isArchived`、時間戳擴充欄位與 `item_status_logs`）、`TactileDrumWheel` 3D 時間選擇器與四碼鍵盤直輸、單品提醒／自動復原雙模式 `LiquidTabBar`、項目封存與檢索、左滑置底、連刪加速、資訊卡純圖示統一、跨清單共用標籤池（狀態膠囊 3D 左右滑翻轉與長按標籤篩選）及行內編輯零位移精調 |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -35,7 +35,7 @@ app/src/main/kotlin/com/example/totalcheck/
 │   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 狀態異動紀錄 + 提醒/自動復原排程連動 + WidgetSyncManager 通知
 │   └── widget/                            # WidgetSyncManager, WidgetThemePalette, DirectWidgetRenderer, TotalCheckWidgetReceiver, TotalCheckCounterWidgetReceiver, TotalCheckWidgetViewsService
 └── ui/
-    ├── main/                              # MainViewModel, ChecklistFilterState, TotalCheckScreen, CapsuleComponents, ReminderConfigContent, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
+    ├── main/                              # MainViewModel, ChecklistFilterState, TagCatalog, TotalCheckScreen, CapsuleComponents, ReminderConfigContent, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
 
 ```
@@ -101,8 +101,15 @@ M9 採開放式多階段迭代架構，分為 **Part 1（功能基底與系統�
 9. **長按刪除進度環套用資訊卡刪除按鈕填充色**：將 `Hold-to-Delete` 外框進度環填充色統一改採資訊卡刪除按鈕內部填充色（`colorScheme.errorContainer.copy(alpha = 0.72f)`），強化整體破壞性操作之視覺語意一致性。
 10. **定時週期項目自動復原功能**：於 `ReminderEntity` 加入 `scheduleKind`（`"REMINDER" | "AUTO_RESTORE"`）複用 `AlarmManager` 精確排程與 `TactileDrumWheel` 滾輪／週期選擇；單品彈窗頂部改用 `LiquidTabBar` 切換「清點提醒」與「自動復原」並各自保留編輯草稿；到點時靜默將項目恢復為待備、寫入 `AUTO_RESTORED` 紀錄並同步 Widget（不推送通知），已啟用自動復原之項目在主列表**僅將外框與左側指示條改為藍色（`primary`）**，不額外添加徽章。
 
+### 🔹 M9 - Part 4：項目標籤池、標籤篩選、零跳動編輯與長按刪除修復（`v0.20.0`，已完成，第 11～14 項修改簡要紀錄）
+
+11. **項目標籤功能與編輯模式對齊**：建立跨清單共用標籤池（`TagCatalog` + DataStore 持久化，預設內建「重要」標籤，最多每項 2 個標籤且支援建立新標籤並從 12 款預設圓角圖示自選）；標籤按鈕僅於點擊鉛筆進入行內編輯後顯示，右側按鈕順序重排為「`標籤` → `封存` → `確認(✓)`（精準對齊原鉛筆位置）→ `取消(✗)`（對齊原拖曳手把位置）」；主列表中支援點按後左右水平滑動 `64.dp` 狀態膠囊以 3D `rotationY` 翻轉顯示 1～2 個標籤。
+12. **長按篩選鈕標籤篩選**：長按資訊卡「篩選」純圖示鈕開啟單一標籤選擇彈窗（含「全部項目」清除標籤篩選），與短按「只看未帶」自由疊加運作；選定標籤時篩選按鈕圖示即時替換為該標籤對應圖示，並支援點擊「編輯標籤」與跨清單共用。
+13. **行內編輯完成零跳動優化**：完成或退出項目名稱編輯時於呼叫層同步關閉軟鍵盤與清除焦點，將 `editBottomInsetFloorState` 退場改為無條件 `300ms` 平滑衰減曲線、延長 `beginExitAnchorLock` 鎖定視窗至 `900ms` 覆蓋整個彈簧回彈週期，並統一 `maxScroll` 與邊界判定基準，消除儲存／取消編輯時的項目垂直位移。
+14. **修復長按刪除中途切換狀態殘留進度環**：於 `CapsuleCheckItemRow` 新增 `cancelHoldAndRewind()` 並監聽 `item.isChecked`、`visualChecked`、`isEditing` 及手勢期間子元件按壓／狀態變化，確保長按到一半切換項目狀態或進入編輯時立即中斷長按動畫並順暢退回刪除進度環。
+
 ### 🔹 後續待辦方向（M10+ 預留）
-* 標籤／分類進階篩選面板（對接 `ChecklistFilterState` 與 `tags` / `category` / `priority`）。
+* 標籤類型分類與進階多標籤篩選列（對接 `TagCatalog`、`ChecklistFilterState` 與 `category` / `priority`）。
 * 左滑置底視覺回饋與過渡動畫（實作 `DragSwipeBottomTransitionSpec`）。
 * 項目歷程統計檢視與清單匯出備份（Markdown / CSV）。
 
