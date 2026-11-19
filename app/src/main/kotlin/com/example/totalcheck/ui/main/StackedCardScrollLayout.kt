@@ -2,10 +2,12 @@ package com.example.totalcheck.ui.main
 
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.TargetBasedAnimation
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.Orientation
@@ -62,6 +64,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -347,6 +350,8 @@ class StackedCardListState {
 
     internal var lastPinnedKey: Any? = null
     internal var lastPinnedVisualTopY: Float = 0f
+    private var pendingRemovalAnchorHandoff: Boolean = false
+    internal var userScrolledManuallySinceReset: Boolean = false
     private var exitAnchorKey: Any? = null
     internal var exitAnchorVisualTopY: Float = 0f
     private var exitAnchorExpireNanos: Long = 0L
@@ -432,13 +437,22 @@ class StackedCardListState {
         exitAnchorExpireNanos = 0L
     }
 
+    internal fun consumePendingRemovalAnchorHandoff(): Boolean {
+        val pending = pendingRemovalAnchorHandoff
+        pendingRemovalAnchorHandoff = false
+        return pending
+    }
+
     /**
      * 當單項處於原地編輯鎖定狀態被封存/移除時，將退場視覺錨點無縫轉交給緊鄰的現存卡片，
      * 避免原項目自鍵值陣列消失後導致退場錨點失效與頁面跳動。
      */
     fun handoffPinnedAnchorBeforeRemoval(removedKey: Any) {
         val idx = currentKeys.indexOf(removedKey)
-        if (idx < 0) return
+        if (idx < 0) {
+            pendingRemovalAnchorHandoff = false
+            return
+        }
         val prevKey = if (idx - 1 >= 0) currentKeys[idx - 1] else null
         val nextKey = if (idx + 1 < currentKeys.size) currentKeys[idx + 1] else null
         val neighborKey = prevKey ?: nextKey
@@ -457,8 +471,10 @@ class StackedCardListState {
             }
             lastPinnedKey = neighborKey
             lastPinnedVisualTopY = neighborVisualTopY
+            pendingRemovalAnchorHandoff = true
         } else {
             lastPinnedKey = null
+            pendingRemovalAnchorHandoff = false
             clearExitAnchorLock()
         }
     }
@@ -513,12 +529,16 @@ class StackedCardListState {
         currentItemTops = FloatArray(0)
         currentItemHeights = FloatArray(0)
         currentTotalLinearHeight = 0f
+        currentAvgStridePx = 0f
         lastReflowKeys = emptyList()
         reflowAnims.clear()
         slotStates.clear()
         lastPinnedKey = null
+        pendingRemovalAnchorHandoff = false
         exitAnchorKey = null
     }
+
+    internal var currentAvgStridePx: Float = 0f
 
     val placedItemsInfo: List<PlacedStackedItemInfo>
         get() {
@@ -581,6 +601,7 @@ class StackedCardListState {
     internal fun consumeScrollDelta(delta: Float): Float {
         if (delta == 0f) return 0f
         if (!isProgrammaticScroll && abs(delta) > 0.5f) {
+            userScrolledManuallySinceReset = true
             clearExitAnchorLock()
         }
         var remainingDelta = delta
@@ -824,7 +845,78 @@ class StackedCardListState {
             )
         } else {
             scrollableState.scroll(MutatePriority.Default) {
-                scrollBy(delta)
+                isProgrammaticScroll = true
+                try {
+                    scrollBy(delta)
+                } finally {
+                    isProgrammaticScroll = false
+                }
+            }
+        }
+    }
+
+    /**
+     * 計算單項在資訊卡收合且軟鍵盤升起後的最小必要捲動量：
+     * 若項目本身已完全位於鍵盤上方的安全可視區內，回傳 null（維持原捲動位置 0px 位移），
+     * 避免編輯中間或上方項目時被迫推擠至頂部。
+     */
+    fun computeMinimalScrollForEditVisibility(
+        key: Any,
+        targetTopInsetPx: Float,
+        targetBottomInsetPx: Float,
+        topBreathingRoomPx: Float,
+        bottomBreathingRoomPx: Float
+    ): Float? {
+        val index = currentKeys.indexOf(key)
+        if (index !in currentItemTops.indices || index !in currentItemHeights.indices) return null
+        val viewportH = viewportHeightState.floatValue
+        if (viewportH <= 1f) return null
+
+        val top = currentItemTops[index]
+        val height = currentItemHeights[index]
+        val visibleTop = targetTopInsetPx + currentTopMarginPx
+        val visibleBottom = (viewportH - targetBottomInsetPx - currentBottomMarginPx)
+            .coerceAtLeast(visibleTop + height)
+        val safeTop = visibleTop + topBreathingRoomPx
+        val safeBottom = (visibleBottom - bottomBreathingRoomPx).coerceAtLeast(safeTop + height)
+
+        val currentScroll = scrollOffsetState.floatValue
+        val projectedTop = targetTopInsetPx + top - currentScroll
+        val projectedBottom = projectedTop + height
+
+        val usableHeight = (viewportH - targetTopInsetPx - targetBottomInsetPx).coerceAtLeast(1f)
+        val targetMaxScroll = (currentTotalLinearHeight - usableHeight).coerceAtLeast(0f)
+
+        val rawTargetScroll = when {
+            projectedTop < safeTop -> targetTopInsetPx + top - safeTop
+            projectedBottom > safeBottom -> targetTopInsetPx + top + height - safeBottom
+            else -> return null
+        }
+        val targetScroll = rawTargetScroll.coerceIn(0f, targetMaxScroll)
+        return if (abs(targetScroll - currentScroll) >= 1f) targetScroll else null
+    }
+
+    suspend fun animateScrollToOffset(
+        targetScrollPx: Float,
+        durationMs: Int = 240,
+        animated: Boolean = true
+    ) {
+        val delta = targetScrollPx - scrollOffsetState.floatValue
+        if (abs(delta) < 0.5f) return
+        if (animated) {
+            animateScrollDelta(
+                targetDelta = delta,
+                animationSpec = tween(durationMillis = durationMs, easing = FastOutSlowInEasing)
+            )
+        } else {
+            scrollableState.scroll(MutatePriority.Default) {
+                isProgrammaticScroll = true
+                try {
+                    clearOverscrollImmediate()
+                    scrollBy(delta)
+                } finally {
+                    isProgrammaticScroll = false
+                }
             }
         }
     }
@@ -990,6 +1082,7 @@ fun <T> BidirectionalStackedCardList(
     val layoutDirection = LocalLayoutDirection.current
     val isReducedMotion = LocalReducedMotion.current
     val scope = rememberCoroutineScope()
+    val tactileHaptics = rememberTactileHaptics()
 
     val currentItems by rememberUpdatedState(items)
     val currentKeySelector by rememberUpdatedState(key)
@@ -1033,8 +1126,46 @@ fun <T> BidirectionalStackedCardList(
             }
     }
 
+    // 列表上下滑動沉厚震動回饋：每跨越一個項目步距觸發一次低頻沉厚震動（程式自動捲動不觸發）
+    LaunchedEffect(state, density, tactileHaptics) {
+        val fallbackStridePx = with(density) { 72.dp.toPx() }
+        var lastStepIndex = Int.MIN_VALUE
+        snapshotFlow { state.scrollOffsetState.floatValue }.collect { offsetPx ->
+            val stridePx = state.currentAvgStridePx.takeIf { it > 1f } ?: fallbackStridePx
+            val currentStepIndex = floor(offsetPx / stridePx).toInt()
+            if (lastStepIndex == Int.MIN_VALUE) {
+                lastStepIndex = currentStepIndex
+                return@collect
+            }
+            if (!state.scrollableState.isScrollInProgress || state.isProgrammaticScroll) {
+                lastStepIndex = currentStepIndex
+                return@collect
+            }
+            if (currentStepIndex != lastStepIndex) {
+                lastStepIndex = currentStepIndex
+                tactileHaptics.performListScrollDetent()
+            }
+        }
+    }
+
+    // 列表頂部／底部邊界過捲動沉厚回饋：手指拉出達門檻時觸發單次回彈震動，縮回安全帶後解鎖
+    LaunchedEffect(state, density, tactileHaptics) {
+        val triggerPx = with(density) { 14.dp.toPx() }
+        val resetPx = with(density) { 4.dp.toPx() }
+        var boundaryArmed = false
+        snapshotFlow { state.visualOverscrollState.floatValue }.collect { visualOverscroll ->
+            val absVal = abs(visualOverscroll)
+            if (absVal <= resetPx) {
+                boundaryArmed = false
+            } else if (!boundaryArmed && absVal >= triggerPx && !state.isProgrammaticScroll && !state.isFlinging) {
+                boundaryArmed = true
+                tactileHaptics.performListBoundaryThud()
+            }
+        }
+    }
+
     val baseFlingBehavior = ScrollableDefaults.flingBehavior()
-    val overscrollFlingBehavior = remember(state, baseFlingBehavior) {
+    val overscrollFlingBehavior = remember(state, baseFlingBehavior, tactileHaptics) {
         object : FlingBehavior {
             override suspend fun ScrollScope.performFling(initialVelocity: Float): Float {
                 if (state.isReducedMotionEnabled) {
@@ -1074,6 +1205,7 @@ fun <T> BidirectionalStackedCardList(
                     state.scrollOffsetState.floatValue >= state.maxScrollState.floatValue - 0.5f &&
                         remainingVelocity > 80f
                 if (atTopBoundary || atBottomBoundary) {
+                    tactileHaptics.performListBoundaryThud()
                     val maxImpactVel = state.maxOverscrollPx * 22f
                     val impactVisualVel = (-remainingVelocity * OVERSCROLL_FLING_IMPACT_FACTOR)
                         .coerceIn(-maxImpactVel, maxImpactVel)
@@ -1222,6 +1354,7 @@ fun <T> BidirectionalStackedCardList(
 
             val contentSpan = (totalLinearHeight - topPaddingPx - bottomPaddingPx + gapPx).coerceAtLeast(1f)
             val avgStride = (contentSpan / count).coerceAtLeast(1f)
+            state.currentAvgStridePx = avgStride
             val effectiveStride = (avgStride - peekStepPx).coerceAtLeast(1f)
 
             layout(width, height) {
@@ -1262,11 +1395,13 @@ fun <T> BidirectionalStackedCardList(
                     (state.lastPinnedKey != null || state.hasActiveExitAnchor())
                 val nowNanos = if (needsExitAnchorCheck) System.nanoTime() else 0L
                 if (pinnedKey == null && state.lastPinnedKey != null) {
-                    state.beginExitAnchorLock(
-                        key = state.lastPinnedKey!!,
-                        visualTopY = state.lastPinnedVisualTopY,
-                        nowNanos = nowNanos
-                    )
+                    if (state.consumePendingRemovalAnchorHandoff()) {
+                        state.beginExitAnchorLock(
+                            key = state.lastPinnedKey!!,
+                            visualTopY = state.lastPinnedVisualTopY,
+                            nowNanos = nowNanos
+                        )
+                    }
                     state.lastPinnedKey = null
                 }
 

@@ -123,7 +123,7 @@ private val WHEEL_HEIGHT = 172.dp
 private val WHEEL_WIDTH = 92.dp
 private val WHEEL_ROW_STEP = 36.dp
 private val WHEEL_CYLINDER_RADIUS = 104.dp
-private val FAST_STEP_VELOCITY_THRESHOLD = 450.dp
+private val FAST_STEP_VELOCITY_THRESHOLD = 950.dp
 private const val HAPTIC_DEBOUNCE_MS = 18L
 
 @Immutable
@@ -954,7 +954,7 @@ private fun TactileDrumWheel(
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         if (exceededSlop) {
                             val instSpeed = abs(dy) * 1000f / dtMs
-                            emaSpeedPxPerSec = emaSpeedPxPerSec * 0.55f + instSpeed * 0.45f
+                            emaSpeedPxPerSec = emaSpeedPxPerSec * 0.65f + instSpeed * 0.35f
                             val isFastDrag = enableDualSpeed &&
                                 emaSpeedPxPerSec >= fastThresholdPxPerSec
                             isFastStepMode = isFastDrag

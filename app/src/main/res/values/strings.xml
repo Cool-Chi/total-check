@@ -200,20 +200,45 @@
     <string name="snackbar_auto_restore_saved">Auto-reset set: %1$s</string>
     <string name="snackbar_auto_restore_deleted">Item auto-reset turned off</string>
 
-    <!-- Item Tags & Tag Filter (M9-Part4) -->
+    <!-- Item Tags & Tag Filter (M9-Part4 & M9-Part5) -->
     <string name="a11y_filter_by_tag">Select tag filter</string>
     <string name="cd_filter_items_with_tag">Filter items · Tag: %1$s</string>
     <string name="a11y_show_item_tags">Show item tags</string>
     <string name="a11y_hide_item_tags">Show item status</string>
+    <string name="a11y_item_tags_empty">No tags set</string>
+    <string name="a11y_item_tags_long_press_reserved">Advanced tag actions (coming soon)</string>
+    <string name="a11y_item_tags_quick_toggle">Quick toggle last used tag</string>
     <string name="cd_edit_item_tags">Edit item tags</string>
     <string name="dialog_item_tags_title">Item Tags</string>
     <string name="item_tags_limit_counter">%1$d / %2$d</string>
-    <string name="item_tags_pool_label">Tag Pool</string>
+    <string name="item_tags_pool_label">Available Tags</string>
+    <string name="item_tags_pool_empty_hint">No tags yet. Long-press the info card to open Settings and create global or list tags.</string>
     <string name="item_tags_create_section_label">Create New Tag</string>
     <string name="item_tags_new_name_placeholder">New tag name (e.g. Fragile)</string>
+    <string name="item_tags_new_global_placeholder">New global tag (e.g. Urgent)</string>
+    <string name="item_tags_new_checklist_placeholder">New list tag (e.g. Checked Bag)</string>
+    <string name="settings_global_tags_empty_hint">No global tags yet. Create a shared solid-icon tag above.</string>
+    <string name="settings_checklist_tags_empty_hint">No list-only tags yet. Create an outlined-icon tag for this list above.</string>
     <string name="dialog_filter_tag_title">Filter by Tag</string>
     <string name="dialog_filter_tag_subtitle">Long-press the filter icon anytime to switch tags; combines with unchecked-only filter.</string>
     <string name="filter_tag_all_items">All Items (No Tag Filter)</string>
+    <string name="a11y_open_info_card_settings">Open info card settings panel</string>
+    <string name="a11y_edit_card_layout_reserved">Customize info card layout (coming soon)</string>
+    <string name="info_settings_tab_tags">List Tags (%1$d)</string>
+    <string name="info_settings_tab_global_tags">Global (%1$d)</string>
+    <string name="info_settings_tab_checklist_tags">List (%1$d)</string>
+    <string name="info_settings_tab_archived">Archived (%1$d)</string>
+    <string name="info_settings_tab_archived_short">Archive (%1$d)</string>
+    <string name="cd_delete_tag_from_pool">Delete tag \"%1$s\"</string>
+    <string name="snackbar_deleted_pool_tag">Deleted tag \"%1$s\" and removed it from items</string>
+    <string name="snackbar_created_pool_tag">Created tag \"%1$s\"</string>
+    <string name="snackbar_edit_card_layout_reserved">Info card layout customization will be available in an upcoming update</string>
+    <string name="snackbar_item_tags_long_press_reserved">Long-press item tag actions will be available in an upcoming update</string>
+    <string name="snackbar_quick_tag_added">Applied tag \"%1$s\"</string>
+    <string name="snackbar_quick_tag_removed">Removed tag \"%1$s\"</string>
+    <string name="snackbar_quick_tag_limit_reached">Maximum of 2 tags per item reached</string>
+    <string name="snackbar_quick_tag_none_available">No tags available yet. Create one in Info Card settings.</string>
+    <string name="a11y_double_tap_rename_checklist">Rename checklist inline</string>
 
     <!-- Skeleton -->
     <string name="skeleton_loading_state">Loading checklists</string>

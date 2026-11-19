@@ -1,35 +1,51 @@
 package com.example.totalcheck.ui.main
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.LocalOffer
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -38,10 +54,12 @@ import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.LocalOffer
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.NotificationsPaused
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -93,10 +111,13 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -111,6 +132,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,32 +155,49 @@ import kotlin.math.roundToInt
 
 private class CheckedStateTracker(var value: Boolean)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CapsuleProgressModule(
+    checklistId: Long,
     uncheckedCount: Int,
     totalCount: Int,
     progressProvider: () -> Float,
     filterState: ChecklistFilterState,
-    tagPool: List<TagDefinition> = emptyList(),
+    globalTagPool: List<TagDefinition> = emptyList(),
+    checklistTagPool: List<TagDefinition> = emptyList(),
     onToggleFilter: () -> Unit,
     onLongClickFilter: () -> Unit = {},
     onReset: () -> Unit,
     canDeleteChecklist: Boolean,
     archivedCount: Int = 0,
+    archivedItems: List<CheckItemEntity> = emptyList(),
     onOpenArchivedItems: () -> Unit = {},
+    onUnarchiveItem: (CheckItemEntity) -> Unit = {},
+    onDeleteArchivedItemForever: (CheckItemEntity) -> Unit = {},
+    onCreateTagInPool: (name: String, iconKey: String, scope: TagScope) -> Unit = { _, _, _ -> },
+    onDeleteTagFromPool: (TagDefinition) -> Unit = {},
     onRenameChecklist: () -> Unit,
+    onLongClickRenameChecklist: () -> Unit = {},
     onDeleteChecklist: () -> Unit,
+    onSettingsPanelOpenChanged: (Boolean) -> Unit = {},
     activeChecklistReminder: ReminderEntity? = null,
+    hasAnyActiveItemReminder: Boolean = false,
     onOpenChecklistReminder: () -> Unit = {},
     onQuickChecklistReminder15m: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER")
     archiveButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     reminderButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     renameButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     deleteButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val viewConfig = LocalViewConfiguration.current
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val isReducedMotion = LocalReducedMotion.current
     val freezeColorTransition = LocalThemeTransitioning.current || isReducedMotion
     val colorSpec: AnimationSpec<Color> = if (freezeColorTransition) {
@@ -196,336 +235,995 @@ fun CapsuleProgressModule(
         }
     }
 
+    var isSettingsPanelOpen by remember { mutableStateOf(false) }
+    var activeSettingsTab by remember { mutableIntStateOf(0) } // 0 = 全域標籤, 1 = 清單標籤, 2 = 封存項目
+    var normalCardHeightDp by remember { mutableStateOf(126.dp) }
+    var isChildActionButtonPressed by remember { mutableStateOf(false) }
+    val currentIsChildActionButtonPressed by rememberUpdatedState(isChildActionButtonPressed)
+    val currentIsSettingsPanelOpen by rememberUpdatedState(isSettingsPanelOpen)
+    val currentOnSettingsPanelOpenChanged by rememberUpdatedState(onSettingsPanelOpenChanged)
+
+    val settingsExpandFraction by animateFloatAsState(
+        targetValue = if (isSettingsPanelOpen) 1f else 0f,
+        animationSpec = if (isReducedMotion) {
+            snap()
+        } else {
+            tween(durationMillis = 260, easing = FastOutSlowInEasing)
+        },
+        label = "infoCardSettingsExpand"
+    )
+
+    LaunchedEffect(isSettingsPanelOpen) {
+        currentOnSettingsPanelOpenChanged(isSettingsPanelOpen)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            currentOnSettingsPanelOpenChanged(false)
+        }
+    }
+
+    val closeSettingsPanel: () -> Unit = {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        isSettingsPanelOpen = false
+    }
+
+    BackHandler(enabled = isSettingsPanelOpen) {
+        closeSettingsPanel()
+    }
+
+    val openSettingsLongClickLabel = stringResource(R.string.a11y_open_info_card_settings)
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, colorScheme.outlineVariant)
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text = if (uncheckedCount == 0 && totalCount > 0) {
-                            stringResource(R.string.progress_all_set)
-                        } else {
-                            stringResource(R.string.progress_left_count, uncheckedCount)
-                        },
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontFeatureSettings = "tnum"
-                        ),
-                        fontWeight = FontWeight.ExtraBold,
-                        color = accentColor,
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = badgePulse.value
-                            scaleY = badgePulse.value
-                            transformOrigin = TransformOrigin(0f, 0.7f)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .onSizeChanged { size ->
+                if (!currentIsSettingsPanelOpen && settingsExpandFraction <= 0.001f && size.height > 0) {
+                    val measuredDp = with(density) { size.height.toDp() }
+                    if (measuredDp >= 96.dp) {
+                        normalCardHeightDp = measuredDp
+                    }
+                }
+            }
+            .then(
+                if (isSettingsPanelOpen || settingsExpandFraction > 0.001f) {
+                    // 展開／收合時平滑插值（1x ⇄ 2x 高度），同步逐幀將下方項目列表往下推與收回
+                    Modifier.height(normalCardHeightDp * (1f + settingsExpandFraction))
+                } else {
+                    Modifier
+                }
+            )
+            .semantics {
+                if (!isSettingsPanelOpen) {
+                    customActions = listOf(
+                        CustomAccessibilityAction(openSettingsLongClickLabel) {
+                            isSettingsPanelOpen = true
+                            true
                         }
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.progress_total_count, totalCount),
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontFeatureSettings = "tnum"
-                        ),
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-                val hasCheckedItems = totalCount > uncheckedCount
-                TactileButton(
-                    onClick = onReset,
-                    enabled = hasCheckedItems,
-                    shape = RoundedCornerShape(50),
-                    containerColor = colorScheme.surfaceContainerHighest,
-                    contentColor = colorScheme.onSurface,
-                    disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
-                    disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.RestartAlt,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = stringResource(R.string.action_reset_all),
-                        style = MaterialTheme.typography.labelLarge
-                    )
                 }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            val trackColor = colorScheme.surfaceContainerHighest
-            val dividerColor = colorScheme.surfaceContainerHigh
-            val trackPath = remember { Path() }
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(14.dp)
-                    .graphicsLayer {
-                        val currentProgress = progressProvider()
-                        val over = (currentProgress - 1f).coerceAtLeast(0f)
-                        scaleX = 1f + over * 0.08f
-                        scaleY = 1f + over * 0.45f
-                        transformOrigin = TransformOrigin(0.5f, 0.5f)
+            .pointerInput(isSettingsPanelOpen) {
+                if (isSettingsPanelOpen) return@pointerInput
+                val touchSlop = viewConfig.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var cancelled = false
+                    var fired = false
+                    val holdJob = scope.launch {
+                        delay(350L)
+                        if (
+                            !cancelled &&
+                            !currentIsChildActionButtonPressed &&
+                            !currentIsSettingsPanelOpen
+                        ) {
+                            fired = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            isSettingsPanelOpen = true
+                        }
                     }
-            ) {
-                val currentProgress = progressProvider()
-                val radius = size.height / 2f
-                val corner = CornerRadius(radius, radius)
-                trackPath.reset()
-                trackPath.addRoundRect(
-                    RoundRect(
-                        left = 0f,
-                        top = 0f,
-                        right = size.width,
-                        bottom = size.height,
-                        cornerRadius = corner
-                    )
-                )
-                drawRoundRect(
-                    color = trackColor,
-                    cornerRadius = corner
-                )
-                val clampedProgress = currentProgress.coerceIn(0f, 1f)
-                if (clampedProgress > 0.002f) {
-                    val fillWidth = (size.width * clampedProgress).coerceIn(0f, size.width)
-                    clipPath(trackPath) {
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Main)
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || change.isConsumed || currentIsChildActionButtonPressed) {
+                                cancelled = true
+                                holdJob.cancel()
+                                break
+                            }
+                            if (fired) {
+                                change.consume()
+                            }
+                            val dist = hypot(
+                                change.position.x - down.position.x,
+                                change.position.y - down.position.y
+                            )
+                            if (dist > touchSlop) {
+                                cancelled = true
+                                holdJob.cancel()
+                                break
+                            }
+                            if (!change.pressed) {
+                                cancelled = true
+                                holdJob.cancel()
+                                break
+                            }
+                        }
+                    } finally {
+                        holdJob.cancel()
+                    }
+                }
+            }
+            .testTag("capsule_progress_module"),
+        shape = RoundedCornerShape(24.dp),
+        color = colorScheme.surfaceContainerHigh,
+        border = BorderStroke(
+            width = if (isSettingsPanelOpen) 1.5.dp else 1.dp,
+            color = if (isSettingsPanelOpen) {
+                colorScheme.primary.copy(alpha = 0.65f)
+            } else {
+                colorScheme.outlineVariant
+            }
+        )
+    ) {
+        AnimatedContent(
+            targetState = isSettingsPanelOpen,
+            transitionSpec = {
+                if (isReducedMotion) {
+                    fadeIn(animationSpec = snap()) togetherWith fadeOut(animationSpec = snap())
+                } else {
+                    fadeIn(animationSpec = tween(durationMillis = 200)) togetherWith
+                        fadeOut(animationSpec = tween(durationMillis = 160))
+                }
+            },
+            label = "infoCardSettingsTransition"
+        ) { expanded ->
+            if (!expanded) {
+                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = if (uncheckedCount == 0 && totalCount > 0) {
+                                    stringResource(R.string.progress_all_set)
+                                } else {
+                                    stringResource(R.string.progress_left_count, uncheckedCount)
+                                },
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontFeatureSettings = "tnum"
+                                ),
+                                fontWeight = FontWeight.ExtraBold,
+                                color = accentColor,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = badgePulse.value
+                                    scaleY = badgePulse.value
+                                    transformOrigin = TransformOrigin(0f, 0.7f)
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.progress_total_count, totalCount),
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontFeatureSettings = "tnum"
+                                ),
+                                color = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+                        val hasCheckedItems = totalCount > uncheckedCount
+                        // 寬度精準對齊下方兩顆 40.dp 圓形按鈕 + 8.dp 間距 = 88.dp
+                        TactileButton(
+                            onClick = onReset,
+                            enabled = hasCheckedItems,
+                            modifier = Modifier
+                                .width(88.dp)
+                                .testTag("reset_checklist_button"),
+                            shape = RoundedCornerShape(50),
+                            containerColor = colorScheme.surfaceContainerHighest,
+                            contentColor = colorScheme.onSurface,
+                            disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                            disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            onPressChanged = { pressed -> isChildActionButtonPressed = pressed }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.RestartAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.action_reset_all),
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val trackColor = colorScheme.surfaceContainerHighest
+                    val dividerColor = colorScheme.surfaceContainerHigh
+                    val trackPath = remember { Path() }
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(14.dp)
+                            .graphicsLayer {
+                                val currentProgress = progressProvider()
+                                val over = (currentProgress - 1f).coerceAtLeast(0f)
+                                scaleX = 1f + over * 0.08f
+                                scaleY = 1f + over * 0.45f
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            }
+                    ) {
+                        val currentProgress = progressProvider()
+                        val radius = size.height / 2f
+                        val corner = CornerRadius(radius, radius)
+                        trackPath.reset()
+                        trackPath.addRoundRect(
+                            RoundRect(
+                                left = 0f,
+                                top = 0f,
+                                right = size.width,
+                                bottom = size.height,
+                                cornerRadius = corner
+                            )
+                        )
                         drawRoundRect(
-                            color = accentColor,
-                            topLeft = Offset(fillWidth - size.width, 0f),
-                            size = Size(size.width, size.height),
+                            color = trackColor,
                             cornerRadius = corner
                         )
+                        val clampedProgress = currentProgress.coerceIn(0f, 1f)
+                        if (clampedProgress > 0.002f) {
+                            val fillWidth = (size.width * clampedProgress).coerceIn(0f, size.width)
+                            clipPath(trackPath) {
+                                drawRoundRect(
+                                    color = accentColor,
+                                    topLeft = Offset(fillWidth - size.width, 0f),
+                                    size = Size(size.width, size.height),
+                                    cornerRadius = corner
+                                )
+                            }
+                        }
+                        if (totalCount in 2..20) {
+                            val dividerWidth = 2.5.dp.toPx()
+                            for (i in 1 until totalCount) {
+                                val x = size.width * (i.toFloat() / totalCount) - dividerWidth / 2f
+                                drawRect(
+                                    color = dividerColor,
+                                    topLeft = Offset(x, 0f),
+                                    size = Size(dividerWidth, size.height)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val availableTagsForFilter = remember(globalTagPool, checklistTagPool) {
+                            globalTagPool + checklistTagPool
+                        }
+                        val activeFilterTagToken = filterState
+                            .effectiveSelectedTagsForChecklist(checklistId)
+                            .firstOrNull()
+                        val activeFilterTagDef = remember(activeFilterTagToken, availableTagsForFilter) {
+                            activeFilterTagToken?.let { token ->
+                                TagCatalog.resolveSingleTagDefinition(token, availableTagsForFilter)
+                            }
+                        }
+                        val isFilterActive = filterState.isActiveForChecklist(checklistId)
+                        val filterIcon = if (activeFilterTagDef != null) {
+                            TagCatalog.resolveTagIcon(
+                                iconKey = activeFilterTagDef.iconKey,
+                                scope = activeFilterTagDef.scope
+                            )
+                        } else {
+                            Icons.Rounded.FilterList
+                        }
+                        val filterLongClickLabel = stringResource(R.string.a11y_filter_by_tag)
+                        val filterContentDesc = if (activeFilterTagDef != null) {
+                            stringResource(R.string.cd_filter_items_with_tag, activeFilterTagDef.name)
+                        } else {
+                            stringResource(R.string.cd_filter_items)
+                        }
+                        TactileIconButton(
+                            onClick = onToggleFilter,
+                            onLongClick = onLongClickFilter,
+                            onLongClickLabel = filterLongClickLabel,
+                            longPressTimeoutMs = 350L,
+                            onPressChanged = { pressed -> isChildActionButtonPressed = pressed },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("filter_checklist_button"),
+                            shape = RoundedCornerShape(50),
+                            containerColor = if (isFilterActive) {
+                                colorScheme.tertiaryContainer
+                            } else {
+                                colorScheme.surfaceContainerHighest
+                            },
+                            contentColor = if (isFilterActive) {
+                                colorScheme.onTertiaryContainer
+                            } else {
+                                colorScheme.onSurfaceVariant
+                            },
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isFilterActive) {
+                                    colorScheme.tertiary.copy(alpha = 0.5f)
+                                } else {
+                                    colorScheme.outlineVariant
+                                }
+                            )
+                        ) {
+                            Icon(
+                                imageVector = filterIcon,
+                                contentDescription = filterContentDesc,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                        ) {
+                            val isReminderActive = activeChecklistReminder != null && activeChecklistReminder.isEnabled
+                            val isChecklistReminderSkipped = isReminderActive &&
+                                ReminderScheduler.isPeriodicReminderSkipped(activeChecklistReminder)
+                            TactileIconButton(
+                                onClick = onOpenChecklistReminder,
+                                onLongClick = onQuickChecklistReminder15m,
+                                onLongClickLabel = stringResource(
+                                    if (isReminderActive) {
+                                        R.string.a11y_cancel_or_skip_reminder
+                                    } else {
+                                        R.string.a11y_quick_reminder_15m
+                                    }
+                                ),
+                                longPressTimeoutMs = 350L,
+                                sinkScale = 0.92f,
+                                onPressChanged = { pressed -> isChildActionButtonPressed = pressed },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .focusRequester(reminderButtonFocusRequester)
+                                    .testTag("checklist_reminder_button"),
+                                shape = RoundedCornerShape(50),
+                                containerColor = if (isReminderActive) {
+                                    colorScheme.primaryContainer
+                                } else {
+                                    colorScheme.surfaceContainerHighest
+                                },
+                                contentColor = if (isReminderActive) {
+                                    colorScheme.onPrimaryContainer
+                                } else {
+                                    colorScheme.onSurfaceVariant
+                                },
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (isReminderActive) {
+                                        colorScheme.primary.copy(alpha = 0.5f)
+                                    } else {
+                                        colorScheme.outlineVariant
+                                    }
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = when {
+                                        isChecklistReminderSkipped -> Icons.Rounded.NotificationsPaused
+                                        isReminderActive -> Icons.Rounded.Notifications
+                                        hasAnyActiveItemReminder -> Icons.Rounded.Notifications
+                                        else -> Icons.Rounded.NotificationsNone
+                                    },
+                                    contentDescription = stringResource(R.string.cd_checklist_reminder),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            TactileIconButton(
+                                onClick = onRenameChecklist,
+                                onLongClick = onLongClickRenameChecklist,
+                                onLongClickLabel = stringResource(R.string.a11y_edit_card_layout_reserved),
+                                longPressTimeoutMs = 350L,
+                                onPressChanged = { pressed -> isChildActionButtonPressed = pressed },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .focusRequester(renameButtonFocusRequester)
+                                    .testTag("rename_checklist_button"),
+                                shape = RoundedCornerShape(50),
+                                containerColor = colorScheme.surfaceContainerHighest,
+                                contentColor = colorScheme.onSurfaceVariant,
+                                border = BorderStroke(1.dp, colorScheme.outlineVariant)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = stringResource(R.string.cd_rename_checklist),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            TactileIconButton(
+                                onClick = onDeleteChecklist,
+                                enabled = canDeleteChecklist,
+                                onPressChanged = { pressed -> isChildActionButtonPressed = pressed },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .focusRequester(deleteButtonFocusRequester)
+                                    .testTag("delete_checklist_button"),
+                                shape = RoundedCornerShape(50),
+                                containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
+                                contentColor = colorScheme.onErrorContainer,
+                                disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                                disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (canDeleteChecklist) {
+                                        colorScheme.error.copy(alpha = 0.35f)
+                                    } else {
+                                        colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                    }
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.DeleteOutline,
+                                    contentDescription = stringResource(
+                                        if (canDeleteChecklist) {
+                                            R.string.cd_delete_checklist
+                                        } else {
+                                            R.string.cd_delete_checklist_disabled
+                                        }
+                                    ),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                     }
                 }
-                if (totalCount in 2..20) {
-                    val dividerWidth = 2.5.dp.toPx()
-                    for (i in 1 until totalCount) {
-                        val x = size.width * (i.toFloat() / totalCount) - dividerWidth / 2f
-                        drawRect(
-                            color = dividerColor,
-                            topLeft = Offset(x, 0f),
-                            size = Size(dividerWidth, size.height)
-                        )
-                    }
-                }
+            } else {
+                InfoCardSettingsPanelContent(
+                    activeTab = activeSettingsTab,
+                    onSelectTab = { nextTab ->
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        activeSettingsTab = nextTab
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    },
+                    onClose = closeSettingsPanel,
+                    globalTagPool = globalTagPool,
+                    checklistTagPool = checklistTagPool,
+                    onCreateTagInPool = onCreateTagInPool,
+                    onDeleteTagFromPool = onDeleteTagFromPool,
+                    archivedCount = archivedCount,
+                    archivedItems = archivedItems,
+                    onUnarchiveItem = onUnarchiveItem,
+                    onDeleteArchivedItemForever = onDeleteArchivedItemForever
+                )
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(10.dp))
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InfoCardSettingsPanelContent(
+    activeTab: Int,
+    onSelectTab: (Int) -> Unit,
+    onClose: () -> Unit,
+    globalTagPool: List<TagDefinition>,
+    checklistTagPool: List<TagDefinition>,
+    onCreateTagInPool: (name: String, iconKey: String, scope: TagScope) -> Unit,
+    onDeleteTagFromPool: (TagDefinition) -> Unit,
+    archivedCount: Int,
+    archivedItems: List<CheckItemEntity>,
+    onUnarchiveItem: (CheckItemEntity) -> Unit,
+    onDeleteArchivedItemForever: (CheckItemEntity) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val haptic = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
+    val currentTagScope = if (activeTab == 1) TagScope.CHECKLIST else TagScope.GLOBAL
+    val activeScopeTags = if (activeTab == 1) checklistTagPool else globalTagPool
+
+    var newTagName by remember { mutableStateOf("") }
+    var selectedIconKey by remember { mutableStateOf(TagCatalog.DEFAULT_ICON_KEY) }
+    val sanitizedNewName = TagCatalog.sanitizeTagName(newTagName)
+    val canCreateTag = sanitizedNewName.isNotEmpty()
+
+    val submitNewTag: () -> Unit = {
+        if (canCreateTag) {
+            onCreateTagInPool(sanitizedNewName, selectedIconKey, currentTagScope)
+            newTagName = ""
+            keyboardController?.hide()
+            focusManager.clearFocus()
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .testTag("info_card_settings_panel")
+    ) {
+        // 頂欄：並列三頁「全域標籤（實心圖示）／清單標籤（空心圖示）／封存」 + 右上角關閉按鈕
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState())
             ) {
-                val activeFilterTagName = filterState.selectedTags.firstOrNull()
-                val activeFilterTagDef = remember(activeFilterTagName, tagPool) {
-                    activeFilterTagName?.let { name ->
-                        tagPool.firstOrNull { it.name == name } ?: TagDefinition(
-                            name = name,
-                            iconKey = if (name == TagCatalog.DEFAULT_TAG_NAME) TagCatalog.DEFAULT_ICON_KEY else "offer"
-                        )
-                    }
-                }
-                val isFilterActive = filterState.isActive
-                val filterIcon = if (activeFilterTagDef != null) {
-                    TagCatalog.resolveTagIcon(activeFilterTagDef.iconKey)
-                } else {
-                    Icons.Rounded.FilterList
-                }
-                val filterLongClickLabel = stringResource(R.string.a11y_filter_by_tag)
-                val filterContentDesc = if (activeFilterTagDef != null) {
-                    stringResource(R.string.cd_filter_items_with_tag, activeFilterTagDef.name)
-                } else {
-                    stringResource(R.string.cd_filter_items)
-                }
-                TactileIconButton(
-                    onClick = onToggleFilter,
-                    onLongClick = onLongClickFilter,
-                    onLongClickLabel = filterLongClickLabel,
-                    longPressTimeoutMs = 350L,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("filter_checklist_button"),
+                val isGlobalTab = activeTab == 0
+                TactileButton(
+                    onClick = { onSelectTab(0) },
                     shape = RoundedCornerShape(50),
-                    containerColor = if (isFilterActive) {
-                        colorScheme.tertiaryContainer
+                    containerColor = if (isGlobalTab) {
+                        colorScheme.primaryContainer
                     } else {
                         colorScheme.surfaceContainerHighest
                     },
-                    contentColor = if (isFilterActive) {
-                        colorScheme.onTertiaryContainer
+                    contentColor = if (isGlobalTab) {
+                        colorScheme.onPrimaryContainer
                     } else {
                         colorScheme.onSurfaceVariant
                     },
                     border = BorderStroke(
-                        width = 1.dp,
-                        color = if (isFilterActive) {
-                            colorScheme.tertiary.copy(alpha = 0.5f)
-                        } else {
-                            colorScheme.outlineVariant
-                        }
-                    )
+                        width = if (isGlobalTab) 1.5.dp else 1.dp,
+                        color = if (isGlobalTab) colorScheme.primary else colorScheme.outlineVariant
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+                    modifier = Modifier.testTag("settings_tab_global_tags")
                 ) {
                     Icon(
-                        imageVector = filterIcon,
-                        contentDescription = filterContentDesc,
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Rounded.LocalOffer,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = stringResource(R.string.info_settings_tab_global_tags, globalTagPool.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isGlobalTab) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                val isChecklistTab = activeTab == 1
+                TactileButton(
+                    onClick = { onSelectTab(1) },
+                    shape = RoundedCornerShape(50),
+                    containerColor = if (isChecklistTab) {
+                        colorScheme.primaryContainer
+                    } else {
+                        colorScheme.surfaceContainerHighest
+                    },
+                    contentColor = if (isChecklistTab) {
+                        colorScheme.onPrimaryContainer
+                    } else {
+                        colorScheme.onSurfaceVariant
+                    },
+                    border = BorderStroke(
+                        width = if (isChecklistTab) 1.5.dp else 1.dp,
+                        color = if (isChecklistTab) colorScheme.primary else colorScheme.outlineVariant
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+                    modifier = Modifier.testTag("settings_tab_checklist_tags")
                 ) {
-                    val hasArchivedItems = archivedCount > 0
-                    TactileIconButton(
-                        onClick = onOpenArchivedItems,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .focusRequester(archiveButtonFocusRequester)
-                            .testTag("archive_checklist_button"),
-                        shape = RoundedCornerShape(50),
-                        containerColor = if (hasArchivedItems) {
-                            colorScheme.secondaryContainer
-                        } else {
-                            colorScheme.surfaceContainerHighest
-                        },
-                        contentColor = if (hasArchivedItems) {
-                            colorScheme.onSecondaryContainer
-                        } else {
-                            colorScheme.onSurfaceVariant
-                        },
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = if (hasArchivedItems) {
-                                colorScheme.secondary.copy(alpha = 0.45f)
-                            } else {
-                                colorScheme.outlineVariant
-                            }
-                        )
+                    Icon(
+                        imageVector = Icons.Outlined.LocalOffer,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = stringResource(R.string.info_settings_tab_checklist_tags, checklistTagPool.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isChecklistTab) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+
+                val isArchiveTab = activeTab == 2
+                TactileButton(
+                    onClick = { onSelectTab(2) },
+                    shape = RoundedCornerShape(50),
+                    containerColor = if (isArchiveTab) {
+                        colorScheme.primaryContainer
+                    } else {
+                        colorScheme.surfaceContainerHighest
+                    },
+                    contentColor = if (isArchiveTab) {
+                        colorScheme.onPrimaryContainer
+                    } else {
+                        colorScheme.onSurfaceVariant
+                    },
+                    border = BorderStroke(
+                        width = if (isArchiveTab) 1.5.dp else 1.dp,
+                        color = if (isArchiveTab) colorScheme.primary else colorScheme.outlineVariant
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+                    modifier = Modifier.testTag("settings_tab_archived_items")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Archive,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = stringResource(R.string.info_settings_tab_archived_short, archivedCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isArchiveTab) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            TactileIconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("close_info_card_settings_button"),
+                shape = CircleShape,
+                containerColor = colorScheme.surfaceContainerHighest,
+                contentColor = colorScheme.onSurfaceVariant,
+                border = BorderStroke(1.dp, colorScheme.outlineVariant)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.action_close),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            if (activeTab == 0 || activeTab == 1) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // 新增標籤列：名稱輸入框 + 新增按鈕
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Archive,
-                            contentDescription = if (hasArchivedItems) {
-                                stringResource(R.string.cd_open_archive_panel_count, archivedCount)
-                            } else {
-                                stringResource(R.string.cd_open_archive_panel)
-                            },
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = colorScheme.surfaceContainerHighest,
+                            border = BorderStroke(1.dp, colorScheme.outlineVariant)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (newTagName.isEmpty()) {
+                                    Text(
+                                        text = stringResource(
+                                            if (currentTagScope == TagScope.GLOBAL) {
+                                                R.string.item_tags_new_global_placeholder
+                                            } else {
+                                                R.string.item_tags_new_checklist_placeholder
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                BasicTextField(
+                                    value = newTagName,
+                                    onValueChange = { newTagName = it },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                        color = colorScheme.onSurface,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    cursorBrush = SolidColor(colorScheme.primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { submitNewTag() }),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("settings_new_tag_name_input")
+                                )
+                            }
+                        }
+
+                        TactileButton(
+                            onClick = submitNewTag,
+                            enabled = canCreateTag,
+                            shape = RoundedCornerShape(14.dp),
+                            containerColor = colorScheme.primary,
+                            contentColor = colorScheme.onPrimary,
+                            disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                            disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("settings_create_tag_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = stringResource(R.string.action_create),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
-                    val isReminderActive = activeChecklistReminder != null && activeChecklistReminder.isEnabled
-                    val isChecklistReminderSkipped = isReminderActive &&
-                        ReminderScheduler.isPeriodicReminderSkipped(activeChecklistReminder)
-                    TactileIconButton(
-                        onClick = onOpenChecklistReminder,
-                        onLongClick = onQuickChecklistReminder15m,
-                        onLongClickLabel = stringResource(
-                            if (isReminderActive) {
-                                R.string.a11y_cancel_or_skip_reminder
-                            } else {
-                                R.string.a11y_quick_reminder_15m
-                            }
-                        ),
-                        longPressTimeoutMs = 350L,
-                        sinkScale = 0.92f,
+                    // 預設圖示挑選列（全域標籤顯示實心圖示；清單標籤顯示空心圖示）
+                    Row(
                         modifier = Modifier
-                            .size(40.dp)
-                            .focusRequester(reminderButtonFocusRequester)
-                            .testTag("checklist_reminder_button"),
-                        shape = RoundedCornerShape(50),
-                        containerColor = if (isReminderActive) {
-                            colorScheme.primaryContainer
-                        } else {
-                            colorScheme.surfaceContainerHighest
-                        },
-                        contentColor = if (isReminderActive) {
-                            colorScheme.onPrimaryContainer
-                        } else {
-                            colorScheme.onSurfaceVariant
-                        },
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = if (isReminderActive) {
-                                colorScheme.primary.copy(alpha = 0.5f)
-                            } else {
-                                colorScheme.outlineVariant
-                            }
-                        )
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = when {
-                                isChecklistReminderSkipped -> Icons.Rounded.NotificationsPaused
-                                isReminderActive -> Icons.Rounded.NotificationsActive
-                                else -> Icons.Rounded.NotificationsNone
-                            },
-                            contentDescription = stringResource(R.string.cd_checklist_reminder),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    TactileIconButton(
-                        onClick = onRenameChecklist,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .focusRequester(renameButtonFocusRequester)
-                            .testTag("rename_checklist_button"),
-                        shape = RoundedCornerShape(50),
-                        containerColor = colorScheme.surfaceContainerHighest,
-                        contentColor = colorScheme.onSurfaceVariant,
-                        border = BorderStroke(1.dp, colorScheme.outlineVariant)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Edit,
-                            contentDescription = stringResource(R.string.cd_rename_checklist),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    TactileIconButton(
-                        onClick = onDeleteChecklist,
-                        enabled = canDeleteChecklist,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .focusRequester(deleteButtonFocusRequester)
-                            .testTag("delete_checklist_button"),
-                        shape = RoundedCornerShape(50),
-                        containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
-                        contentColor = colorScheme.onErrorContainer,
-                        disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
-                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = if (canDeleteChecklist) {
-                                colorScheme.error.copy(alpha = 0.35f)
-                            } else {
-                                colorScheme.outlineVariant.copy(alpha = 0.4f)
-                            }
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.DeleteOutline,
-                            contentDescription = stringResource(
-                                if (canDeleteChecklist) {
-                                    R.string.cd_delete_checklist
+                        TagCatalog.PRESET_ICONS.forEach { option ->
+                            val isIconSelected = selectedIconKey == option.key
+                            TactileIconButton(
+                                onClick = {
+                                    selectedIconKey = option.key
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("settings_tag_icon_${option.key}"),
+                                shape = CircleShape,
+                                containerColor = if (isIconSelected) {
+                                    colorScheme.primaryContainer
                                 } else {
-                                    R.string.cd_delete_checklist_disabled
+                                    colorScheme.surfaceContainerHighest
+                                },
+                                contentColor = if (isIconSelected) {
+                                    colorScheme.onPrimaryContainer
+                                } else {
+                                    colorScheme.onSurfaceVariant
+                                },
+                                border = BorderStroke(
+                                    width = if (isIconSelected) 1.5.dp else 1.dp,
+                                    color = if (isIconSelected) colorScheme.primary else colorScheme.outlineVariant
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = option.iconFor(currentTagScope),
+                                    contentDescription = option.key,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // 當前分頁標籤列表（支援點擊右側刪除按鈕移除並連動清理項目）
+                    if (activeScopeTags.isEmpty()) {
+                        Text(
+                            text = stringResource(
+                                if (currentTagScope == TagScope.GLOBAL) {
+                                    R.string.settings_global_tags_empty_hint
+                                } else {
+                                    R.string.settings_checklist_tags_empty_hint
                                 }
                             ),
-                            modifier = Modifier.size(18.dp)
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
+                    } else {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            activeScopeTags.forEach { tagDef ->
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = colorScheme.surfaceContainerHighest,
+                                    border = BorderStroke(1.dp, colorScheme.outlineVariant),
+                                    modifier = Modifier.testTag("settings_pool_tag_${tagDef.storageToken}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = TagCatalog.resolveTagIcon(
+                                                iconKey = tagDef.iconKey,
+                                                scope = tagDef.scope
+                                            ),
+                                            contentDescription = null,
+                                            tint = colorScheme.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = tagDef.name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colorScheme.onSurface,
+                                            maxLines = 1
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        TactileIconButton(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onDeleteTagFromPool(tagDef)
+                                            },
+                                            modifier = Modifier
+                                                .size(22.dp)
+                                                .testTag("delete_pool_tag_${tagDef.storageToken}"),
+                                            shape = CircleShape,
+                                            containerColor = colorScheme.errorContainer.copy(alpha = 0.65f),
+                                            contentColor = colorScheme.onErrorContainer
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Close,
+                                                contentDescription = stringResource(
+                                                    R.string.cd_delete_tag_from_pool,
+                                                    tagDef.name
+                                                ),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 封存項目內嵌檢視
+                if (archivedItems.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Archive,
+                                contentDescription = null,
+                                tint = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.archived_items_empty_title),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.archived_items_empty_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        archivedItems.forEach { archivedItem ->
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = colorScheme.surfaceContainerLow,
+                                border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("inline_archived_item_${archivedItem.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = archivedItem.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        TactileIconButton(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onUnarchiveItem(archivedItem)
+                                            },
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .testTag("inline_unarchive_${archivedItem.id}"),
+                                            shape = CircleShape,
+                                            containerColor = colorScheme.primaryContainer,
+                                            contentColor = colorScheme.onPrimaryContainer
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Unarchive,
+                                                contentDescription = stringResource(
+                                                    R.string.cd_unarchive_item,
+                                                    archivedItem.label
+                                                ),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                        TactileIconButton(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onDeleteArchivedItemForever(archivedItem)
+                                            },
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .testTag("inline_delete_archived_${archivedItem.id}"),
+                                            shape = CircleShape,
+                                            containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
+                                            contentColor = colorScheme.onErrorContainer
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteOutline,
+                                                contentDescription = stringResource(
+                                                    R.string.cd_delete_archived_item_forever,
+                                                    archivedItem.label
+                                                ),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -600,6 +1298,7 @@ fun CapsuleCheckItemRow(
     onEditDraftChanged: ((String) -> Unit)? = null,
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
+    onLongClickItemTags: () -> Unit = {},
     onArchive: () -> Unit = {},
     onDelete: () -> Unit = {},
     canMoveUp: Boolean = false,
@@ -617,6 +1316,8 @@ fun CapsuleCheckItemRow(
     val isReducedMotion = LocalReducedMotion.current
     val currentOnToggle by rememberUpdatedState(onToggle)
     val currentOnQuickItemReminder15m by rememberUpdatedState(onQuickItemReminder15m)
+    val currentOnEditTags by rememberUpdatedState(onEditTags)
+    val currentOnLongClickItemTags by rememberUpdatedState(onLongClickItemTags)
     val currentHoldDeleteFillDurationMsProvider by rememberUpdatedState(holdDeleteFillDurationMsProvider)
     val currentIsCompressedProvider by rememberUpdatedState(isCompressedProvider)
     val currentOnCompressedClick by rememberUpdatedState(onCompressedClick)
@@ -645,7 +1346,7 @@ fun CapsuleCheckItemRow(
     }
     val hasTags = resolvedTags.isNotEmpty()
     var isShowingTagsFace by remember(item.id) { mutableStateOf(false) }
-    if ((!hasTags || isEditing) && isShowingTagsFace) {
+    if (isEditing && isShowingTagsFace) {
         isShowingTagsFace = false
     }
 
@@ -1007,14 +1708,12 @@ fun CapsuleCheckItemRow(
                                         true
                                     }
                                 )
-                                if (hasTags) {
-                                    add(
-                                        CustomAccessibilityAction(toggleTagsFaceActionLabel) {
-                                            isShowingTagsFace = !isShowingTagsFace
-                                            true
-                                        }
-                                    )
-                                }
+                                add(
+                                    CustomAccessibilityAction(toggleTagsFaceActionLabel) {
+                                        isShowingTagsFace = !isShowingTagsFace
+                                        true
+                                    }
+                                )
                             }
                         }
                     }
@@ -1238,29 +1937,7 @@ fun CapsuleCheckItemRow(
                         )
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    // 左起：標籤 (32.dp)、封存 (32.dp)［合佔原 64.dp 膠囊寬度］→ 確認(✓) (32.dp 對齊原鉛筆) → 取消(✗) (34.dp 對齊拖曳手把)
-                    val editTagIcon = if (hasTags) {
-                        TagCatalog.resolveTagIcon(resolvedTags.first().iconKey)
-                    } else {
-                        Icons.Rounded.LocalOffer
-                    }
-                    TactileIconButton(
-                        onClick = {
-                            keyboardController?.hide()
-                            onEditTags()
-                        },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("tag_item_button_${item.id}"),
-                        contentColor = if (hasTags) colorScheme.primary else colorScheme.onSurfaceVariant,
-                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
-                    ) {
-                        Icon(
-                            imageVector = editTagIcon,
-                            contentDescription = stringResource(R.string.cd_edit_item_tags),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
+                    // 左起：封存 (32.dp) → 確認(✓) (32.dp 精準對齊原鉛筆) → 取消(✗) (34.dp 對齊拖曳手把)；原標籤按鈕已整合至標籤狀態膠囊
                     TactileIconButton(
                         onClick = {
                             keyboardController?.hide()
@@ -1318,6 +1995,18 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 } else {
+                    Text(
+                        text = displayedLabel,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
+                        color = colorScheme.onSurface,
+                        textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 4.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     if (hasActiveReminder) {
                         val rawBadgeText = ReminderFormatter.formatCompactBadge(
                             context = context,
@@ -1330,88 +2019,52 @@ fun CapsuleCheckItemRow(
                         } else {
                             rawBadgeText
                         }
-                        val badgeTint = if (isSkippedOnce) {
-                            colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+                        val reminderTimeColor = if (isSkippedOnce) {
+                            colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
                         } else {
-                            colorScheme.primary
+                            colorScheme.onSurfaceVariant
                         }
-                        Column(
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .padding(vertical = 2.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .slideOutCancelClickable(
+                                    enabled = !isDeleting,
+                                    shape = RoundedCornerShape(6.dp),
+                                    sinkScale = 0.96f,
+                                    longPressTimeoutMs = 350L,
+                                    onLongClickLabel = cancelOrSkipReminderLabel,
+                                    onPressChanged = { pressed -> isChildButtonPressed = pressed },
+                                    onLongClick = {
+                                        if (currentIsCompressedProvider()) {
+                                            currentOnCompressedClick?.invoke()
+                                        } else {
+                                            currentOnQuickItemReminder15m()
+                                        }
+                                    },
+                                    onClick = {
+                                        if (currentIsCompressedProvider()) {
+                                            currentOnCompressedClick?.invoke()
+                                        } else {
+                                            onOpenItemReminder()
+                                        }
+                                    }
+                                )
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = displayedLabel,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
-                                color = colorScheme.onSurface,
-                                textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
-                                maxLines = 2,
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFeatureSettings = "tnum"
+                                ),
+                                fontWeight = FontWeight.Medium,
+                                color = reminderTimeColor,
+                                maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .slideOutCancelClickable(
-                                        enabled = !isDeleting,
-                                        shape = RoundedCornerShape(6.dp),
-                                        sinkScale = 0.96f,
-                                        longPressTimeoutMs = 350L,
-                                        onLongClickLabel = cancelOrSkipReminderLabel,
-                                        onPressChanged = { pressed -> isChildButtonPressed = pressed },
-                                        onLongClick = {
-                                            if (currentIsCompressedProvider()) {
-                                                currentOnCompressedClick?.invoke()
-                                            } else {
-                                                currentOnQuickItemReminder15m()
-                                            }
-                                        },
-                                        onClick = {
-                                            if (currentIsCompressedProvider()) {
-                                                currentOnCompressedClick?.invoke()
-                                            } else {
-                                                onOpenItemReminder()
-                                            }
-                                        }
-                                    )
-                                    .padding(horizontal = 2.dp, vertical = 1.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isSkippedOnce) {
-                                        Icons.Rounded.NotificationsPaused
-                                    } else {
-                                        Icons.Rounded.NotificationsActive
-                                    },
-                                    contentDescription = null,
-                                    tint = badgeTint,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Text(
-                                    text = badgeText,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = badgeTint,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
-                    } else {
-                        Text(
-                            text = displayedLabel,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (visualChecked) FontWeight.Normal else FontWeight.SemiBold,
-                            color = colorScheme.onSurface,
-                            textDecoration = if (visualChecked) TextDecoration.LineThrough else TextDecoration.None,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(vertical = 4.dp),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     val badgeWidthPx = with(density) { 64.dp.roundToPx() }
@@ -1425,7 +2078,7 @@ fun CapsuleCheckItemRow(
                         label = "capsuleBellSinkScale"
                     )
                     val flipDegrees by animateFloatAsState(
-                        targetValue = if (isShowingTagsFace && hasTags) 180f else 0f,
+                        targetValue = if (isShowingTagsFace) 180f else 0f,
                         animationSpec = if (isReducedMotion) {
                             snap()
                         } else {
@@ -1493,13 +2146,12 @@ fun CapsuleCheckItemRow(
                                         Icon(
                                             imageVector = when {
                                                 isSkippedOnce -> Icons.Rounded.NotificationsPaused
-                                                hasActiveReminder -> Icons.Rounded.NotificationsActive
+                                                hasActiveReminder -> Icons.Rounded.Notifications
                                                 else -> Icons.Rounded.NotificationsNone
                                             },
                                             contentDescription = null,
                                             tint = when {
                                                 isSkippedOnce -> colorScheme.onTertiaryContainer.copy(alpha = 0.62f)
-                                                hasActiveReminder -> colorScheme.primary
                                                 else -> colorScheme.onTertiaryContainer
                                             },
                                             modifier = Modifier.size(13.5.dp)
@@ -1583,10 +2235,11 @@ fun CapsuleCheckItemRow(
                                     }
                                 }
                             } else {
-                                // 翻轉背面：顯示 1~2 個項目標籤（固定 64.dp × 28.dp 膠囊內）
-                                val backBgColor = colorScheme.primaryContainer
-                                val backBorderColor = colorScheme.primary.copy(alpha = 0.45f)
-                                val backContentColor = colorScheme.onPrimaryContainer
+                                // 翻轉背面（標籤狀態按鈕）：純圖示呈現（0 標籤＝空心標籤輪廓、1 標籤＝置中圖示、2 標籤＝垂直細線分隔雙圖示），色調對齊右側鉛筆圖示
+                                val backBgColor = colorScheme.surfaceContainerHighest
+                                val backBorderColor = colorScheme.outlineVariant.copy(alpha = 0.72f)
+                                val backContentColor = colorScheme.onSurfaceVariant
+                                val backDividerColor = colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                                 Box(
                                     modifier = Modifier
                                         .matchParentSize()
@@ -1605,61 +2258,61 @@ fun CapsuleCheckItemRow(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (resolvedTags.size == 1) {
-                                        val tag = resolvedTags[0]
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.Center
-                                        ) {
+                                    when (resolvedTags.size) {
+                                        0 -> {
                                             Icon(
-                                                imageVector = TagCatalog.resolveTagIcon(tag.iconKey),
+                                                imageVector = Icons.Outlined.LocalOffer,
                                                 contentDescription = null,
-                                                tint = backContentColor,
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(3.dp))
-                                            Text(
-                                                text = tag.name,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = backContentColor,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                tint = backContentColor.copy(alpha = 0.78f),
+                                                modifier = Modifier.size(15.dp)
                                             )
                                         }
-                                    } else {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                        ) {
-                                            resolvedTags.take(TagCatalog.MAX_TAGS_PER_ITEM).forEach { tag ->
-                                                Row(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = TagCatalog.resolveTagIcon(tag.iconKey),
-                                                        contentDescription = null,
-                                                        tint = backContentColor,
-                                                        modifier = Modifier.size(11.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(1.5.dp))
-                                                    Text(
-                                                        text = tag.name,
-                                                        style = MaterialTheme.typography.labelSmall.copy(
-                                                            fontSize = 10.sp
-                                                        ),
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = backContentColor,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
+                                        1 -> {
+                                            val tag = resolvedTags[0]
+                                            Icon(
+                                                imageVector = TagCatalog.resolveTagIcon(
+                                                    iconKey = tag.iconKey,
+                                                    scope = tag.scope
+                                                ),
+                                                contentDescription = null,
+                                                tint = backContentColor,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                        else -> {
+                                            val firstTag = resolvedTags[0]
+                                            val secondTag = resolvedTags[1]
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceEvenly
+                                            ) {
+                                                Icon(
+                                                    imageVector = TagCatalog.resolveTagIcon(
+                                                        iconKey = firstTag.iconKey,
+                                                        scope = firstTag.scope
+                                                    ),
+                                                    contentDescription = null,
+                                                    tint = backContentColor,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .width(1.dp)
+                                                        .height(12.dp)
+                                                        .background(backDividerColor)
+                                                )
+                                                Icon(
+                                                    imageVector = TagCatalog.resolveTagIcon(
+                                                        iconKey = secondTag.iconKey,
+                                                        scope = secondTag.scope
+                                                    ),
+                                                    contentDescription = null,
+                                                    tint = backContentColor,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
                                             }
                                         }
                                     }
@@ -1667,14 +2320,16 @@ fun CapsuleCheckItemRow(
                             }
                         }
 
-                        if (!visualChecked || hasTags || isShowingTagsFace) {
+                        run {
                             val itemReminderCd = stringResource(R.string.cd_item_reminder, displayedLabel)
+                            val emptyTagsCd = stringResource(R.string.a11y_item_tags_empty)
+                            val editTagsActionLabel = stringResource(R.string.cd_edit_item_tags)
+                            val longPressTagsReservedLabel = stringResource(R.string.a11y_item_tags_quick_toggle)
                             val tagsSummaryCd = if (hasTags) {
                                 resolvedTags.joinToString(", ") { it.name }
                             } else {
-                                ""
+                                emptyTagsCd
                             }
-                            val currentHasTags by rememberUpdatedState(hasTags)
                             val currentIsShowingTagsFace by rememberUpdatedState(isShowingTagsFace)
                             val currentOnOpenReminder by rememberUpdatedState(onOpenItemReminder)
                             Box(
@@ -1684,21 +2339,35 @@ fun CapsuleCheckItemRow(
                                     .height(32.dp)
                                     .testTag("reminder_item_button_${item.id}")
                                     .semantics {
-                                        contentDescription = if (isShowingTagsFace && tagsSummaryCd.isNotEmpty()) {
+                                        contentDescription = if (isShowingTagsFace) {
                                             tagsSummaryCd
                                         } else {
                                             itemReminderCd
                                         }
-                                        if (hasTags) {
-                                            customActions = listOf(
+                                        customActions = buildList {
+                                            add(
                                                 CustomAccessibilityAction(toggleTagsFaceActionLabel) {
                                                     isShowingTagsFace = !isShowingTagsFace
                                                     true
                                                 }
                                             )
+                                            if (isShowingTagsFace) {
+                                                add(
+                                                    CustomAccessibilityAction(editTagsActionLabel) {
+                                                        currentOnEditTags()
+                                                        true
+                                                    }
+                                                )
+                                                add(
+                                                    CustomAccessibilityAction(longPressTagsReservedLabel) {
+                                                        currentOnLongClickItemTags()
+                                                        true
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
-                                    .pointerInput(item.id, isEditing, isDeleting, hasTags, visualChecked) {
+                                    .pointerInput(item.id, isEditing, isDeleting, visualChecked) {
                                         if (isEditing || isDeleting) return@pointerInput
                                         val swipeTriggerPx = 14.dp.toPx()
                                         val touchSlop = viewConfiguration.touchSlop
@@ -1724,20 +2393,25 @@ fun CapsuleCheckItemRow(
                                                 return@awaitEachGesture
                                             }
                                             isChildButtonPressed = true
-                                            val showSink = !currentIsShowingTagsFace && !currentVisualChecked
+                                            val startedOnTagsFace = currentIsShowingTagsFace
+                                            val showSink = startedOnTagsFace || !currentVisualChecked
                                             if (showSink) {
                                                 isBellPressed = true
                                             }
                                             var didSwipeFlip = false
                                             var didLongPress = false
-                                            val longPressJob = if (showSink) {
+                                            val longPressJob = if (startedOnTagsFace || !currentVisualChecked) {
                                                 scope.launch {
                                                     delay(350L)
                                                     if (!didSwipeFlip && !currentIsEditing && !isDeleting) {
                                                         didLongPress = true
                                                         isBellPressed = false
                                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        currentOnQuickItemReminder15m()
+                                                        if (startedOnTagsFace) {
+                                                            currentOnLongClickItemTags()
+                                                        } else {
+                                                            currentOnQuickItemReminder15m()
+                                                        }
                                                     }
                                                 }
                                             } else {
@@ -1755,9 +2429,8 @@ fun CapsuleCheckItemRow(
                                                     val dy = change.position.y - down.position.y
                                                     val dist = hypot(dx, dy)
 
-                                                    // 若項目有標籤且明顯為水平滑動，搶先在 Main pass 消費以避免被 HorizontalPager 攔截
+                                                    // 全狀態（含 0 標籤、已備／待備）皆允許於狀態膠囊水平滑動翻轉，並於 Main pass 優先消費避免被 HorizontalPager 攔截
                                                     if (
-                                                        currentHasTags &&
                                                         !didLongPress &&
                                                         abs(dx) > touchSlop * 0.45f &&
                                                         abs(dx) > abs(dy)
@@ -1790,8 +2463,8 @@ fun CapsuleCheckItemRow(
                                                                 change.consume()
                                                                 when {
                                                                     currentIsShowingTagsFace -> {
-                                                                        isShowingTagsFace = false
                                                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                        currentOnEditTags()
                                                                     }
                                                                     !currentVisualChecked -> {
                                                                         currentOnOpenReminder()

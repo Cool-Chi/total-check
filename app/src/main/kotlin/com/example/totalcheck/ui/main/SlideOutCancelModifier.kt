@@ -446,6 +446,7 @@ fun TactileButton(
     longPressTimeoutMs: Long? = null,
     onLongClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
+    onPressChanged: ((Boolean) -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val resolvedContainer = if (enabled) containerColor else disabledContainerColor
@@ -461,6 +462,7 @@ fun TactileButton(
                 longPressTimeoutMs = longPressTimeoutMs,
                 onLongClickLabel = onLongClickLabel,
                 onLongClick = onLongClick,
+                onPressChanged = onPressChanged,
                 onClick = onClick
             ),
         shape = shape,
