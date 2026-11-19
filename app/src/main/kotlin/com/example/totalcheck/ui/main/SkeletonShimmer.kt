@@ -479,83 +479,28 @@ fun TotalCheckSkeletonShimmer(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // 對齊 TactileFilterChip 的 defaultMinSize(minHeight = 48.dp) 與內部 32.dp 膠囊
                     Box(
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .shimmerBlock(
-                                    blockIndex = 3,
-                                    blockColor = blockColor,
-                                    sheenColor = sheenColor,
-                                    isReducedMotion = isReducedMotion,
-                                    elapsedMillisProvider = elapsedProvider,
-                                    durationMillis = durationMillis,
-                                    staggerMillis = staggerMillis,
-                                    shape = RoundedCornerShape(50)
-                                )
-                                .padding(start = 8.dp, end = 16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.alpha(0f)
-                            ) {
-                                Spacer(modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = stringResource(R.string.filter_unchecked_only),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
+                        modifier = Modifier
+                            .size(40.dp)
+                            .shimmerBlock(
+                                blockIndex = 3,
+                                blockColor = blockColor,
+                                sheenColor = sheenColor,
+                                isReducedMotion = isReducedMotion,
+                                elapsedMillisProvider = elapsedProvider,
+                                durationMillis = durationMillis,
+                                staggerMillis = staggerMillis,
+                                shape = CircleShape
+                            )
+                    )
 
-                    // 右側操作群組（1:1 對齊提醒膠囊按鈕 + 重新命名圓鈕 + 刪除圓鈕）
                     Row(
-                        modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .defaultMinSize(minWidth = 58.dp, minHeight = 40.dp)
-                                .height(40.dp)
-                                .shimmerBlock(
-                                    blockIndex = 3,
-                                    blockColor = blockColor,
-                                    sheenColor = sheenColor,
-                                    isReducedMotion = isReducedMotion,
-                                    elapsedMillisProvider = elapsedProvider,
-                                    durationMillis = durationMillis,
-                                    staggerMillis = staggerMillis,
-                                    shape = RoundedCornerShape(50)
-                                )
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.alpha(0f)
-                            ) {
-                                Spacer(modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(R.string.action_reminder_short),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                        repeat(2) {
+                        repeat(4) {
                             Box(
                                 modifier = Modifier
                                     .size(40.dp)

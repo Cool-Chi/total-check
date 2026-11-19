@@ -54,9 +54,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -151,6 +154,11 @@ internal sealed interface ChecklistModalContent {
         val checklist: ChecklistEntity,
         val item: CheckItemEntity? = null,
         val existingReminder: ReminderEntity? = null,
+        val existingAutoRestore: ReminderEntity? = null,
+        val initialScheduleKind: String = ReminderEntity.KIND_REMINDER,
+    ) : ChecklistModalContent
+    data class ArchivedItems(
+        val checklist: ChecklistEntity,
     ) : ChecklistModalContent
 }
 
@@ -172,8 +180,9 @@ internal fun ScopedModalHost(
         minute: Int,
         repeatDaysBitmask: Int,
         onlyIfUnchecked: Boolean,
-    ) -> Unit = { _, _, _, _, _, _ -> },
-    onDeleteReminder: (reminderId: Long) -> Unit = {},
+        scheduleKind: String,
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
+    onDeleteReminder: (reminderId: Long, scheduleKind: String) -> Unit = { _, _ -> },
     @Suppress("UNUSED_PARAMETER")
     onSendTestReminder: (
         checklistId: Long,
@@ -184,6 +193,9 @@ internal fun ScopedModalHost(
         onlyIfUnchecked: Boolean,
     ) -> Unit = { _, _, _, _, _, _ -> },
     onNotificationPermissionDenied: () -> Unit = {},
+    archivedItemsByChecklist: Map<Long, List<CheckItemEntity>> = emptyMap(),
+    onUnarchiveItem: (CheckItemEntity) -> Unit = {},
+    onDeleteArchivedItemForever: (CheckItemEntity) -> Unit = {},
     onExited: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1049,23 +1061,63 @@ internal fun ScopedModalHost(
                 }
 
                 is ChecklistModalContent.ConfigureReminder -> {
-                    val existing = modalContent.existingReminder
-                    val initialTime = remember(sessionKey) {
-                        if (existing != null) {
-                            existing.hour to existing.minute
+                    val targetChecklist = modalContent.checklist
+                    val targetItem = modalContent.item
+                    val existingReminder = modalContent.existingReminder
+                    val existingAutoRestore = modalContent.existingAutoRestore
+
+                    var activeTabIndex by remember(sessionKey) {
+                        mutableIntStateOf(
+                            if (targetItem != null && modalContent.initialScheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                                1
+                            } else {
+                                0
+                            }
+                        )
+                    }
+                    val isAutoRestoreMode = targetItem != null && activeTabIndex == 1
+                    val activeScheduleKind = if (isAutoRestoreMode) {
+                        ReminderEntity.KIND_AUTO_RESTORE
+                    } else {
+                        ReminderEntity.KIND_REMINDER
+                    }
+
+                    val initialRemTime = remember(sessionKey) {
+                        if (existingReminder != null) {
+                            existingReminder.hour to existingReminder.minute
                         } else {
                             val now = LocalTime.now()
                             now.hour to now.minute
                         }
                     }
-                    var selectedHour by remember(sessionKey) { mutableIntStateOf(initialTime.first) }
-                    var selectedMinute by remember(sessionKey) { mutableIntStateOf(initialTime.second) }
-                    var repeatMask by remember(sessionKey) {
-                        mutableIntStateOf(existing?.repeatDaysBitmask ?: 0)
+                    val initialAutoRestoreTime = remember(sessionKey) {
+                        if (existingAutoRestore != null) {
+                            existingAutoRestore.hour to existingAutoRestore.minute
+                        } else {
+                            val now = LocalTime.now()
+                            now.hour to now.minute
+                        }
+                    }
+
+                    var remHour by remember(sessionKey) { mutableIntStateOf(initialRemTime.first) }
+                    var remMinute by remember(sessionKey) { mutableIntStateOf(initialRemTime.second) }
+                    var remMask by remember(sessionKey) {
+                        mutableIntStateOf(existingReminder?.repeatDaysBitmask ?: 0)
                     }
                     var onlyIfUnchecked by remember(sessionKey) {
-                        mutableStateOf(existing?.onlyIfUnchecked ?: true)
+                        mutableStateOf(existingReminder?.onlyIfUnchecked ?: true)
                     }
+
+                    var arHour by remember(sessionKey) { mutableIntStateOf(initialAutoRestoreTime.first) }
+                    var arMinute by remember(sessionKey) { mutableIntStateOf(initialAutoRestoreTime.second) }
+                    var arMask by remember(sessionKey) {
+                        mutableIntStateOf(existingAutoRestore?.repeatDaysBitmask ?: 0)
+                    }
+
+                    val selectedHour = if (isAutoRestoreMode) arHour else remHour
+                    val selectedMinute = if (isAutoRestoreMode) arMinute else remMinute
+                    val repeatMask = if (isAutoRestoreMode) arMask else remMask
+
                     var isDirectInputMode by remember(sessionKey) { mutableStateOf(false) }
                     var smartTimeState by remember(sessionKey) { mutableStateOf(SmartTimeInputState()) }
                     var invalidShakeSignal by remember(sessionKey) { mutableIntStateOf(0) }
@@ -1101,12 +1153,10 @@ internal fun ScopedModalHost(
                         }
                     }
 
-                    val targetChecklist = modalContent.checklist
-                    val targetItem = modalContent.item
-                    val modalTitle = if (targetItem == null) {
-                        stringResource(R.string.dialog_reminder_checklist_title)
-                    } else {
-                        stringResource(R.string.dialog_reminder_item_title)
+                    val modalTitle = when {
+                        targetItem == null -> stringResource(R.string.dialog_reminder_checklist_title)
+                        isAutoRestoreMode -> stringResource(R.string.dialog_auto_restore_item_title)
+                        else -> stringResource(R.string.dialog_reminder_item_title)
                     }
                     val targetLabel = if (targetItem == null) {
                         stringResource(R.string.reminder_target_checklist, targetChecklist.name)
@@ -1131,6 +1181,7 @@ internal fun ScopedModalHost(
                         isReducedMotion = isReducedMotion,
                         hasTextInput = isDirectInputMode,
                         confirmEnabled = true,
+                        animateSize = targetItem != null,
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
                         confirmFocus = confirmFocus,
@@ -1157,6 +1208,42 @@ internal fun ScopedModalHost(
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                                 )
                             }
+                            if (targetItem != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                LiquidTabBar(
+                                    labels = listOf(
+                                        stringResource(R.string.item_modal_tab_reminder),
+                                        stringResource(R.string.item_modal_tab_auto_restore)
+                                    ),
+                                    selectedIndex = activeTabIndex,
+                                    onSelect = { newTab ->
+                                        if (newTab != activeTabIndex) {
+                                            if (isDirectInputMode) {
+                                                val resolved = resolveSmartTime(smartTimeState)
+                                                if (resolved != null) {
+                                                    if (isAutoRestoreMode) {
+                                                        arHour = resolved.first
+                                                        arMinute = resolved.second
+                                                    } else {
+                                                        remHour = resolved.first
+                                                        remMinute = resolved.second
+                                                    }
+                                                }
+                                                smartTimeState = SmartTimeInputState()
+                                                isDirectInputMode = false
+                                                expectImeForModal = false
+                                                isPrimaryInputFocused = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                            }
+                                            activeTabIndex = newTab
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("item_schedule_mode_tabs")
+                                )
+                            }
                             Spacer(modifier = Modifier.height(14.dp))
                         },
                         footerContent = { onFocusIndexChanged ->
@@ -1164,7 +1251,13 @@ internal fun ScopedModalHost(
                             ModalActionRow(
                                 cancelFocus = cancelFocus,
                                 confirmFocus = confirmFocus,
-                                confirmLabel = stringResource(R.string.action_save_reminder),
+                                confirmLabel = stringResource(
+                                    if (isAutoRestoreMode) {
+                                        R.string.action_save_auto_restore
+                                    } else {
+                                        R.string.action_save_reminder
+                                    }
+                                ),
                                 confirmEnabled = true,
                                 isDestructive = false,
                                 onFocusIndexChanged = onFocusIndexChanged,
@@ -1179,8 +1272,13 @@ internal fun ScopedModalHost(
                                                 if (resolved != null) {
                                                     saveHour = resolved.first
                                                     saveMinute = resolved.second
-                                                    selectedHour = resolved.first
-                                                    selectedMinute = resolved.second
+                                                    if (isAutoRestoreMode) {
+                                                        arHour = resolved.first
+                                                        arMinute = resolved.second
+                                                    } else {
+                                                        remHour = resolved.first
+                                                        remMinute = resolved.second
+                                                    }
                                                 } else {
                                                     invalidShakeSignal++
                                                     return@ModalActionRow
@@ -1193,15 +1291,28 @@ internal fun ScopedModalHost(
                                             keyboardController?.hide()
                                             focusManager.clearFocus()
                                         }
-                                        withNotificationPermission(true) {
+                                        if (isAutoRestoreMode) {
                                             onSaveReminder(
                                                 targetChecklist.id,
                                                 targetItem?.id,
                                                 saveHour,
                                                 saveMinute,
-                                                repeatMask,
-                                                onlyIfUnchecked
+                                                arMask,
+                                                false,
+                                                ReminderEntity.KIND_AUTO_RESTORE
                                             )
+                                        } else {
+                                            withNotificationPermission(true) {
+                                                onSaveReminder(
+                                                    targetChecklist.id,
+                                                    targetItem?.id,
+                                                    saveHour,
+                                                    saveMinute,
+                                                    remMask,
+                                                    onlyIfUnchecked,
+                                                    ReminderEntity.KIND_REMINDER
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1214,7 +1325,11 @@ internal fun ScopedModalHost(
                             selectedMinute = selectedMinute,
                             repeatMask = repeatMask,
                             onlyIfUnchecked = onlyIfUnchecked,
-                            hasExistingReminder = existing != null,
+                            hasExistingReminder = if (isAutoRestoreMode) {
+                                existingAutoRestore != null
+                            } else {
+                                existingReminder != null
+                            },
                             onlyIfUncheckedTitle = onlyIfUncheckedTitle,
                             isDirectInputMode = isDirectInputMode,
                             smartTimeState = smartTimeState,
@@ -1222,10 +1337,16 @@ internal fun ScopedModalHost(
                             primaryFocus = primaryFocus,
                             activeCancelSignal = activeCancelSignal,
                             systemImeHideSignal = systemImeHideSignal,
-                            onHourChange = { selectedHour = it },
-                            onMinuteChange = { selectedMinute = it },
+                            onHourChange = { h ->
+                                if (isAutoRestoreMode) arHour = h else remHour = h
+                            },
+                            onMinuteChange = { m ->
+                                if (isAutoRestoreMode) arMinute = m else remMinute = m
+                            },
                             onSmartTimeStateChange = { smartTimeState = it },
-                            onRepeatMaskChange = { repeatMask = it },
+                            onRepeatMaskChange = { mask ->
+                                if (isAutoRestoreMode) arMask = mask else remMask = mask
+                            },
                             onOnlyIfUncheckedChange = { onlyIfUnchecked = it },
                             onEnterDirectInput = {
                                 isDirectInputMode = true
@@ -1254,10 +1375,136 @@ internal fun ScopedModalHost(
                                 }
                             },
                             onDeleteExisting = {
-                                val reminderId = existing?.id ?: return@ReminderConfigBody
-                                if (isOpen) onDeleteReminder(reminderId)
-                            }
+                                val targetId = if (isAutoRestoreMode) {
+                                    existingAutoRestore?.id
+                                } else {
+                                    existingReminder?.id
+                                } ?: return@ReminderConfigBody
+                                if (isOpen) onDeleteReminder(targetId, activeScheduleKind)
+                            },
+                            isAutoRestoreMode = isAutoRestoreMode
                         )
+                    }
+                }
+
+                is ChecklistModalContent.ArchivedItems -> {
+                    val targetChecklist = modalContent.checklist
+                    val archivedItems = archivedItemsByChecklist[targetChecklist.id].orEmpty()
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = false,
+                        confirmEnabled = true,
+                        animateSize = true,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = dismissImeOrCloseModal,
+                        headerContent = {
+                            Text(
+                                text = stringResource(R.string.dialog_archived_items_title),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.archived_items_subtitle_checklist,
+                                        targetChecklist.name
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colorScheme.onSecondaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                        },
+                        footerContent = { onFocusIndexChanged ->
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TactileButton(
+                                    onClick = { if (isOpen) onRequestClose(true) },
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.surfaceContainerHighest,
+                                    contentColor = colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .focusRequester(cancelFocus)
+                                        .onFocusChanged { if (it.isFocused) onFocusIndexChanged(0) }
+                                        .testTag("archived_modal_close_button")
+                                ) {
+                                    Text(stringResource(R.string.action_close))
+                                }
+                            }
+                        }
+                    ) { _ ->
+                        if (archivedItems.isEmpty()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(48.dp),
+                                    shape = CircleShape,
+                                    color = colorScheme.surfaceContainerHighest
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Archive,
+                                            contentDescription = null,
+                                            tint = colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = stringResource(R.string.archived_items_empty_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colorScheme.onSurface
+                                )
+                                Text(
+                                    text = stringResource(R.string.archived_items_empty_subtitle),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                archivedItems.forEach { archivedItem ->
+                                    ArchivedItemCapsuleRow(
+                                        item = archivedItem,
+                                        onRestore = {
+                                            if (isOpen) onUnarchiveItem(archivedItem)
+                                        },
+                                        onDeleteForever = {
+                                            if (isOpen) onDeleteArchivedItemForever(archivedItem)
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1592,6 +1839,77 @@ private fun ModalActionRow(
                 .testTag("modal_confirm_button")
         ) {
             Text(confirmLabel)
+        }
+    }
+}
+
+@Composable
+private fun ArchivedItemCapsuleRow(
+    item: CheckItemEntity,
+    onRestore: () -> Unit,
+    onDeleteForever: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("archived_item_card_${item.id}"),
+        shape = RoundedCornerShape(16.dp),
+        color = colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.55f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = item.label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (item.isChecked) FontWeight.Normal else FontWeight.Medium,
+                color = if (item.isChecked) {
+                    colorScheme.onSurface.copy(alpha = 0.55f)
+                } else {
+                    colorScheme.onSurface
+                },
+                textDecoration = if (item.isChecked) TextDecoration.LineThrough else null,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            TactileIconButton(
+                onClick = onRestore,
+                modifier = Modifier
+                    .size(36.dp)
+                    .testTag("unarchive_item_button_${item.id}"),
+                shape = CircleShape,
+                contentColor = colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Unarchive,
+                    contentDescription = stringResource(R.string.cd_unarchive_item, item.label),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            TactileIconButton(
+                onClick = onDeleteForever,
+                modifier = Modifier
+                    .size(36.dp)
+                    .testTag("delete_archived_item_button_${item.id}"),
+                shape = CircleShape,
+                contentColor = colorScheme.error
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteOutline,
+                    contentDescription = stringResource(
+                        R.string.cd_delete_archived_item_forever,
+                        item.label
+                    ),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }

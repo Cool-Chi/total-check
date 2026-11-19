@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
+import androidx.compose.material.icons.rounded.NotificationsPaused
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -117,6 +119,7 @@ import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.reminder.ReminderFormatter
+import com.example.totalcheck.data.reminder.ReminderScheduler
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import com.example.totalcheck.ui.theme.LocalThemeTransitioning
 import kotlinx.coroutines.Job
@@ -133,15 +136,18 @@ fun CapsuleProgressModule(
     uncheckedCount: Int,
     totalCount: Int,
     progressProvider: () -> Float,
-    showUncheckedOnly: Boolean,
-    onToggleUncheckedOnly: () -> Unit,
+    filterState: ChecklistFilterState,
+    onToggleFilter: () -> Unit,
     onReset: () -> Unit,
     canDeleteChecklist: Boolean,
+    archivedCount: Int = 0,
+    onOpenArchivedItems: () -> Unit = {},
     onRenameChecklist: () -> Unit,
     onDeleteChecklist: () -> Unit,
     activeChecklistReminder: ReminderEntity? = null,
     onOpenChecklistReminder: () -> Unit = {},
     onQuickChecklistReminder15m: () -> Unit = {},
+    archiveButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     reminderButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     renameButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     deleteButtonFocusRequester: FocusRequester = remember { FocusRequester() },
@@ -316,55 +322,100 @@ fun CapsuleProgressModule(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                TactileFilterChip(
-                    selected = showUncheckedOnly,
-                    onClick = onToggleUncheckedOnly,
+                val isFilterActive = filterState.isActive
+                TactileIconButton(
+                    onClick = onToggleFilter,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("filter_checklist_button"),
                     shape = RoundedCornerShape(50),
-                    label = {
-                        Text(
-                            text = stringResource(R.string.filter_unchecked_only),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    containerColor = if (isFilterActive) {
+                        colorScheme.tertiaryContainer
+                    } else {
+                        colorScheme.surfaceContainerHighest
                     },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (showUncheckedOnly) Icons.Rounded.Check else Icons.Rounded.FilterList,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    contentColor = if (isFilterActive) {
+                        colorScheme.onTertiaryContainer
+                    } else {
+                        colorScheme.onSurfaceVariant
                     },
-                    selectedContainerColor = colorScheme.tertiaryContainer,
-                    selectedLabelColor = colorScheme.onTertiaryContainer,
-                    selectedLeadingIconColor = colorScheme.onTertiaryContainer
-                )
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isFilterActive) {
+                            colorScheme.tertiary.copy(alpha = 0.5f)
+                        } else {
+                            colorScheme.outlineVariant
+                        }
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FilterList,
+                        contentDescription = stringResource(R.string.cd_filter_items),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 Row(
-                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
-                    val isReminderActive = activeChecklistReminder != null && activeChecklistReminder.isEnabled
-                    val reminderLabel = if (isReminderActive) {
-                        ReminderFormatter.formatCompactBadge(
-                            context = context,
-                            hour = activeChecklistReminder.hour,
-                            minute = activeChecklistReminder.minute,
-                            repeatDaysBitmask = activeChecklistReminder.repeatDaysBitmask
+                    val hasArchivedItems = archivedCount > 0
+                    TactileIconButton(
+                        onClick = onOpenArchivedItems,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .focusRequester(archiveButtonFocusRequester)
+                            .testTag("archive_checklist_button"),
+                        shape = RoundedCornerShape(50),
+                        containerColor = if (hasArchivedItems) {
+                            colorScheme.secondaryContainer
+                        } else {
+                            colorScheme.surfaceContainerHighest
+                        },
+                        contentColor = if (hasArchivedItems) {
+                            colorScheme.onSecondaryContainer
+                        } else {
+                            colorScheme.onSurfaceVariant
+                        },
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (hasArchivedItems) {
+                                colorScheme.secondary.copy(alpha = 0.45f)
+                            } else {
+                                colorScheme.outlineVariant
+                            }
                         )
-                    } else {
-                        stringResource(R.string.action_reminder_short)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Archive,
+                            contentDescription = if (hasArchivedItems) {
+                                stringResource(R.string.cd_open_archive_panel_count, archivedCount)
+                            } else {
+                                stringResource(R.string.cd_open_archive_panel)
+                            },
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
-                    TactileButton(
+
+                    val isReminderActive = activeChecklistReminder != null && activeChecklistReminder.isEnabled
+                    val isChecklistReminderSkipped = isReminderActive &&
+                        ReminderScheduler.isPeriodicReminderSkipped(activeChecklistReminder)
+                    TactileIconButton(
                         onClick = onOpenChecklistReminder,
                         onLongClick = onQuickChecklistReminder15m,
-                        onLongClickLabel = stringResource(R.string.a11y_quick_reminder_15m),
+                        onLongClickLabel = stringResource(
+                            if (isReminderActive) {
+                                R.string.a11y_cancel_or_skip_reminder
+                            } else {
+                                R.string.a11y_quick_reminder_15m
+                            }
+                        ),
                         longPressTimeoutMs = 350L,
                         sinkScale = 0.92f,
                         modifier = Modifier
-                            .weight(1f, fill = false)
-                            .height(40.dp)
+                            .size(40.dp)
                             .focusRequester(reminderButtonFocusRequester)
                             .testTag("checklist_reminder_button"),
                         shape = RoundedCornerShape(50),
@@ -385,27 +436,19 @@ fun CapsuleProgressModule(
                             } else {
                                 colorScheme.outlineVariant
                             }
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                        )
                     ) {
                         Icon(
-                            imageVector = if (isReminderActive) {
-                                Icons.Rounded.NotificationsActive
-                            } else {
-                                Icons.Rounded.NotificationsNone
+                            imageVector = when {
+                                isChecklistReminderSkipped -> Icons.Rounded.NotificationsPaused
+                                isReminderActive -> Icons.Rounded.NotificationsActive
+                                else -> Icons.Rounded.NotificationsNone
                             },
                             contentDescription = stringResource(R.string.cd_checklist_reminder),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = reminderLabel,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (isReminderActive) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                     TactileIconButton(
                         onClick = onRenameChecklist,
                         modifier = Modifier
@@ -423,6 +466,7 @@ fun CapsuleProgressModule(
                             modifier = Modifier.size(18.dp)
                         )
                     }
+
                     TactileIconButton(
                         onClick = onDeleteChecklist,
                         enabled = canDeleteChecklist,
@@ -512,9 +556,11 @@ fun CapsuleCheckItemRow(
     onToggle: () -> Unit,
     isEditing: Boolean = false,
     isFloatingDragged: Boolean = false,
+    hasAutoRestore: Boolean = false,
     activeItemReminder: ReminderEntity? = null,
     onOpenItemReminder: () -> Unit = {},
     onQuickItemReminder15m: () -> Unit = {},
+    holdDeleteFillDurationMsProvider: () -> Int = { 800 },
     stackDepthProvider: () -> Float = { 0f },
     isCompressedProvider: () -> Boolean = { false },
     onCompressedClick: (() -> Unit)? = null,
@@ -525,6 +571,7 @@ fun CapsuleCheckItemRow(
     onEditDraftChanged: ((String) -> Unit)? = null,
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
+    onArchive: () -> Unit = {},
     onDelete: () -> Unit = {},
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
@@ -541,6 +588,7 @@ fun CapsuleCheckItemRow(
     val isReducedMotion = LocalReducedMotion.current
     val currentOnToggle by rememberUpdatedState(onToggle)
     val currentOnQuickItemReminder15m by rememberUpdatedState(onQuickItemReminder15m)
+    val currentHoldDeleteFillDurationMsProvider by rememberUpdatedState(holdDeleteFillDurationMsProvider)
     val currentIsCompressedProvider by rememberUpdatedState(isCompressedProvider)
     val currentOnCompressedClick by rememberUpdatedState(onCompressedClick)
     val currentOnDelete by rememberUpdatedState(onDelete)
@@ -732,16 +780,18 @@ fun CapsuleCheckItemRow(
     val checkedContainerColor = colorScheme.surfaceContainerLow
     val uncheckedBorderColor = when {
         isFloatingDragged || isEditing -> colorScheme.primary
+        hasAutoRestore -> colorScheme.primary.copy(alpha = 0.72f)
         else -> colorScheme.tertiary.copy(alpha = 0.55f)
     }
     val checkedBorderColor = when {
         isFloatingDragged || isEditing -> colorScheme.primary
+        hasAutoRestore -> colorScheme.primary.copy(alpha = 0.45f)
         else -> colorScheme.outlineVariant.copy(alpha = 0.4f)
     }
     val ringTrackBorderColor = colorScheme.outlineVariant.copy(alpha = 0.45f)
-    val ringFillColor = colorScheme.error
-    val uncheckedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.tertiary
-    val checkedIndicatorColor = if (isEditing) colorScheme.primary else colorScheme.outline
+    val ringFillColor = colorScheme.errorContainer.copy(alpha = 0.72f)
+    val uncheckedIndicatorColor = if (isEditing || hasAutoRestore) colorScheme.primary else colorScheme.tertiary
+    val checkedIndicatorColor = if (isEditing || hasAutoRestore) colorScheme.primary else colorScheme.outline
     val uncheckedBadgeBgColor = colorScheme.tertiaryContainer
     val checkedBadgeBgColor = colorScheme.surfaceContainerHighest
 
@@ -754,7 +804,11 @@ fun CapsuleCheckItemRow(
     val moveUpActionLabel = stringResource(R.string.a11y_move_up)
     val moveDownActionLabel = stringResource(R.string.a11y_move_down)
     val quickReminder15mLabel = stringResource(R.string.a11y_quick_reminder_15m)
+    val cancelOrSkipReminderLabel = stringResource(R.string.a11y_cancel_or_skip_reminder)
     val itemReminderActionLabel = stringResource(R.string.cd_item_reminder, item.label)
+    val hasActiveReminder = activeItemReminder != null && activeItemReminder.isEnabled
+    val isSkippedOnce = hasActiveReminder &&
+        ReminderScheduler.isPeriodicReminderSkipped(activeItemReminder)
 
     Box(
         modifier = modifier
@@ -885,7 +939,9 @@ fun CapsuleCheckItemRow(
                                     onOpenItemReminder()
                                     true
                                 },
-                                CustomAccessibilityAction(quickReminder15mLabel) {
+                                CustomAccessibilityAction(
+                                    if (hasActiveReminder) cancelOrSkipReminderLabel else quickReminder15mLabel
+                                ) {
                                     currentOnQuickItemReminder15m()
                                     true
                                 }
@@ -924,12 +980,15 @@ fun CapsuleCheckItemRow(
 
                         holdAnimJob?.cancel()
                         val currentHoldJob = scope.launch {
-                            delay(150L)
+                            delay(120L)
                             if (cancelledOrLeft || isDeleting) return@launch
                             holdEngaged = true
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             val startVal = holdRingProgress.value.coerceIn(0f, 1f)
-                            val fillDurationMs = ((1f - startVal) * 1000f).roundToInt().coerceAtLeast(1)
+                            val baseFillMs = currentHoldDeleteFillDurationMsProvider().coerceIn(450, 1200)
+                            val fillDurationMs = ((1f - startVal) * baseFillMs.toFloat())
+                                .roundToInt()
+                                .coerceAtLeast(1)
                             holdRingProgress.animateTo(
                                 targetValue = 1f,
                                 animationSpec = tween(durationMillis = fillDurationMs, easing = LinearEasing)
@@ -1099,6 +1158,19 @@ fun CapsuleCheckItemRow(
                         )
                     }
                     TactileIconButton(
+                        onClick = onArchive,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("archive_item_button_${item.id}"),
+                        contentColor = colorScheme.onSurfaceVariant
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Archive,
+                            contentDescription = stringResource(R.string.cd_archive_item),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                    TactileIconButton(
                         onClick = onCancelEdit,
                         modifier = Modifier.size(34.dp),
                         contentColor = colorScheme.onSurfaceVariant
@@ -1110,14 +1182,23 @@ fun CapsuleCheckItemRow(
                         )
                     }
                 } else {
-                    val hasActiveReminder = activeItemReminder != null && activeItemReminder.isEnabled
                     if (hasActiveReminder) {
-                        val badgeText = ReminderFormatter.formatCompactBadge(
+                        val rawBadgeText = ReminderFormatter.formatCompactBadge(
                             context = context,
                             hour = activeItemReminder.hour,
                             minute = activeItemReminder.minute,
                             repeatDaysBitmask = activeItemReminder.repeatDaysBitmask
                         )
+                        val badgeText = if (isSkippedOnce) {
+                            stringResource(R.string.reminder_badge_skipped_prefix, rawBadgeText)
+                        } else {
+                            rawBadgeText
+                        }
+                        val badgeTint = if (isSkippedOnce) {
+                            colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+                        } else {
+                            colorScheme.primary
+                        }
                         Column(
                             modifier = Modifier
                                 .weight(1f)
@@ -1141,7 +1222,7 @@ fun CapsuleCheckItemRow(
                                         shape = RoundedCornerShape(6.dp),
                                         sinkScale = 0.96f,
                                         longPressTimeoutMs = 350L,
-                                        onLongClickLabel = quickReminder15mLabel,
+                                        onLongClickLabel = cancelOrSkipReminderLabel,
                                         onPressChanged = { pressed -> isChildButtonPressed = pressed },
                                         onLongClick = {
                                             if (currentIsCompressedProvider()) {
@@ -1163,16 +1244,20 @@ fun CapsuleCheckItemRow(
                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.NotificationsActive,
+                                    imageVector = if (isSkippedOnce) {
+                                        Icons.Rounded.NotificationsPaused
+                                    } else {
+                                        Icons.Rounded.NotificationsActive
+                                    },
                                     contentDescription = null,
-                                    tint = colorScheme.primary,
+                                    tint = badgeTint,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = badgeText,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Medium,
-                                    color = colorScheme.primary,
+                                    color = badgeTint,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1252,16 +1337,16 @@ fun CapsuleCheckItemRow(
                                     maxLines = 1
                                 )
                                 Icon(
-                                    imageVector = if (hasActiveReminder) {
-                                        Icons.Rounded.NotificationsActive
-                                    } else {
-                                        Icons.Rounded.NotificationsNone
+                                    imageVector = when {
+                                        isSkippedOnce -> Icons.Rounded.NotificationsPaused
+                                        hasActiveReminder -> Icons.Rounded.NotificationsActive
+                                        else -> Icons.Rounded.NotificationsNone
                                     },
                                     contentDescription = null,
-                                    tint = if (hasActiveReminder) {
-                                        colorScheme.primary
-                                    } else {
-                                        colorScheme.onTertiaryContainer
+                                    tint = when {
+                                        isSkippedOnce -> colorScheme.onTertiaryContainer.copy(alpha = 0.62f)
+                                        hasActiveReminder -> colorScheme.primary
+                                        else -> colorScheme.onTertiaryContainer
                                     },
                                     modifier = Modifier.size(13.5.dp)
                                 )
@@ -1348,8 +1433,8 @@ fun CapsuleCheckItemRow(
                             val itemReminderCd = stringResource(R.string.cd_item_reminder, displayedLabel)
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .width(32.dp)
+                                    .align(Alignment.Center)
+                                    .width(64.dp)
                                     .height(32.dp)
                                     .testTag("reminder_item_button_${item.id}")
                                     .semantics {
@@ -1357,16 +1442,15 @@ fun CapsuleCheckItemRow(
                                     }
                                     .slideOutCancelClickable(
                                         enabled = !isEditing && !isDeleting,
-                                        shape = RoundedCornerShape(
-                                            topEndPercent = 50,
-                                            bottomEndPercent = 50,
-                                            topStartPercent = 25,
-                                            bottomStartPercent = 25
-                                        ),
+                                        shape = RoundedCornerShape(50),
                                         sinkScale = 1f,
                                         maxDeepenAlpha = 0f,
                                         longPressTimeoutMs = 350L,
-                                        onLongClickLabel = quickReminder15mLabel,
+                                        onLongClickLabel = if (hasActiveReminder) {
+                                            cancelOrSkipReminderLabel
+                                        } else {
+                                            quickReminder15mLabel
+                                        },
                                         onPressChanged = { pressed ->
                                             isBellPressed = pressed
                                             isChildButtonPressed = pressed

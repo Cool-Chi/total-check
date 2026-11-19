@@ -107,6 +107,7 @@ import com.example.totalcheck.data.local.CheckItemEntity
 import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.reminder.ReminderFormatter
+import com.example.totalcheck.data.repository.ReminderLongPressOutcome
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -136,13 +137,15 @@ fun TotalCheckScreen(
 
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
+    val archivedItemsByChecklist by viewModel.archivedItemsByChecklist.collectAsStateWithLifecycle()
     val reminders by viewModel.reminders.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
     val pendingAutoFocusInput by viewModel.pendingAutoFocusInput.collectAsStateWithLifecycle()
     val themeConfig by viewModel.themeConfig.collectAsStateWithLifecycle()
     val isDarkMode = themeConfig?.isDarkMode ?: true
     val useDynamicColor = themeConfig?.useDynamicColor ?: false
-    val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
+    val filterState by viewModel.filterState.collectAsStateWithLifecycle()
+    val showUncheckedOnly = filterState.showUncheckedOnly
     val isStartupLoading by viewModel.isStartupLoading.collectAsStateWithLifecycle()
 
     val inputTextState = remember { mutableStateOf("") }
@@ -153,6 +156,7 @@ fun TotalCheckScreen(
     val quickInputFocusRequester = remember { FocusRequester() }
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val addChecklistFocusRequester = remember { FocusRequester() }
+    val archiveFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val reminderFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val renameFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     val deleteFocusRequesters = remember { HashMap<Long, FocusRequester>() }
@@ -209,48 +213,71 @@ fun TotalCheckScreen(
         pendingQuickReminderAction = null
         action?.invoke()
     }
-    val triggerQuickReminder15m: (Long, Long?) -> Unit = { checklistId, itemId ->
+    val triggerReminderLongPress: (Long, Long?, Boolean) -> Unit = { checklistId, itemId, hasActiveEnabledReminder ->
         commitActiveInlineEdit()
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        val executeSchedule: () -> Unit = {
-            viewModel.scheduleQuickReminder15m(
+        val executeLongPress: () -> Unit = {
+            viewModel.handleReminderLongPress(
                 checklistId = checklistId,
                 itemId = itemId
             ) { result ->
                 scope.launch {
                     snackbarHostState.currentSnackbarData?.dismiss()
-                    val formattedTime = ReminderFormatter.formatTime(
-                        result.saved.hour,
-                        result.saved.minute
-                    )
+                    val message = when (result.outcome) {
+                        ReminderLongPressOutcome.SET_QUICK_15M -> {
+                            val saved = result.reminder
+                            val formattedTime = if (saved != null) {
+                                ReminderFormatter.formatTime(saved.hour, saved.minute)
+                            } else {
+                                ""
+                            }
+                            context.getString(
+                                R.string.snackbar_quick_reminder_15m_set,
+                                formattedTime
+                            )
+                        }
+                        ReminderLongPressOutcome.SKIPPED_PERIODIC_ONCE -> {
+                            val skipped = result.reminder
+                            val nextText = if (skipped != null) {
+                                ReminderFormatter.formatNextOccurrence(
+                                    context = context,
+                                    triggerEpochMillis = skipped.triggerEpochMillis
+                                )
+                            } else {
+                                ""
+                            }
+                            context.getString(
+                                R.string.snackbar_reminder_skipped_once,
+                                nextText
+                            )
+                        }
+                        ReminderLongPressOutcome.CANCELLED -> {
+                            context.getString(R.string.snackbar_reminder_cancelled)
+                        }
+                    }
                     val actionResult = snackbarHostState.showSnackbar(
-                        message = context.getString(
-                            R.string.snackbar_quick_reminder_15m_set,
-                            formattedTime
-                        ),
+                        message = message,
                         actionLabel = context.getString(R.string.action_undo),
                         duration = SnackbarDuration.Short
                     )
                     if (actionResult == SnackbarResult.ActionPerformed) {
-                        viewModel.undoQuickReminder(
-                            savedReminderId = result.saved.id,
-                            previousReminder = result.previousReminder
-                        )
+                        viewModel.undoReminderLongPress(result)
                     }
                 }
             }
         }
         if (
+            !hasActiveEnabledReminder &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            pendingQuickReminderAction = executeSchedule
+            pendingQuickReminderAction = executeLongPress
             quickReminderPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            executeSchedule()
+            executeLongPress()
         }
     }
     val submitHolder = remember {
@@ -274,8 +301,8 @@ fun TotalCheckScreen(
     val shouldFreezeMainImeState = rememberUpdatedState(shouldFreezeMainIme)
     val isModalPresentState = rememberUpdatedState(isModalPresent)
 
-    // 彈窗完全關閉後：待軟鍵盤收合完成或最多 320ms 即自動解除主畫面 IME 凍結，確保背景零跳動且永不卡死
-    LaunchedEffect(isModalPresent) {
+    // 彈窗完全關閉或編輯封存離場後：待軟鍵盤收合完成或最多 320ms 即自動解除主畫面 IME 凍結，確保背景零跳動且永不卡死
+    LaunchedEffect(isModalPresent, suppressMainImeUntilClosed) {
         if (!isModalPresent && suppressMainImeUntilClosed) {
             val startMs = android.os.SystemClock.uptimeMillis()
             val closeThresholdPx = with(density) { 4.dp.roundToPx() }
@@ -457,6 +484,15 @@ fun TotalCheckScreen(
         {
             editingItemId = null
             editingDraftHolder.text = ""
+        }
+    }
+    val onFinishEditForArchiveStable = remember<() -> Unit> {
+        {
+            suppressMainImeUntilClosed = true
+            editingItemId = null
+            editingDraftHolder.text = ""
+            softwareKeyboardController?.hide()
+            focusManager.clearFocus()
         }
     }
     val onClearEditingIfMatchesStable = remember<(Long) -> Unit> {
@@ -804,6 +840,9 @@ fun TotalCheckScreen(
                                                 }
                                             }
                                         }
+                                        val archiveBtnFocus = remember(checklist.id) {
+                                            archiveFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
+                                        }
                                         val reminderBtnFocus = remember(checklist.id) {
                                             reminderFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
                                         }
@@ -813,16 +852,34 @@ fun TotalCheckScreen(
                                         val deleteBtnFocus = remember(checklist.id) {
                                             deleteFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
                                         }
+                                        val archivedCount = archivedItemsByChecklist[checklist.id]?.size ?: 0
                                         val checklistReminders = remember(reminders, checklist.id) {
                                             reminders.filter { it.checklistId == checklist.id }
                                         }
                                         val activeChecklistReminder = remember(checklistReminders) {
-                                            checklistReminders.firstOrNull { it.itemId == null }
+                                            checklistReminders.firstOrNull {
+                                                it.itemId == null && it.scheduleKind == ReminderEntity.KIND_REMINDER
+                                            }
                                         }
                                         val itemRemindersById = remember(checklistReminders) {
                                             ImmutableMap(
                                                 checklistReminders.mapNotNull { r ->
-                                                    r.itemId?.let { id -> id to r }
+                                                    if (r.scheduleKind == ReminderEntity.KIND_REMINDER) {
+                                                        r.itemId?.let { id -> id to r }
+                                                    } else {
+                                                        null
+                                                    }
+                                                }.toMap()
+                                            )
+                                        }
+                                        val itemAutoRestoresById = remember(checklistReminders) {
+                                            ImmutableMap(
+                                                checklistReminders.mapNotNull { r ->
+                                                    if (r.scheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                                                        r.itemId?.let { id -> id to r }
+                                                    } else {
+                                                        null
+                                                    }
                                                 }.toMap()
                                             )
                                         }
@@ -839,10 +896,12 @@ fun TotalCheckScreen(
                                             ChecklistPageContent(
                                                 checklist = checklist,
                                                 stableItems = stableItems,
+                                                archivedItemsCount = archivedCount,
                                                 checklistReminder = activeChecklistReminder,
                                                 stableItemRemindersById = itemRemindersById,
+                                                stableItemAutoRestoresById = itemAutoRestoresById,
                                                 canDeleteChecklist = checklists.size > 1,
-                                                showUncheckedOnly = showUncheckedOnly,
+                                                filterState = filterState,
                                                 editingItemId = pageEditingItemId,
                                                 isActivePageProvider = isActivePageProvider,
                                                 isReducedMotion = isReducedMotion,
@@ -851,6 +910,7 @@ fun TotalCheckScreen(
                                                 progressCollapseFractionProvider = progressCollapseFractionProvider,
                                                 bottomOverlayInsetPxProvider = bottomOverlayInsetPxProvider,
                                                 baseBottomOverlayInsetPxProvider = baseBottomOverlayInsetPxProvider,
+                                                archiveButtonFocusRequester = archiveBtnFocus,
                                                 reminderButtonFocusRequester = reminderBtnFocus,
                                                 renameButtonFocusRequester = renameBtnFocus,
                                                 deleteButtonFocusRequester = deleteBtnFocus,
@@ -858,9 +918,10 @@ fun TotalCheckScreen(
                                                 onEditDraftChanged = onEditDraftChangedStable,
                                                 onConfirmEdit = onConfirmInlineEditStable,
                                                 onCancelEdit = onCancelInlineEditStable,
+                                                onFinishEditForArchive = onFinishEditForArchiveStable,
                                                 onClearEditingIfMatches = onClearEditingIfMatchesStable,
                                                 onOpenModal = onOpenModalStable,
-                                                onQuickReminder15m = triggerQuickReminder15m
+                                                onReminderLongPress = triggerReminderLongPress
                                             )
                                         }
                                     }
@@ -1001,7 +1062,7 @@ fun TotalCheckScreen(
                             }
                         }
                     },
-                    onSaveReminder = { checklistId, itemId, hour, minute, repeatDaysBitmask, onlyIfUnchecked ->
+                    onSaveReminder = { checklistId, itemId, hour, minute, repeatDaysBitmask, onlyIfUnchecked, scheduleKind ->
                         closeModal(restoreFocus = true)
                         viewModel.saveReminder(
                             checklistId = checklistId,
@@ -1009,32 +1070,41 @@ fun TotalCheckScreen(
                             hour = hour,
                             minute = minute,
                             repeatDaysBitmask = repeatDaysBitmask,
-                            onlyIfUnchecked = onlyIfUnchecked
+                            onlyIfUnchecked = onlyIfUnchecked,
+                            scheduleKind = scheduleKind,
                         ) { saved ->
                             scope.launch {
                                 snackbarHostState.currentSnackbarData?.dismiss()
+                                val summaryText = ReminderFormatter.formatSavedSummary(
+                                    context = context,
+                                    hour = saved.hour,
+                                    minute = saved.minute,
+                                    repeatDaysBitmask = saved.repeatDaysBitmask
+                                )
+                                val messageRes = if (saved.scheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                                    R.string.snackbar_auto_restore_saved
+                                } else {
+                                    R.string.snackbar_reminder_saved
+                                }
                                 snackbarHostState.showSnackbar(
-                                    message = context.getString(
-                                        R.string.snackbar_reminder_saved,
-                                        ReminderFormatter.formatSavedSummary(
-                                            context = context,
-                                            hour = saved.hour,
-                                            minute = saved.minute,
-                                            repeatDaysBitmask = saved.repeatDaysBitmask
-                                        )
-                                    ),
+                                    message = context.getString(messageRes, summaryText),
                                     duration = SnackbarDuration.Short
                                 )
                             }
                         }
                     },
-                    onDeleteReminder = { reminderId ->
+                    onDeleteReminder = { reminderId, scheduleKind ->
                         closeModal(restoreFocus = false)
                         viewModel.deleteReminder(reminderId) {
                             scope.launch {
                                 snackbarHostState.currentSnackbarData?.dismiss()
+                                val messageRes = if (scheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                                    R.string.snackbar_auto_restore_deleted
+                                } else {
+                                    R.string.snackbar_reminder_deleted
+                                }
                                 snackbarHostState.showSnackbar(
-                                    message = context.getString(R.string.snackbar_reminder_deleted),
+                                    message = context.getString(messageRes),
                                     duration = SnackbarDuration.Short
                                 )
                             }
@@ -1071,6 +1141,35 @@ fun TotalCheckScreen(
                                 message = context.getString(R.string.snackbar_notif_permission_denied),
                                 duration = SnackbarDuration.Short
                             )
+                        }
+                    },
+                    archivedItemsByChecklist = archivedItemsByChecklist,
+                    onUnarchiveItem = { item ->
+                        viewModel.unarchiveItem(item) { restored ->
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(
+                                        R.string.snackbar_unarchived_item,
+                                        restored.label
+                                    ),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
+                        }
+                    },
+                    onDeleteArchivedItemForever = { item ->
+                        viewModel.deleteItem(item) { deleted ->
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(
+                                        R.string.snackbar_deleted_archived_item,
+                                        deleted.label
+                                    ),
+                                    duration = SnackbarDuration.Short
+                                )
+                            }
                         }
                     },
                     onExited = {
@@ -1212,10 +1311,12 @@ private fun QuickInputBarHost(
 private fun ChecklistPageContent(
     checklist: ChecklistEntity,
     stableItems: ImmutableList<CheckItemEntity>,
+    archivedItemsCount: Int,
     checklistReminder: ReminderEntity?,
     stableItemRemindersById: ImmutableMap<Long, ReminderEntity>,
+    stableItemAutoRestoresById: ImmutableMap<Long, ReminderEntity>,
     canDeleteChecklist: Boolean,
-    showUncheckedOnly: Boolean,
+    filterState: ChecklistFilterState,
     editingItemId: Long?,
     isActivePageProvider: () -> Boolean,
     isReducedMotion: Boolean,
@@ -1224,6 +1325,7 @@ private fun ChecklistPageContent(
     progressCollapseFractionProvider: () -> Float,
     bottomOverlayInsetPxProvider: () -> Float,
     baseBottomOverlayInsetPxProvider: () -> Float,
+    archiveButtonFocusRequester: FocusRequester,
     reminderButtonFocusRequester: FocusRequester,
     renameButtonFocusRequester: FocusRequester,
     deleteButtonFocusRequester: FocusRequester,
@@ -1231,12 +1333,15 @@ private fun ChecklistPageContent(
     onEditDraftChanged: (Long, String) -> Unit,
     onConfirmEdit: (Long, String) -> Unit,
     onCancelEdit: () -> Unit,
+    onFinishEditForArchive: () -> Unit,
     onClearEditingIfMatches: (Long) -> Unit,
     onOpenModal: (ChecklistModalContent, FocusRequester?) -> Unit,
-    onQuickReminder15m: (Long, Long?) -> Unit
+    onReminderLongPress: (Long, Long?, Boolean) -> Unit
 ) {
     val items = stableItems.items
+    val showUncheckedOnly = filterState.showUncheckedOnly
     val itemRemindersById = stableItemRemindersById.map
+    val itemAutoRestoresById = stableItemAutoRestoresById.map
     val viewModel = viewModelHolder.viewModel
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -1320,11 +1425,11 @@ private fun ChecklistPageContent(
         }
     }
 
-    val visibleItems = remember(items, showUncheckedOnly, stagingCheckedItemIds) {
-        if (showUncheckedOnly) {
-            items.filter { !it.isChecked || it.id in stagingCheckedItemIds }
-        } else {
+    val visibleItems = remember(items, filterState, stagingCheckedItemIds) {
+        if (!filterState.isActive) {
             items
+        } else {
+            items.filter { filterState.matches(it, stagingCheckedItemIds) }
         }
     }
 
@@ -1408,6 +1513,9 @@ private fun ChecklistPageContent(
     val magneticAttractor = remember(checklist.id, enterRadiusPx) {
         MagneticAttractorState(defaultEnterRadiusPx = enterRadiusPx, commitThreshold = 0.35f)
     }
+    val consecutiveDeleteTracker = remember(checklist.id) { ConsecutiveDeleteTracker() }
+    val moveToBottomVisualState = remember(checklist.id) { MoveToBottomVisualState() }
+    val moveToBottomTransitionSpec: ItemMoveToBottomTransitionSpec = DefaultItemMoveToBottomTransitionSpec
     var slotTopsBuffer by remember(checklist.id) { mutableStateOf(FloatArray(64)) }
     var slotCentersBuffer by remember(checklist.id) { mutableStateOf(FloatArray(64)) }
 
@@ -1425,6 +1533,8 @@ private fun ChecklistPageContent(
             initialWorkingItems = emptyList()
             committedOrderIds = null
             magneticAttractor.reset()
+            moveToBottomVisualState.isArmed = false
+            moveToBottomVisualState.isMovingToBottom = false
         }
     }
 
@@ -1525,7 +1635,7 @@ private fun ChecklistPageContent(
                         ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
                     }
                     lastFrameNanos = frameNanos
-                    if (dtSec > 0f && containerHeightPx > 0f) {
+                    if (!moveToBottomVisualState.isArmed && dtSec > 0f && containerHeightPx > 0f) {
                         val topBound = topOverlayInsetPxProvider().coerceAtLeast(0f)
                         val bottomBound = (containerHeightPx - pageBottomOverlayInsetPxProvider())
                             .coerceAtLeast(topBound + 1f)
@@ -1566,8 +1676,8 @@ private fun ChecklistPageContent(
                 uncheckedCount = uncheckedCount,
                 totalCount = totalCount,
                 progressProvider = { progressAnimatable.value },
-                showUncheckedOnly = showUncheckedOnly,
-                onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
+                filterState = filterState,
+                onToggleFilter = { viewModel.toggleFilterUncheckedOnly() },
                 onReset = {
                     onCancelEdit()
                     stagingJobs.values.forEach { it.cancel() }
@@ -1605,6 +1715,13 @@ private fun ChecklistPageContent(
                     }
                 },
                 canDeleteChecklist = canDeleteChecklist,
+                archivedCount = archivedItemsCount,
+                onOpenArchivedItems = {
+                    onOpenModal(
+                        ChecklistModalContent.ArchivedItems(checklist),
+                        archiveButtonFocusRequester
+                    )
+                },
                 activeChecklistReminder = checklistReminder,
                 onOpenChecklistReminder = {
                     onOpenModal(
@@ -1617,7 +1734,11 @@ private fun ChecklistPageContent(
                     )
                 },
                 onQuickChecklistReminder15m = {
-                    onQuickReminder15m(checklist.id, null)
+                    onReminderLongPress(
+                        checklist.id,
+                        null,
+                        checklistReminder?.isEnabled == true
+                    )
                 },
                 onRenameChecklist = {
                     onOpenModal(
@@ -1634,6 +1755,7 @@ private fun ChecklistPageContent(
                         deleteButtonFocusRequester
                     )
                 },
+                archiveButtonFocusRequester = archiveButtonFocusRequester,
                 reminderButtonFocusRequester = reminderButtonFocusRequester,
                 renameButtonFocusRequester = renameButtonFocusRequester,
                 deleteButtonFocusRequester = deleteButtonFocusRequester,
@@ -1661,6 +1783,9 @@ private fun ChecklistPageContent(
                     .pointerInput(checklist.id) {
                         val handleRightInsetPx = with(density) { 14.dp.toPx() }
                         val handleLeftInsetPx = with(density) { 64.dp.toPx() }
+                        val moveBottomThresholdPx = with(density) { 56.dp.toPx() }
+                        val moveBottomDisarmPx = with(density) { 44.dp.toPx() }
+                        val horizontalPullSlopPx = with(density) { 12.dp.toPx() }
                         awaitEachGesture {
                             val down = awaitFirstDown(
                                 requireUnconsumed = true,
@@ -1698,6 +1823,7 @@ private fun ChecklistPageContent(
                             val rowTopInContainer = matchedInfo.placedTopY
                             val rowHeightPx = matchedInfo.heightPx.coerceAtLeast(1f)
                             val grabOffsetY = down.position.y - rowTopInContainer
+                            val startPointerX = down.position.x
                             val minOverlayY = topOverlayInsetPxProvider().coerceAtLeast(0f)
                             val maxOverlayY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - rowHeightPx)
                                 .coerceAtLeast(minOverlayY)
@@ -1709,6 +1835,8 @@ private fun ChecklistPageContent(
                             initialWorkingItems = initialOrder
                             workingItems = initialOrder
                             magneticAttractor.reset(initialSlotIndex = startIdx)
+                            moveToBottomVisualState.isArmed = false
+                            moveToBottomVisualState.isMovingToBottom = false
                             draggedItemHeightPx = rowHeightPx
                             val startTopY = rowTopInContainer.coerceIn(minOverlayY, maxOverlayY)
                             rawDragOverlayY = startTopY
@@ -1721,6 +1849,8 @@ private fun ChecklistPageContent(
 
                             var gestureCancelled = false
                             var scopeDisposed = false
+                            var isMoveToBottomArmed = false
+                            var horizontalPullJob: Job? = null
                             try {
                                 while (true) {
                                     val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -1733,6 +1863,48 @@ private fun ChecklistPageContent(
                                         break
                                     }
                                     change.consume()
+
+                                    val dx = change.position.x - startPointerX
+                                    val nextArmed = if (isMoveToBottomArmed) {
+                                        dx <= -moveBottomDisarmPx
+                                    } else {
+                                        dx <= -moveBottomThresholdPx
+                                    }
+                                    if (nextArmed != isMoveToBottomArmed) {
+                                        isMoveToBottomArmed = nextArmed
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (isMoveToBottomArmed) {
+                                            if (initialWorkingItems.isNotEmpty() && workingItems != initialWorkingItems) {
+                                                workingItems = initialWorkingItems
+                                            }
+                                            if (startIdx >= 0) {
+                                                magneticAttractor.reset(initialSlotIndex = startIdx)
+                                            }
+                                        }
+                                    }
+
+                                    val effectivePullDx = if (dx < -horizontalPullSlopPx) {
+                                        dx + horizontalPullSlopPx
+                                    } else {
+                                        0f
+                                    }
+                                    if (
+                                        effectivePullDx < 0f ||
+                                        moveToBottomVisualState.translationX.value != 0f ||
+                                        moveToBottomVisualState.isArmed != isMoveToBottomArmed
+                                    ) {
+                                        horizontalPullJob?.cancel()
+                                        val armedSnapshot = isMoveToBottomArmed
+                                        horizontalPullJob = scope.launch {
+                                            moveToBottomTransitionSpec.onHorizontalPull(
+                                                visualState = moveToBottomVisualState,
+                                                effectivePullDxPx = effectivePullDx,
+                                                thresholdPx = moveBottomThresholdPx,
+                                                isArmed = armedSnapshot
+                                            )
+                                        }
+                                    }
+
                                     val newPointerY = change.position.y
                                     pointerYInContainerState.floatValue = newPointerY
                                     val minY = topOverlayInsetPxProvider().coerceAtLeast(0f)
@@ -1740,15 +1912,30 @@ private fun ChecklistPageContent(
                                         .coerceAtLeast(minY)
                                     val nextRawTopY = (newPointerY - grabOffsetY).coerceIn(minY, maxY)
                                     rawDragOverlayY = nextRawTopY
-                                    recalculateInsertionAndMagnet(nextRawTopY)
+                                    if (isMoveToBottomArmed) {
+                                        if (isReducedMotionState.value) {
+                                            springTracker.snapTo(startTopY)
+                                        } else {
+                                            springTracker.setTarget(startTopY)
+                                        }
+                                    } else {
+                                        recalculateInsertionAndMagnet(nextRawTopY)
+                                    }
                                 }
                             } catch (e: CancellationException) {
                                 scopeDisposed = true
                                 throw e
                             } finally {
+                                horizontalPullJob?.cancel()
                                 val activeId = draggedItemId
+                                val canCommitMoveToBottom = !gestureCancelled &&
+                                    isMoveToBottomArmed &&
+                                    activeId != null &&
+                                    initialWorkingItems.lastOrNull()?.id != activeId
                                 val finalOrderIds = workingItems.map { it.id }
                                 val canCommitOrder = !gestureCancelled &&
+                                    !canCommitMoveToBottom &&
+                                    !isMoveToBottomArmed &&
                                     magneticAttractor.canCommit() &&
                                     finalOrderIds.isNotEmpty()
                                 if (scopeDisposed) {
@@ -1758,6 +1945,45 @@ private fun ChecklistPageContent(
                                     workingItems = emptyList()
                                     initialWorkingItems = emptyList()
                                     magneticAttractor.reset()
+                                    moveToBottomVisualState.isArmed = false
+                                    moveToBottomVisualState.isMovingToBottom = false
+                                } else if (activeId != null && canCommitMoveToBottom) {
+                                    isSettlingDrop = true
+                                    val itemToMove = initialWorkingItems.firstOrNull { it.id == activeId }
+                                    val movedToBottomList = if (itemToMove != null) {
+                                        initialWorkingItems.filter { it.id != activeId } + itemToMove
+                                    } else {
+                                        initialWorkingItems
+                                    }
+                                    workingItems = movedToBottomList
+                                    committedOrderIds = movedToBottomList.map { it.id }
+                                    scope.launch {
+                                        try {
+                                            moveToBottomTransitionSpec.onCommitMoveToBottom(
+                                                visualState = moveToBottomVisualState,
+                                                springTracker = springTracker,
+                                                resolveTargetBottomTopY = {
+                                                    stackedListState.resolveSlotTargetTopY(activeId)
+                                                },
+                                                isReducedMotion = isReducedMotionState.value,
+                                                onCommitOrder = {
+                                                    viewModel.moveItemToBottom(
+                                                        checklistId = checklist.id,
+                                                        itemId = activeId,
+                                                        showUncheckedOnly = currentShowUncheckedOnlyState.value
+                                                    )
+                                                }
+                                            )
+                                        } finally {
+                                            stackedListState.suppressNextReflowFor(activeId)
+                                            stackedListState.draggedItemKey = null
+                                            draggedItemId = null
+                                            isSettlingDrop = false
+                                            workingItems = emptyList()
+                                            initialWorkingItems = emptyList()
+                                            magneticAttractor.reset()
+                                        }
+                                    }
                                 } else if (activeId != null) {
                                     isSettlingDrop = true
                                     if (canCommitOrder) {
@@ -1771,6 +1997,12 @@ private fun ChecklistPageContent(
                                         workingItems = initialWorkingItems
                                     }
                                     scope.launch {
+                                        val cancelHorizJob = launch {
+                                            moveToBottomTransitionSpec.onCancelPull(
+                                                visualState = moveToBottomVisualState,
+                                                isReducedMotion = isReducedMotionState.value
+                                            )
+                                        }
                                         try {
                                             val firstFrameNanos = withFrameNanos { it }
                                             val targetY = stackedListState.resolveSlotTargetTopY(activeId)
@@ -1790,7 +2022,10 @@ private fun ChecklistPageContent(
                                                 }
                                                 springTracker.snapTo(targetY)
                                             }
+                                            cancelHorizJob.join()
                                         } finally {
+                                            cancelHorizJob.cancel()
+                                            moveToBottomVisualState.snapReset()
                                             stackedListState.suppressNextReflowFor(activeId)
                                             stackedListState.draggedItemKey = null
                                             draggedItemId = null
@@ -1807,6 +2042,8 @@ private fun ChecklistPageContent(
                                     workingItems = emptyList()
                                     initialWorkingItems = emptyList()
                                     magneticAttractor.reset()
+                                    moveToBottomVisualState.isArmed = false
+                                    moveToBottomVisualState.isMovingToBottom = false
                                 }
                             }
                         }
@@ -1833,6 +2070,7 @@ private fun ChecklistPageContent(
                         )
                     } else {
                         val itemReminder = itemRemindersById[item.id]
+                        val itemAutoRestore = itemAutoRestoresById[item.id]
                         CapsuleCheckItemRow(
                             item = item,
                             onToggle = {
@@ -1860,6 +2098,7 @@ private fun ChecklistPageContent(
                                 )
                             },
                             isEditing = editingItemId == item.id,
+                            hasAutoRestore = itemAutoRestore?.isEnabled == true,
                             activeItemReminder = itemReminder,
                             onOpenItemReminder = {
                                 onOpenModal(
@@ -1867,12 +2106,20 @@ private fun ChecklistPageContent(
                                         checklist = checklist,
                                         item = item,
                                         existingReminder = itemReminder,
+                                        existingAutoRestore = itemAutoRestore,
                                     ),
                                     null
                                 )
                             },
                             onQuickItemReminder15m = {
-                                onQuickReminder15m(checklist.id, item.id)
+                                onReminderLongPress(
+                                    checklist.id,
+                                    item.id,
+                                    itemReminder?.isEnabled == true
+                                )
+                            },
+                            holdDeleteFillDurationMsProvider = {
+                                consecutiveDeleteTracker.currentFillDurationMs()
                             },
                             stackDepthProvider = { slotState.depthState.floatValue },
                             isCompressedProvider = { slotState.isCompressed },
@@ -1892,7 +2139,31 @@ private fun ChecklistPageContent(
                             onEditDraftChanged = { draft -> onEditDraftChanged(item.id, draft) },
                             onConfirmEdit = { newLabel -> onConfirmEdit(item.id, newLabel) },
                             onCancelEdit = onCancelEdit,
+                            onArchive = {
+                                stagingJobs.remove(item.id)?.cancel()
+                                stagingCheckedItemIds = stagingCheckedItemIds - item.id
+                                stackedListState.handoffPinnedAnchorBeforeRemoval(item.id)
+                                onFinishEditForArchive()
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.archiveItem(item) { archivedItem ->
+                                    scope.launch {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(
+                                                R.string.snackbar_archived_item,
+                                                archivedItem.label
+                                            ),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            duration = SnackbarDuration.Short
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.unarchiveItem(archivedItem)
+                                        }
+                                    }
+                                }
+                            },
                             onDelete = {
+                                consecutiveDeleteTracker.recordDeleteCompleted()
                                 stagingJobs.remove(item.id)?.cancel()
                                 stagingCheckedItemIds = stagingCheckedItemIds - item.id
                                 onClearEditingIfMatches(item.id)
@@ -1908,6 +2179,7 @@ private fun ChecklistPageContent(
                                             duration = SnackbarDuration.Short
                                         )
                                         if (result == SnackbarResult.ActionPerformed) {
+                                            consecutiveDeleteTracker.reset()
                                             viewModel.restoreItem(deletedItem)
                                         }
                                     }
@@ -1951,12 +2223,19 @@ private fun ChecklistPageContent(
                         onToggle = {},
                         isEditing = false,
                         isFloatingDragged = !isSettlingDrop,
+                        hasAutoRestore = itemAutoRestoresById[draggedItem.id]?.isEnabled == true,
                         activeItemReminder = itemRemindersById[draggedItem.id],
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
                             .graphicsLayer {
-                                translationY = springTracker.currentValueState.floatValue
+                                translationX = moveToBottomVisualState.translationX.value
+                                translationY = springTracker.currentValueState.floatValue +
+                                    moveToBottomVisualState.translationY.value
+                                val dragScale = moveToBottomVisualState.scale.value
+                                scaleX = dragScale
+                                scaleY = dragScale
+                                alpha = moveToBottomVisualState.alpha.value
                             }
                     )
                 }
@@ -2085,4 +2364,39 @@ private data class ResetWaveState(
 private class FloatValueHolder(var value: Float)
 
 private class EditingDraftHolder(var text: String = "")
+
+private class ConsecutiveDeleteTracker(
+    private val baseDurationMs: Int = 800,
+    private val stepDecrementMs: Int = 100,
+    private val minDurationMs: Int = 450,
+    private val chainWindowMs: Long = 4_000L
+) {
+    private var streakCount = 0
+    private var lastDeleteUptimeMs = 0L
+
+    fun currentFillDurationMs(): Int {
+        if (streakCount <= 0) return baseDurationMs
+        val elapsed = android.os.SystemClock.uptimeMillis() - lastDeleteUptimeMs
+        if (elapsed > chainWindowMs) {
+            streakCount = 0
+            return baseDurationMs
+        }
+        return (baseDurationMs - streakCount * stepDecrementMs).coerceAtLeast(minDurationMs)
+    }
+
+    fun recordDeleteCompleted() {
+        val now = android.os.SystemClock.uptimeMillis()
+        streakCount = if (lastDeleteUptimeMs > 0L && (now - lastDeleteUptimeMs) <= chainWindowMs) {
+            streakCount + 1
+        } else {
+            1
+        }
+        lastDeleteUptimeMs = now
+    }
+
+    fun reset() {
+        streakCount = 0
+        lastDeleteUptimeMs = 0L
+    }
+}
 

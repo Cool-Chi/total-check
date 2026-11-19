@@ -432,6 +432,37 @@ class StackedCardListState {
         exitAnchorExpireNanos = 0L
     }
 
+    /**
+     * 當單項處於原地編輯鎖定狀態被封存/移除時，將退場視覺錨點無縫轉交給緊鄰的現存卡片，
+     * 避免原項目自鍵值陣列消失後導致退場錨點失效與頁面跳動。
+     */
+    fun handoffPinnedAnchorBeforeRemoval(removedKey: Any) {
+        val idx = currentKeys.indexOf(removedKey)
+        if (idx < 0) return
+        val prevKey = if (idx - 1 >= 0) currentKeys[idx - 1] else null
+        val nextKey = if (idx + 1 < currentKeys.size) currentKeys[idx + 1] else null
+        val neighborKey = prevKey ?: nextKey
+        if (neighborKey != null) {
+            val neighborIdx = currentKeys.indexOf(neighborKey)
+            val neighborVisualTopY = if (
+                neighborIdx in 0 until currentPlacedCount &&
+                visibleFlagsBuffer[neighborIdx]
+            ) {
+                placedTopYsBuffer[neighborIdx]
+            } else {
+                lastPinnedVisualTopY
+            }
+            if (prevKey == null && nextKey != null) {
+                suppressNextReflowFor(nextKey)
+            }
+            lastPinnedKey = neighborKey
+            lastPinnedVisualTopY = neighborVisualTopY
+        } else {
+            lastPinnedKey = null
+            clearExitAnchorLock()
+        }
+    }
+
     fun resolveSlotTargetTopY(key: Any): Float? {
         val idx = currentKeys.indexOf(key)
         if (idx < 0 || idx >= currentItemTops.size) return null

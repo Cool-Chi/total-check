@@ -109,6 +109,8 @@
     <string name="cd_checklist_reminder">Set checklist reminder</string>
     <string name="cd_item_reminder">Set reminder for \"%1$s\"</string>
     <string name="a11y_quick_reminder_15m">Quick set 15-minute reminder</string>
+    <string name="a11y_cancel_or_skip_reminder">Cancel or skip next reminder</string>
+    <string name="reminder_badge_skipped_prefix">Skipped · %1$s</string>
     <string name="dialog_reminder_checklist_title">Checklist Reminder</string>
     <string name="dialog_reminder_item_title">Item Reminder</string>
     <string name="reminder_target_checklist">Checklist: %1$s</string>
@@ -154,6 +156,8 @@
     <string name="action_save_reminder">Save Reminder</string>
     <string name="snackbar_reminder_saved">Reminder set: %1$s</string>
     <string name="snackbar_quick_reminder_15m_set">15-min reminder set (%1$s)</string>
+    <string name="snackbar_reminder_skipped_once">Skipped next reminder; next: %1$s</string>
+    <string name="snackbar_reminder_cancelled">Reminder cancelled</string>
     <string name="snackbar_reminder_deleted">Reminder removed</string>
     <string name="snackbar_test_notification_sent">Test notification sent</string>
     <string name="snackbar_notif_permission_denied">Notification permission denied; alerts may not appear</string>
@@ -169,6 +173,32 @@
     <string name="notif_action_snooze_15m">Snooze 15m</string>
     <string name="notif_action_mark_all_checked">✓ Mark All Ready</string>
     <string name="notif_action_mark_item_checked">✓ Mark Ready</string>
+
+    <!-- Archive & Filter -->
+    <string name="cd_archive_item">Archive item</string>
+    <string name="cd_open_archive_panel">Archived items</string>
+    <string name="cd_open_archive_panel_count">Archived items (%1$d)</string>
+    <string name="cd_filter_items">Filter items</string>
+    <string name="dialog_archived_items_title">Archived Items</string>
+    <string name="archived_items_subtitle_checklist">Checklist: %1$s</string>
+    <string name="archived_items_empty_title">No archived items</string>
+    <string name="archived_items_empty_subtitle">Archived items from this checklist will appear here.</string>
+    <string name="cd_unarchive_item">Restore %1$s</string>
+    <string name="cd_delete_archived_item_forever">Delete %1$s permanently</string>
+    <string name="action_close">Close</string>
+    <string name="snackbar_archived_item">Archived \"%1$s\"</string>
+    <string name="snackbar_unarchived_item">Restored \"%1$s\"</string>
+    <string name="snackbar_deleted_archived_item">Permanently deleted \"%1$s\"</string>
+
+    <!-- Auto-Restore -->
+    <string name="dialog_auto_restore_item_title">Item Auto-Reset</string>
+    <string name="item_modal_tab_reminder">Reminder</string>
+    <string name="item_modal_tab_auto_restore">Auto-Reset</string>
+    <string name="auto_restore_desc_title">Automatically resets this item back to Unchecked when scheduled time arrives.</string>
+    <string name="action_save_auto_restore">Save Auto-Reset</string>
+    <string name="action_delete_auto_restore">Turn Off Auto-Reset</string>
+    <string name="snackbar_auto_restore_saved">Auto-reset set: %1$s</string>
+    <string name="snackbar_auto_restore_deleted">Item auto-reset turned off</string>
 
     <!-- Skeleton -->
     <string name="skeleton_loading_state">Loading checklists</string>

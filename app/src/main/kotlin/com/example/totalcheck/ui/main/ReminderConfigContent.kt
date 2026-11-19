@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -279,7 +280,8 @@ internal fun ReminderConfigBody(
     onExitDirectInput: (imeWasFocusLost: Boolean) -> Unit,
     onDirectInputFocusChanged: (Boolean) -> Unit,
     onDeleteExisting: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isAutoRestoreMode: Boolean = false
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -641,47 +643,64 @@ internal fun ReminderConfigBody(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // ── Block D: Borderless Single-Line Smart Filter Switch + Ripple Feedback ─────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = onlyIfUncheckedTitle,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        // ── Block D: Smart Filter Switch or Auto-Restore Explanation ──────────────────────
+        if (isAutoRestoreMode) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = colorScheme.primaryContainer.copy(alpha = 0.52f),
+                border = BorderStroke(1.dp, colorScheme.primary.copy(alpha = 0.3f))
+            ) {
+                Text(
+                    text = stringResource(R.string.auto_restore_desc_title),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+            }
+        } else {
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .graphicsLayer {
-                        translationY = resonanceOffsetPx.value
-                    }
-            )
-            Switch(
-                checked = onlyIfUnchecked,
-                onCheckedChange = { checked ->
-                    onOnlyIfUncheckedChange(checked)
-                    if (!isReducedMotion) {
-                        scope.launch {
-                            val amplitudePx = with(density) { 2.dp.toPx() }
-                            resonanceOffsetPx.animateTo(
-                                targetValue = amplitudePx,
-                                animationSpec = spring(dampingRatio = 0.72f, stiffness = 880f)
-                            )
-                            resonanceOffsetPx.animateTo(
-                                targetValue = 0f,
-                                animationSpec = spring(dampingRatio = 0.45f, stiffness = 360f)
-                            )
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = onlyIfUncheckedTitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer {
+                            translationY = resonanceOffsetPx.value
                         }
-                    }
-                },
-                modifier = Modifier.testTag("reminder_only_unchecked_switch")
-            )
+                )
+                Switch(
+                    checked = onlyIfUnchecked,
+                    onCheckedChange = { checked ->
+                        onOnlyIfUncheckedChange(checked)
+                        if (!isReducedMotion) {
+                            scope.launch {
+                                val amplitudePx = with(density) { 2.dp.toPx() }
+                                resonanceOffsetPx.animateTo(
+                                    targetValue = amplitudePx,
+                                    animationSpec = spring(dampingRatio = 0.72f, stiffness = 880f)
+                                )
+                                resonanceOffsetPx.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = spring(dampingRatio = 0.45f, stiffness = 360f)
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.testTag("reminder_only_unchecked_switch")
+                )
+            }
         }
 
         // ── Block E: Edit-Only Delete Button (Test Notification Button Hidden) ────────────
@@ -705,7 +724,13 @@ internal fun ReminderConfigBody(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = stringResource(R.string.action_delete_reminder),
+                    text = stringResource(
+                        if (isAutoRestoreMode) {
+                            R.string.action_delete_auto_restore
+                        } else {
+                            R.string.action_delete_reminder
+                        }
+                    ),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
