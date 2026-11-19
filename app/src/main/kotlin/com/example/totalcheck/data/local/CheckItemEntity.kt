@@ -24,5 +24,14 @@ data class CheckItemEntity(
     val isChecked: Boolean = false,
     val sortOrder: Int = 0,
     val category: String = "",
-    val iconKey: String = "default"
+    val iconKey: String = "default",
+    val isArchived: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val lastCheckedAt: Long? = null,
+    val archivedAt: Long? = null,
+    val tags: String = "",
+    val note: String = "",
+    val quantity: Int = 1,
+    val priority: Int = 0
 )

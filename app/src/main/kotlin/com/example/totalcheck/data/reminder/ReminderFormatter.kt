@@ -2,6 +2,10 @@ package com.example.totalcheck.data.reminder
 
 import android.content.Context
 import com.example.totalcheck.R
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 object ReminderFormatter {
@@ -71,5 +75,35 @@ object ReminderFormatter {
     ): String {
         val timeText = formatTime(hour, minute)
         return "${formatRepeatSummary(context, repeatDaysBitmask)} $timeText"
+    }
+
+    fun formatNextOccurrence(
+        context: Context,
+        triggerEpochMillis: Long,
+    ): String {
+        val zone = ZoneId.systemDefault()
+        val targetZdt = Instant.ofEpochMilli(triggerEpochMillis).atZone(zone)
+        val today = LocalDate.now(zone)
+        val targetDate = targetZdt.toLocalDate()
+        val daysApart = ChronoUnit.DAYS.between(today, targetDate)
+        val dayResIds = intArrayOf(
+            R.string.reminder_day_mon,
+            R.string.reminder_day_tue,
+            R.string.reminder_day_wed,
+            R.string.reminder_day_thu,
+            R.string.reminder_day_fri,
+            R.string.reminder_day_sat,
+            R.string.reminder_day_sun,
+        )
+        val dayShort = context.getString(
+            R.string.reminder_day_prefix_short,
+            context.getString(dayResIds[(targetZdt.dayOfWeek.value - 1).coerceIn(0, 6)])
+        )
+        val timeText = formatTime(targetZdt.hour, targetZdt.minute)
+        return if (daysApart >= 7L) {
+            "${targetDate.monthValue}/${targetDate.dayOfMonth} ($dayShort) $timeText"
+        } else {
+            "$dayShort $timeText"
+        }
     }
 }

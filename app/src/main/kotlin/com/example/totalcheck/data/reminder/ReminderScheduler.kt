@@ -49,6 +49,47 @@ object ReminderScheduler {
         return nowMillis + 86_400_000L
     }
 
+    fun computeNextOccurrenceAfterSkip(
+        hour: Int,
+        minute: Int,
+        repeatDaysBitmask: Int,
+        currentTriggerEpochMillis: Long,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Long {
+        val masked = repeatDaysBitmask and ReminderFormatter.DAILY_MASK
+        val standardNext = computeNextTriggerEpochMillis(
+            hour = hour,
+            minute = minute,
+            repeatDaysBitmask = masked,
+            nowMillis = nowMillis,
+        )
+        if (masked == 0) return standardNext
+        val skipAnchor = maxOf(currentTriggerEpochMillis, standardNext) + 60_000L
+        return computeNextTriggerEpochMillis(
+            hour = hour,
+            minute = minute,
+            repeatDaysBitmask = masked,
+            nowMillis = skipAnchor,
+        )
+    }
+
+    fun isPeriodicReminderSkipped(
+        reminder: ReminderEntity,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!reminder.isEnabled) return false
+        val masked = reminder.repeatDaysBitmask and ReminderFormatter.DAILY_MASK
+        if (masked == 0) return false
+        if (reminder.triggerEpochMillis <= nowMillis) return false
+        val standardNext = computeNextTriggerEpochMillis(
+            hour = reminder.hour,
+            minute = reminder.minute,
+            repeatDaysBitmask = masked,
+            nowMillis = nowMillis,
+        )
+        return reminder.triggerEpochMillis > standardNext + 60_000L
+    }
+
     fun scheduleReminder(context: Context, reminder: ReminderEntity) {
         val appContext = context.applicationContext
         if (reminder.id <= 0L) return

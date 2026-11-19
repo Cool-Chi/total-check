@@ -22,11 +22,21 @@ interface ReminderDao {
     @Query("SELECT * FROM reminders WHERE id = :id LIMIT 1")
     suspend fun getReminderById(id: Long): ReminderEntity?
 
-    @Query("SELECT * FROM reminders WHERE checklistId = :checklistId AND itemId IS NULL LIMIT 1")
+    @Query(
+        "SELECT * FROM reminders WHERE checklistId = :checklistId AND itemId IS NULL AND scheduleKind = 'REMINDER' LIMIT 1"
+    )
     suspend fun getChecklistLevelReminder(checklistId: Long): ReminderEntity?
 
-    @Query("SELECT * FROM reminders WHERE itemId = :itemId LIMIT 1")
-    suspend fun getItemLevelReminder(itemId: Long): ReminderEntity?
+    @Query(
+        "SELECT * FROM reminders WHERE itemId = :itemId AND scheduleKind = :scheduleKind LIMIT 1"
+    )
+    suspend fun getItemLevelReminder(
+        itemId: Long,
+        scheduleKind: String = ReminderEntity.KIND_REMINDER
+    ): ReminderEntity?
+
+    @Query("SELECT * FROM reminders WHERE itemId = :itemId ORDER BY id ASC")
+    suspend fun getItemSchedules(itemId: Long): List<ReminderEntity>
 
     @Query("SELECT * FROM reminders WHERE checklistId = :checklistId")
     suspend fun getRemindersByChecklist(checklistId: Long): List<ReminderEntity>

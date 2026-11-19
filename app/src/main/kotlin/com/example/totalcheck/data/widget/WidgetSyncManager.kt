@@ -650,9 +650,10 @@ object WidgetSyncManager {
         val (checklists, prefsByWidget, allItems, loadedThemeConfig, enabledReminders) = dbWriteMutex.withLock {
             val loadedChecklists = dao.getAllChecklists()
             val loadedPrefs = prefsRepo.readAllWidgetStates(activeWidgetIds)
-            val loadedItems = dao.getAllItems()
+            val loadedItems = dao.getAllItems().filter { !it.isArchived }
             val diskThemeConfig = prefsRepo.themeConfig.first()
             val loadedReminders = reminderDao.getEnabledReminders()
+                .filter { it.scheduleKind == ReminderEntity.KIND_REMINDER }
             SnapshotLoadTuple(loadedChecklists, loadedPrefs, loadedItems, diskThemeConfig, loadedReminders)
         }
         val pendingOverride = overrideThemeConfig

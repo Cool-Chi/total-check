@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.totalcheck.data.local.AppDatabase
+import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.repository.ChecklistRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,11 +48,17 @@ class ReminderBootReceiver : BroadcastReceiver() {
                             )
                             val overdueMillis = nowMillis - reminder.triggerEpochMillis
                             if (overdueMillis in 0L..OVERDUE_CATCHUP_WINDOW_MS) {
-                                NotificationHelper.evaluateAndNotifyIfNeeded(
-                                    context = appContext,
-                                    reminder = reminder,
-                                    isTestNotification = false
-                                )
+                                if (reminder.scheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                                    reminder.itemId?.let { itemId ->
+                                        repository.applyAutoRestoreForItem(itemId)
+                                    }
+                                } else {
+                                    NotificationHelper.evaluateAndNotifyIfNeeded(
+                                        context = appContext,
+                                        reminder = reminder,
+                                        isTestNotification = false
+                                    )
+                                }
                             }
                         } else {
                             ReminderScheduler.scheduleReminder(appContext, reminder)

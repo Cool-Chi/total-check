@@ -36,5 +36,11 @@ data class ReminderEntity(
     val triggerEpochMillis: Long = 0L,
     val onlyIfUnchecked: Boolean = true,
     val isEnabled: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis()
-)
+    val createdAt: Long = System.currentTimeMillis(),
+    val scheduleKind: String = KIND_REMINDER
+) {
+    companion object {
+        const val KIND_REMINDER = "REMINDER"
+        const val KIND_AUTO_RESTORE = "AUTO_RESTORE"
+    }
+}

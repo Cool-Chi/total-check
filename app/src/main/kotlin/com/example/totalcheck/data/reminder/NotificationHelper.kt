@@ -60,12 +60,13 @@ object NotificationHelper {
         isTestNotification: Boolean = false,
     ): Boolean {
         val appContext = context.applicationContext
+        if (reminder.scheduleKind == ReminderEntity.KIND_AUTO_RESTORE && !isTestNotification) return false
         if (!hasNotificationPermission(appContext)) return false
         ensureChannel(appContext)
 
         val dao = AppDatabase.getInstance(appContext).checklistDao()
         val checklist = dao.getChecklistById(reminder.checklistId) ?: return false
-        val items = dao.getItemsByChecklist(reminder.checklistId)
+        val items = dao.getItemsByChecklist(reminder.checklistId).filter { !it.isArchived }
 
         val notificationId = resolveNotificationId(reminder)
         val contentIntent = buildOpenChecklistPendingIntent(appContext, reminder, notificationId)
@@ -158,6 +159,9 @@ object NotificationHelper {
             }
         } else {
             val targetItem = dao.getItemById(reminder.itemId) ?: return false
+            if (targetItem.isArchived && !isTestNotification) {
+                return false
+            }
             if (!isTestNotification && reminder.onlyIfUnchecked && targetItem.isChecked) {
                 return false
             }

@@ -63,11 +63,18 @@ class ReminderBroadcastReceiver : BroadcastReceiver() {
                             ReminderScheduler.scheduleReminder(appContext, updated)
                         }
 
-                        NotificationHelper.evaluateAndNotifyIfNeeded(
-                            context = appContext,
-                            reminder = reminder,
-                            isTestNotification = false
-                        )
+                        if (reminder.scheduleKind == ReminderEntity.KIND_AUTO_RESTORE) {
+                            val itemIdTarget = reminder.itemId
+                            if (itemIdTarget != null) {
+                                repository.applyAutoRestoreForItem(itemIdTarget)
+                            }
+                        } else {
+                            NotificationHelper.evaluateAndNotifyIfNeeded(
+                                context = appContext,
+                                reminder = reminder,
+                                isTestNotification = false
+                            )
+                        }
                         repository.syncWidgetsNow()
                     }
 
@@ -119,7 +126,7 @@ class ReminderBroadcastReceiver : BroadcastReceiver() {
                         NotificationHelper.cancelNotificationById(appContext, notificationId)
                         ReminderScheduler.cancelSnooze(appContext, reminderId)
                         if (checklistId > 0L) {
-                            checklistDao.checkAllChecklistItems(checklistId)
+                            repository.checkAllChecklistItems(checklistId)
                             repository.syncWidgetsNow()
                         }
                     }
@@ -128,7 +135,7 @@ class ReminderBroadcastReceiver : BroadcastReceiver() {
                         NotificationHelper.cancelNotificationById(appContext, notificationId)
                         ReminderScheduler.cancelSnooze(appContext, reminderId)
                         if (itemId != null && itemId > 0L) {
-                            checklistDao.updateItemChecked(itemId = itemId, isChecked = true)
+                            repository.setItemChecked(itemId = itemId, isChecked = true)
                             repository.syncWidgetsNow()
                         }
                     }

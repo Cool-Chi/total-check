@@ -101,27 +101,74 @@ interface ChecklistDao {
     @Update
     suspend fun updateItems(items: List<CheckItemEntity>)
 
-    @Query("UPDATE check_items SET label = :newLabel WHERE id = :itemId")
-    suspend fun updateItemLabel(itemId: Long, newLabel: String)
+    @Query("UPDATE check_items SET label = :newLabel, updatedAt = :updatedAt WHERE id = :itemId")
+    suspend fun updateItemLabel(
+        itemId: Long,
+        newLabel: String,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query(
+        "UPDATE check_items SET isArchived = :isArchived, updatedAt = :updatedAt, archivedAt = :archivedAt WHERE id = :itemId"
+    )
+    suspend fun updateItemArchived(
+        itemId: Long,
+        isArchived: Boolean,
+        updatedAt: Long = System.currentTimeMillis(),
+        archivedAt: Long? = if (isArchived) updatedAt else null
+    )
 
     @Delete
     suspend fun deleteItem(item: CheckItemEntity)
 
-    @Query("UPDATE check_items SET isChecked = :isChecked WHERE id = :itemId")
-    suspend fun updateItemChecked(itemId: Long, isChecked: Boolean)
+    @Query(
+        "UPDATE check_items SET isChecked = :isChecked, updatedAt = :updatedAt, " +
+            "lastCheckedAt = CASE WHEN :isChecked = 1 THEN :updatedAt ELSE lastCheckedAt END " +
+            "WHERE id = :itemId"
+    )
+    suspend fun updateItemChecked(
+        itemId: Long,
+        isChecked: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
-    @Query("UPDATE check_items SET isChecked = NOT isChecked WHERE id = :itemId")
-    suspend fun toggleItemChecked(itemId: Long)
+    @Query(
+        "UPDATE check_items SET isChecked = NOT isChecked, updatedAt = :updatedAt, " +
+            "lastCheckedAt = CASE WHEN isChecked = 0 THEN :updatedAt ELSE lastCheckedAt END " +
+            "WHERE id = :itemId"
+    )
+    suspend fun toggleItemChecked(
+        itemId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
-    @Query("SELECT id FROM check_items WHERE checklistId = :checklistId AND isChecked = 1")
+    @Query("SELECT id FROM check_items WHERE checklistId = :checklistId AND isChecked = 1 AND isArchived = 0")
     suspend fun getCheckedItemIds(checklistId: Long): List<Long>
 
-    @Query("UPDATE check_items SET isChecked = 0 WHERE checklistId = :checklistId")
-    suspend fun resetChecklistItems(checklistId: Long)
+    @Query(
+        "UPDATE check_items SET isChecked = 0, updatedAt = :updatedAt " +
+            "WHERE checklistId = :checklistId AND isArchived = 0"
+    )
+    suspend fun resetChecklistItems(
+        checklistId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
-    @Query("UPDATE check_items SET isChecked = 1 WHERE checklistId = :checklistId")
-    suspend fun checkAllChecklistItems(checklistId: Long)
+    @Query(
+        "UPDATE check_items SET isChecked = 1, updatedAt = :updatedAt, lastCheckedAt = :updatedAt " +
+            "WHERE checklistId = :checklistId AND isArchived = 0"
+    )
+    suspend fun checkAllChecklistItems(
+        checklistId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
-    @Query("UPDATE check_items SET isChecked = 1 WHERE id IN (:itemIds)")
-    suspend fun restoreCheckedStates(itemIds: List<Long>)
+    @Query(
+        "UPDATE check_items SET isChecked = 1, updatedAt = :updatedAt, lastCheckedAt = :updatedAt " +
+            "WHERE id IN (:itemIds)"
+    )
+    suspend fun restoreCheckedStates(
+        itemIds: List<Long>,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 }
