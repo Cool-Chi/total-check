@@ -184,6 +184,23 @@ class ChecklistRepository(
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
+    suspend fun updateItemTags(itemId: Long, serializedTags: String) {
+        val now = System.currentTimeMillis()
+        val existing = dao.getItemById(itemId)
+        dao.updateItemTags(itemId = itemId, newTags = serializedTags, updatedAt = now)
+        if (existing != null && existing.tags != serializedTags) {
+            recordStatusLog(
+                itemId = itemId,
+                checklistId = existing.checklistId,
+                actionType = ItemStatusLogEntity.ActionType.TAGS_UPDATED,
+                previousValue = existing.tags,
+                newValue = serializedTags,
+                occurredAt = now
+            )
+        }
+        WidgetSyncManager.notifyDataChanged(appContext)
+    }
+
     suspend fun restoreItem(item: CheckItemEntity) {
         val now = System.currentTimeMillis()
         dao.insertItem(item.copy(updatedAt = now))

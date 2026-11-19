@@ -78,6 +78,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val itemReorderMutex = Mutex()
     private val _optimisticItemLabels = MutableStateFlow<Map<Long, String>>(emptyMap())
+    private val _optimisticItemTags = MutableStateFlow<Map<Long, String>>(emptyMap())
     private val _optimisticCheckedStates = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
     private val _optimisticArchivedStates = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
     private val _optimisticItemOrders = MutableStateFlow<Map<Long, List<Long>>>(emptyMap())
@@ -85,14 +86,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val resolvedAllItems: StateFlow<List<CheckItemEntity>> = combine(
         repository.observeAllItems(),
         _optimisticItemLabels,
+        _optimisticItemTags,
         _optimisticCheckedStates,
         _optimisticArchivedStates
-    ) { items, optimisticLabels, optimisticChecked, optimisticArchived ->
+    ) { items, optimisticLabels, optimisticTags, optimisticChecked, optimisticArchived ->
         val staleLabelKeys = if (optimisticLabels.isEmpty()) null else mutableSetOf<Long>()
+        val staleTagKeys = if (optimisticTags.isEmpty()) null else mutableSetOf<Long>()
         val staleCheckedKeys = if (optimisticChecked.isEmpty()) null else mutableSetOf<Long>()
         val staleArchivedKeys = if (optimisticArchived.isEmpty()) null else mutableSetOf<Long>()
         val mapped = if (
             optimisticLabels.isEmpty() &&
+            optimisticTags.isEmpty() &&
             optimisticChecked.isEmpty() &&
             optimisticArchived.isEmpty()
         ) {
@@ -109,6 +113,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     item.label
+                }
+                val overrideTags = optimisticTags[item.id]
+                val resolvedTags = if (overrideTags != null) {
+                    if (item.tags == overrideTags) {
+                        staleTagKeys?.add(item.id)
+                        item.tags
+                    } else {
+                        overrideTags
+                    }
+                } else {
+                    item.tags
                 }
                 val overrideChecked = optimisticChecked[item.id]
                 val resolvedChecked = if (overrideChecked != null) {
@@ -134,11 +149,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (
                     resolvedLabel != item.label ||
+                    resolvedTags != item.tags ||
                     resolvedChecked != item.isChecked ||
                     resolvedArchived != item.isArchived
                 ) {
                     item.copy(
                         label = resolvedLabel,
+                        tags = resolvedTags,
                         isChecked = resolvedChecked,
                         isArchived = resolvedArchived
                     )
@@ -149,6 +166,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!staleLabelKeys.isNullOrEmpty()) {
             _optimisticItemLabels.update { it - staleLabelKeys }
+        }
+        if (!staleTagKeys.isNullOrEmpty()) {
+            _optimisticItemTags.update { it - staleTagKeys }
         }
         if (!staleCheckedKeys.isNullOrEmpty()) {
             _optimisticCheckedStates.update { it - staleCheckedKeys }
@@ -244,6 +264,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = false
+        )
+
+    val tagPool: StateFlow<List<TagDefinition>> = preferencesRepository.tagPool
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = TagCatalog.DEFAULT_SEED_TAGS
         )
 
     private val _filterState = MutableStateFlow(ChecklistFilterState())
@@ -444,12 +471,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(selectedTags = tags) }
     }
 
+    fun selectFilterTag(tagName: String?) {
+        val clean = tagName?.let { TagCatalog.sanitizeTagName(it) }?.takeIf { it.isNotEmpty() }
+        _filterState.update { current ->
+            current.copy(selectedTags = if (clean == null) emptySet() else setOf(clean))
+        }
+    }
+
     fun updateSearchQueryFilter(query: String) {
         _filterState.update { it.copy(searchQuery = query) }
     }
 
     fun clearAllFilters() {
         _filterState.value = ChecklistFilterState()
+    }
+
+    fun createTagInPool(
+        name: String,
+        iconKey: String,
+        onCreated: (TagDefinition) -> Unit = {}
+    ) {
+        val cleanName = TagCatalog.sanitizeTagName(name)
+        if (cleanName.isEmpty()) return
+        val newTag = TagDefinition(
+            name = cleanName,
+            iconKey = iconKey.ifBlank { TagCatalog.DEFAULT_ICON_KEY }
+        )
+        viewModelScope.launch {
+            preferencesRepository.addOrUpdateTag(newTag)
+            onCreated(newTag)
+        }
+    }
+
+    fun updateItemTags(itemId: Long, tags: List<String>, onUpdated: () -> Unit = {}) {
+        val serialized = TagCatalog.serializeItemTags(tags)
+        _optimisticItemTags.update { it + (itemId to serialized) }
+        viewModelScope.launch {
+            repository.updateItemTags(itemId = itemId, serializedTags = serialized)
+            onUpdated()
+        }
     }
 
     fun toggleItemChecked(item: CheckItemEntity) {
@@ -536,8 +596,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentFullItems = itemsByChecklist.value[checklistId].orEmpty()
         if (currentFullItems.isEmpty() || reorderedVisibleIds.isEmpty()) return
 
+        val isFiltered = showUncheckedOnly || _filterState.value.isActive
         val reorderedSet = reorderedVisibleIds.toHashSet()
-        val fullOrderedIds = if (!showUncheckedOnly) {
+        val fullOrderedIds = if (!isFiltered) {
             val remaining = currentFullItems.filter { it.id !in reorderedSet }.map { it.id }
             reorderedVisibleIds + remaining
         } else {
@@ -576,10 +637,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showUncheckedOnly: Boolean
     ) {
         val currentFullItems = itemsByChecklist.value[checklistId].orEmpty()
-        val visibleItems = if (showUncheckedOnly) {
-            currentFullItems.filter { !it.isChecked }
-        } else {
-            currentFullItems
+        val activeFilter = _filterState.value
+        val visibleItems = when {
+            activeFilter.isActive -> currentFullItems.filter { activeFilter.matches(it) }
+            showUncheckedOnly -> currentFullItems.filter { !it.isChecked }
+            else -> currentFullItems
         }
         val fromIdx = visibleItems.indexOfFirst { it.id == itemId }
         if (fromIdx < 0) return
@@ -601,10 +663,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showUncheckedOnly: Boolean
     ) {
         val currentFullItems = itemsByChecklist.value[checklistId].orEmpty()
-        val visibleItems = if (showUncheckedOnly) {
-            currentFullItems.filter { !it.isChecked }
-        } else {
-            currentFullItems
+        val activeFilter = _filterState.value
+        val visibleItems = when {
+            activeFilter.isActive -> currentFullItems.filter { activeFilter.matches(it) }
+            showUncheckedOnly -> currentFullItems.filter { !it.isChecked }
+            else -> currentFullItems
         }
         val fromIdx = visibleItems.indexOfFirst { it.id == itemId }
         if (fromIdx < 0 || fromIdx == visibleItems.lastIndex) return

@@ -46,5 +46,6 @@ data class ItemStatusLogEntity(
         const val AUTO_RESTORED = "AUTO_RESTORED"
         const val RESET = "RESET"
         const val SCHEDULE_UPDATED = "SCHEDULE_UPDATED"
+        const val TAGS_UPDATED = "TAGS_UPDATED"
     }
 }

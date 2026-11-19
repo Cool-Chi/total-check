@@ -6,8 +6,11 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.totalcheck.data.widget.WidgetSyncManager
+import com.example.totalcheck.ui.main.TagCatalog
+import com.example.totalcheck.ui.main.TagDefinition
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -42,6 +45,29 @@ class UserPreferencesRepository(context: Context) {
     val isDarkMode: Flow<Boolean> = themeConfig.map { it.isDarkMode }
 
     val useDynamicColor: Flow<Boolean> = themeConfig.map { it.useDynamicColor }
+
+    val tagPool: Flow<List<TagDefinition>> = dataStore.data.map { prefs ->
+        TagCatalog.deserializeTagPool(prefs[KEY_TAG_POOL_JSON])
+    }
+
+    suspend fun addOrUpdateTag(tag: TagDefinition) {
+        val cleanName = TagCatalog.sanitizeTagName(tag.name)
+        if (cleanName.isEmpty()) return
+        val normalized = tag.copy(
+            name = cleanName,
+            iconKey = tag.iconKey.ifBlank { TagCatalog.DEFAULT_ICON_KEY }
+        )
+        dataStore.edit { prefs ->
+            val current = TagCatalog.deserializeTagPool(prefs[KEY_TAG_POOL_JSON])
+            val existingIdx = current.indexOfFirst { it.name == cleanName }
+            val updated = if (existingIdx >= 0) {
+                current.toMutableList().apply { set(existingIdx, normalized) }
+            } else {
+                current + normalized
+            }
+            prefs[KEY_TAG_POOL_JSON] = TagCatalog.serializeTagPool(updated)
+        }
+    }
 
     suspend fun setDarkMode(enabled: Boolean) {
         dataStore.edit { prefs ->
@@ -107,6 +133,7 @@ class UserPreferencesRepository(context: Context) {
     private companion object {
         val KEY_IS_DARK_MODE = booleanPreferencesKey("is_dark_mode")
         val KEY_USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
+        val KEY_TAG_POOL_JSON = stringPreferencesKey("tag_pool_json")
 
         fun keySelectedChecklist(appWidgetId: Int) =
             longPreferencesKey("widget_selected_checklist_$appWidgetId")

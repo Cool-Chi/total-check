@@ -22,10 +22,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -54,11 +56,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +92,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isShiftPressed
@@ -99,6 +105,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -160,6 +167,12 @@ internal sealed interface ChecklistModalContent {
     data class ArchivedItems(
         val checklist: ChecklistEntity,
     ) : ChecklistModalContent
+    data class ItemTagPicker(
+        val item: CheckItemEntity,
+    ) : ChecklistModalContent
+    data class SelectFilterTag(
+        val activeTagName: String?,
+    ) : ChecklistModalContent
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -196,6 +209,10 @@ internal fun ScopedModalHost(
     archivedItemsByChecklist: Map<Long, List<CheckItemEntity>> = emptyMap(),
     onUnarchiveItem: (CheckItemEntity) -> Unit = {},
     onDeleteArchivedItemForever: (CheckItemEntity) -> Unit = {},
+    tagPool: List<TagDefinition> = TagCatalog.DEFAULT_SEED_TAGS,
+    onSaveItemTags: (itemId: Long, tags: List<String>) -> Unit = { _, _ -> },
+    onCreateTagInPool: (name: String, iconKey: String, onCreated: (TagDefinition) -> Unit) -> Unit = { _, _, _ -> },
+    onSelectFilterTag: (tagName: String?) -> Unit = {},
     onExited: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -224,6 +241,7 @@ internal fun ScopedModalHost(
 
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
@@ -234,7 +252,8 @@ internal fun ScopedModalHost(
     val isTextInputModal = modalContent is ChecklistModalContent.CreateChecklist ||
         modalContent is ChecklistModalContent.RenameChecklist
     val supportsDynamicIme = isTextInputModal ||
-        modalContent is ChecklistModalContent.ConfigureReminder
+        modalContent is ChecklistModalContent.ConfigureReminder ||
+        modalContent is ChecklistModalContent.ItemTagPicker
     var expectImeForModal by remember(sessionKey) { mutableStateOf(isTextInputModal) }
     var isPrimaryInputFocused by remember(sessionKey) { mutableStateOf(false) }
     var isTitleInputFocused by remember(sessionKey) { mutableStateOf(false) }
@@ -1507,6 +1526,381 @@ internal fun ScopedModalHost(
                         }
                     }
                 }
+
+                is ChecklistModalContent.ItemTagPicker -> {
+                    val targetItem = modalContent.item
+                    var selectedTags by remember(sessionKey) {
+                        mutableStateOf(TagCatalog.parseItemTags(targetItem.tags))
+                    }
+                    var newTagName by remember(sessionKey) { mutableStateOf("") }
+                    var selectedIconKey by remember(sessionKey) {
+                        mutableStateOf(TagCatalog.DEFAULT_ICON_KEY)
+                    }
+                    val sanitizedNewName = TagCatalog.sanitizeTagName(newTagName)
+                    val canCreateNewTag = sanitizedNewName.isNotEmpty()
+                    val addAndApplyNewTag: () -> Unit = {
+                        if (canCreateNewTag && isOpen) {
+                            val iconToUse = selectedIconKey
+                            onCreateTagInPool(sanitizedNewName, iconToUse) { created ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (created.name !in selectedTags && selectedTags.size < TagCatalog.MAX_TAGS_PER_ITEM) {
+                                    selectedTags = selectedTags + created.name
+                                }
+                            }
+                            newTagName = ""
+                            expectImeForModal = false
+                            isPrimaryInputFocused = false
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                        }
+                    }
+
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = true,
+                        confirmEnabled = true,
+                        animateSize = true,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = dismissImeOrCloseModal,
+                        headerContent = {
+                            Text(
+                                text = stringResource(R.string.dialog_item_tags_title),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = colorScheme.primaryContainer.copy(alpha = 0.72f),
+                                    modifier = Modifier.weight(1f, fill = false)
+                                ) {
+                                    Text(
+                                        text = targetItem.label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colorScheme.onPrimaryContainer,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = colorScheme.surfaceContainerHighest
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.item_tags_limit_counter,
+                                            selectedTags.size,
+                                            TagCatalog.MAX_TAGS_PER_ITEM
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (selectedTags.size >= TagCatalog.MAX_TAGS_PER_ITEM) {
+                                            colorScheme.primary
+                                        } else {
+                                            colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                        },
+                        footerContent = { onFocusIndexChanged ->
+                            Spacer(modifier = Modifier.height(16.dp))
+                            ModalActionRow(
+                                cancelFocus = cancelFocus,
+                                confirmFocus = confirmFocus,
+                                confirmLabel = stringResource(R.string.action_save),
+                                confirmEnabled = true,
+                                isDestructive = false,
+                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                                onCancel = { if (isOpen) onRequestClose(true) },
+                                onConfirm = {
+                                    if (isOpen) {
+                                        onSaveItemTags(targetItem.id, selectedTags)
+                                    }
+                                }
+                            )
+                        }
+                    ) { onFocusIndexChanged ->
+                        Text(
+                            text = stringResource(R.string.item_tags_pool_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            tagPool.forEach { tagDef ->
+                                val isSelected = tagDef.name in selectedTags
+                                val canToggle = isSelected || selectedTags.size < TagCatalog.MAX_TAGS_PER_ITEM
+                                TactileButton(
+                                    onClick = {
+                                        if (isSelected) {
+                                            selectedTags = selectedTags - tagDef.name
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        } else if (canToggle) {
+                                            selectedTags = selectedTags + tagDef.name
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    },
+                                    enabled = canToggle,
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = if (isSelected) {
+                                        colorScheme.primaryContainer
+                                    } else {
+                                        colorScheme.surfaceContainerHighest
+                                    },
+                                    contentColor = if (isSelected) {
+                                        colorScheme.onPrimaryContainer
+                                    } else {
+                                        colorScheme.onSurface
+                                    },
+                                    disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                                    disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                                    border = BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) {
+                                            colorScheme.primary
+                                        } else {
+                                            colorScheme.outlineVariant
+                                        }
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                    modifier = Modifier.testTag("tag_pool_chip_${tagDef.name}")
+                                ) {
+                                    Icon(
+                                        imageVector = TagCatalog.resolveTagIcon(tagDef.iconKey),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = tagDef.name,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                    if (isSelected) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Rounded.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.item_tags_create_section_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = newTagName,
+                                onValueChange = { newTagName = it },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(primaryFocus)
+                                    .onFocusChanged {
+                                        val focused = it.hasFocus || it.isFocused
+                                        isPrimaryInputFocused = focused
+                                        if (focused) {
+                                            onFocusIndexChanged(0)
+                                            expectImeForModal = true
+                                        }
+                                    }
+                                    .testTag("new_tag_name_input"),
+                                placeholder = {
+                                    Text(stringResource(R.string.item_tags_new_name_placeholder))
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(
+                                    onDone = { addAndApplyNewTag() }
+                                )
+                            )
+                            TactileButton(
+                                onClick = addAndApplyNewTag,
+                                enabled = canCreateNewTag,
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = colorScheme.secondaryContainer,
+                                contentColor = colorScheme.onSecondaryContainer,
+                                disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                                disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                                modifier = Modifier.testTag("create_tag_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = stringResource(R.string.action_create),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TagCatalog.PRESET_ICONS.forEach { option ->
+                                val isIconSelected = selectedIconKey == option.key
+                                TactileIconButton(
+                                    onClick = {
+                                        selectedIconKey = option.key
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .testTag("tag_icon_option_${option.key}"),
+                                    shape = CircleShape,
+                                    containerColor = if (isIconSelected) {
+                                        colorScheme.primaryContainer
+                                    } else {
+                                        colorScheme.surfaceContainerHighest
+                                    },
+                                    contentColor = if (isIconSelected) {
+                                        colorScheme.onPrimaryContainer
+                                    } else {
+                                        colorScheme.onSurfaceVariant
+                                    },
+                                    border = BorderStroke(
+                                        width = if (isIconSelected) 1.5.dp else 1.dp,
+                                        color = if (isIconSelected) {
+                                            colorScheme.primary
+                                        } else {
+                                            colorScheme.outlineVariant
+                                        }
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = option.icon,
+                                        contentDescription = option.key,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                is ChecklistModalContent.SelectFilterTag -> {
+                    val activeTag = modalContent.activeTagName
+                    ModalPanelContainer(
+                        panelProgressProvider = { panelProgress.value },
+                        translateYPx = translateYPx,
+                        isReducedMotion = isReducedMotion,
+                        hasTextInput = false,
+                        confirmEnabled = true,
+                        animateSize = true,
+                        primaryFocus = primaryFocus,
+                        cancelFocus = cancelFocus,
+                        confirmFocus = confirmFocus,
+                        onDismissRequest = dismissImeOrCloseModal,
+                        headerContent = {
+                            Text(
+                                text = stringResource(R.string.dialog_filter_tag_title),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.dialog_filter_tag_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                        },
+                        footerContent = { onFocusIndexChanged ->
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TactileButton(
+                                    onClick = { if (isOpen) onRequestClose(true) },
+                                    shape = RoundedCornerShape(50),
+                                    containerColor = colorScheme.surfaceContainerHighest,
+                                    contentColor = colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .focusRequester(cancelFocus)
+                                        .onFocusChanged { if (it.isFocused) onFocusIndexChanged(0) }
+                                        .testTag("filter_tag_modal_close_button")
+                                ) {
+                                    Text(stringResource(R.string.action_close))
+                                }
+                            }
+                        }
+                    ) { _ ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 300.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterTagOptionRow(
+                                label = stringResource(R.string.filter_tag_all_items),
+                                icon = Icons.Rounded.FilterList,
+                                isSelected = activeTag == null,
+                                testTag = "filter_tag_option_all",
+                                onClick = {
+                                    if (isOpen) onSelectFilterTag(null)
+                                }
+                            )
+                            tagPool.forEach { tagDef ->
+                                FilterTagOptionRow(
+                                    label = tagDef.name,
+                                    icon = TagCatalog.resolveTagIcon(tagDef.iconKey),
+                                    isSelected = activeTag == tagDef.name,
+                                    testTag = "filter_tag_option_${tagDef.name}",
+                                    onClick = {
+                                        if (isOpen) onSelectFilterTag(tagDef.name)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1907,6 +2301,65 @@ private fun ArchivedItemCapsuleRow(
                         R.string.cd_delete_archived_item_forever,
                         item.label
                     ),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterTagOptionRow(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected: Boolean,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .slideOutCancelClickable(
+                shape = RoundedCornerShape(16.dp),
+                role = Role.RadioButton,
+                onClick = onClick
+            ),
+        shape = RoundedCornerShape(16.dp),
+        color = if (isSelected) colorScheme.tertiaryContainer else colorScheme.surfaceContainer,
+        border = BorderStroke(
+            width = if (isSelected) 1.5.dp else 1.dp,
+            color = if (isSelected) colorScheme.tertiary else colorScheme.outlineVariant.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isSelected) colorScheme.onTertiaryContainer else colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = if (isSelected) colorScheme.onTertiaryContainer else colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (isSelected) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = colorScheme.onTertiaryContainer,
                     modifier = Modifier.size(18.dp)
                 )
             }

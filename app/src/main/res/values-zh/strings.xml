@@ -200,6 +200,21 @@
     <string name="snackbar_auto_restore_saved">已设置自动复原：%1$s</string>
     <string name="snackbar_auto_restore_deleted">已关闭项目自动复原</string>
 
+    <!-- Item Tags & Tag Filter (M9-Part4) -->
+    <string name="a11y_filter_by_tag">选择筛选标签</string>
+    <string name="cd_filter_items_with_tag">筛选项目 · 标签：%1$s</string>
+    <string name="a11y_show_item_tags">显示项目标签</string>
+    <string name="a11y_hide_item_tags">显示项目状态</string>
+    <string name="cd_edit_item_tags">编辑项目标签</string>
+    <string name="dialog_item_tags_title">项目标签</string>
+    <string name="item_tags_limit_counter">%1$d / %2$d</string>
+    <string name="item_tags_pool_label">共用标签池</string>
+    <string name="item_tags_create_section_label">建立新标签</string>
+    <string name="item_tags_new_name_placeholder">新标签名称（例如：易碎）</string>
+    <string name="dialog_filter_tag_title">按标签筛选</string>
+    <string name="dialog_filter_tag_subtitle">长按筛选按钮可随时切换单个标签，并可与「只看未带」同时叠加。</string>
+    <string name="filter_tag_all_items">全部项目（不限标签）</string>
+
     <!-- Skeleton -->
     <string name="skeleton_loading_state">正在載入清單資料</string>
     <string name="skeleton_sample_left">尚缺 4</string>

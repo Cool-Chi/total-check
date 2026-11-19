@@ -200,6 +200,21 @@
     <string name="snackbar_auto_restore_saved">Auto-reset set: %1$s</string>
     <string name="snackbar_auto_restore_deleted">Item auto-reset turned off</string>
 
+    <!-- Item Tags & Tag Filter (M9-Part4) -->
+    <string name="a11y_filter_by_tag">Select tag filter</string>
+    <string name="cd_filter_items_with_tag">Filter items · Tag: %1$s</string>
+    <string name="a11y_show_item_tags">Show item tags</string>
+    <string name="a11y_hide_item_tags">Show item status</string>
+    <string name="cd_edit_item_tags">Edit item tags</string>
+    <string name="dialog_item_tags_title">Item Tags</string>
+    <string name="item_tags_limit_counter">%1$d / %2$d</string>
+    <string name="item_tags_pool_label">Tag Pool</string>
+    <string name="item_tags_create_section_label">Create New Tag</string>
+    <string name="item_tags_new_name_placeholder">New tag name (e.g. Fragile)</string>
+    <string name="dialog_filter_tag_title">Filter by Tag</string>
+    <string name="dialog_filter_tag_subtitle">Long-press the filter icon anytime to switch tags; combines with unchecked-only filter.</string>
+    <string name="filter_tag_all_items">All Items (No Tag Filter)</string>
+
     <!-- Skeleton -->
     <string name="skeleton_loading_state">Loading checklists</string>
     <string name="skeleton_sample_left">4 left</string>

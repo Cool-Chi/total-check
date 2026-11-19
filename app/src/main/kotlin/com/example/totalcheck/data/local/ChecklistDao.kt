@@ -108,6 +108,13 @@ interface ChecklistDao {
         updatedAt: Long = System.currentTimeMillis()
     )
 
+    @Query("UPDATE check_items SET tags = :newTags, updatedAt = :updatedAt WHERE id = :itemId")
+    suspend fun updateItemTags(
+        itemId: Long,
+        newTags: String,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
     @Query(
         "UPDATE check_items SET isArchived = :isArchived, updatedAt = :updatedAt, archivedAt = :archivedAt WHERE id = :itemId"
     )
