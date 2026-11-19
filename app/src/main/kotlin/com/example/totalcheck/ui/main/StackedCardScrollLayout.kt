@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.verticalScrollAxisRange
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -59,9 +60,12 @@ import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 private const val MAX_STACK_DEPTH = 3f
 private const val FADE_OUT_DEPTH = 4f
@@ -155,6 +159,176 @@ private class ItemReflowAnim(
     var startNanos: Long = 0L
 )
 
+/**
+ * 連續時間二階欠阻尼彈簧解析解步進器（Zero-Allocation / Frame-0 零延遲響應）。
+ * 當目標座標於每幀觸控事件持續更新時完整保留瞬時速度，避免 Animatable.animateTo 被反覆取消重啟而凍結卡頓。
+ */
+internal class MagneticSpringTracker(
+    private val dampingRatio: Float = 0.85f,
+    private val stiffness: Float = 520f,
+    private val visibilityThreshold: Float = 0.5f,
+    private val velocityThreshold: Float = 4f,
+) {
+    val currentValueState: MutableFloatState = mutableFloatStateOf(0f)
+    var targetValue: Float = 0f
+        private set
+    var velocity: Float = 0f
+        private set
+    private var lastFrameNanos: Long = 0L
+
+    private val omega0: Float = sqrt(stiffness.coerceAtLeast(1f))
+    private val clampedZeta: Float = dampingRatio.coerceIn(0.05f, 0.999f)
+    private val alpha: Float = clampedZeta * omega0
+    private val omegaD: Float = omega0 * sqrt((1f - clampedZeta * clampedZeta).coerceAtLeast(1e-4f))
+
+    fun snapTo(value: Float) {
+        currentValueState.floatValue = value
+        targetValue = value
+        velocity = 0f
+        lastFrameNanos = 0L
+    }
+
+    fun setTarget(value: Float) {
+        targetValue = value
+    }
+
+    fun resetFrameClock() {
+        lastFrameNanos = 0L
+    }
+
+    /**
+     * 推進彈簧至 [frameNanos]，回傳是否已收斂於 [targetValue]。
+     */
+    fun stepFrame(frameNanos: Long): Boolean {
+        val prevNanos = lastFrameNanos
+        lastFrameNanos = frameNanos
+        if (prevNanos == 0L) {
+            return isSettled()
+        }
+        val dtSec = ((frameNanos - prevNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
+        if (dtSec <= 0f) {
+            return isSettled()
+        }
+
+        val target = targetValue
+        val x0 = currentValueState.floatValue - target
+        val v0 = velocity
+        if (abs(x0) <= visibilityThreshold && abs(v0) <= velocityThreshold) {
+            currentValueState.floatValue = target
+            velocity = 0f
+            return true
+        }
+
+        val decay = exp(-alpha * dtSec)
+        val angle = omegaD * dtSec
+        val c = cos(angle)
+        val s = sin(angle)
+        val aCoeff = x0
+        val bCoeff = (v0 + alpha * x0) / omegaD
+
+        val nextOffset = decay * (aCoeff * c + bCoeff * s)
+        val nextVelocity = decay * ((bCoeff * omegaD - alpha * aCoeff) * c - (aCoeff * omegaD + alpha * bCoeff) * s)
+        val nextValue = target + nextOffset
+
+        if (abs(nextOffset) <= visibilityThreshold && abs(nextVelocity) <= velocityThreshold) {
+            currentValueState.floatValue = target
+            velocity = 0f
+            return true
+        }
+
+        currentValueState.floatValue = nextValue
+        velocity = nextVelocity
+        return false
+    }
+
+    fun isSettled(): Boolean {
+        return abs(currentValueState.floatValue - targetValue) <= visibilityThreshold &&
+            abs(velocity) <= velocityThreshold
+    }
+}
+
+/**
+ * 1D 垂直磁吸狀態機（Hysteresis 雙閾值防抖 + 冪次曲線權重 + 非線性吸附混合，零配置計算）。
+ */
+internal class MagneticAttractorState(
+    private val defaultEnterRadiusPx: Float,
+    private val commitThreshold: Float = 0.35f,
+) {
+    var activeTargetSlotIndex: Int = -1
+        private set
+    var lastWeight: Float = 0f
+        private set
+    val weightState: MutableFloatState = mutableFloatStateOf(0f)
+
+    fun reset(initialSlotIndex: Int = -1) {
+        activeTargetSlotIndex = initialSlotIndex
+        val w = if (initialSlotIndex >= 0) 1f else 0f
+        lastWeight = w
+        weightState.floatValue = w
+    }
+
+    fun resolveBlendedTopY(
+        rawTopY: Float,
+        draggedHeightPx: Float,
+        slotCount: Int,
+        slotTopsY: FloatArray,
+        slotCentersY: FloatArray,
+        avgSlotPitchPx: Float,
+    ): Float {
+        if (slotCount <= 0) {
+            activeTargetSlotIndex = -1
+            lastWeight = 0f
+            weightState.floatValue = 0f
+            return rawTopY
+        }
+        val rawCenterY = rawTopY + draggedHeightPx * 0.5f
+        val enterRadius = maxOf(defaultEnterRadiusPx, avgSlotPitchPx * 1.15f)
+        val exitRadius = enterRadius * 1.25f
+
+        val currentIdx = activeTargetSlotIndex
+        val currentDist = if (currentIdx in 0 until slotCount) {
+            abs(rawCenterY - slotCentersY[currentIdx])
+        } else {
+            Float.MAX_VALUE
+        }
+
+        var bestIdx = if (currentIdx in 0 until slotCount && currentDist <= exitRadius) {
+            currentIdx
+        } else {
+            -1
+        }
+        var bestDist = if (bestIdx >= 0) currentDist else Float.MAX_VALUE
+
+        for (i in 0 until slotCount) {
+            val d = abs(rawCenterY - slotCentersY[i])
+            val threshold = if (bestIdx < 0) enterRadius else bestDist * 0.85f
+            if (d <= threshold && d < bestDist) {
+                bestIdx = i
+                bestDist = d
+            }
+        }
+
+        if (bestIdx < 0) {
+            activeTargetSlotIndex = -1
+            lastWeight = 0f
+            weightState.floatValue = 0f
+            return rawTopY
+        }
+
+        activeTargetSlotIndex = bestIdx
+        val norm = (1f - bestDist / enterRadius).coerceIn(0f, 1f)
+        val weight = norm.pow(1.6f)
+        lastWeight = weight
+        weightState.floatValue = if (weight >= commitThreshold) weight else 0f
+
+        // 非線性視覺吸附映射（維持高跟手度同時於接近槽位時產生明確的磁吸貼合拉力）
+        val visualPull = (weight * 0.54f).coerceIn(0f, 0.54f)
+        return lerp(rawTopY, slotTopsY[bestIdx], visualPull)
+    }
+
+    fun canCommit(): Boolean = activeTargetSlotIndex >= 0 && lastWeight >= commitThreshold
+}
+
 @Stable
 class StackedCardListState {
     internal val scrollOffsetState: MutableFloatState = mutableFloatStateOf(0f)
@@ -163,10 +337,19 @@ class StackedCardListState {
     internal val animFrameNanos: MutableLongState = mutableLongStateOf(0L)
     internal val rawOverscrollState: MutableFloatState = mutableFloatStateOf(0f)
     internal val visualOverscrollState: MutableFloatState = mutableFloatStateOf(0f)
+    internal val editBottomInsetFloorState: MutableFloatState = mutableFloatStateOf(0f)
     internal var maxOverscrollPx: Float = 200f
     internal var isReducedMotionEnabled: Boolean = false
     internal var isFlinging: Boolean = false
     internal var isProgrammaticScroll: Boolean = false
+    internal var draggedItemKey: Any? = null
+    private var suppressedReflowKey: Any? = null
+
+    internal var lastPinnedKey: Any? = null
+    internal var lastPinnedVisualTopY: Float = 0f
+    private var exitAnchorKey: Any? = null
+    internal var exitAnchorVisualTopY: Float = 0f
+    private var exitAnchorExpireNanos: Long = 0L
 
     internal val reflowSignal = MutableSharedFlow<Unit>(
         replay = 0,
@@ -203,6 +386,108 @@ class StackedCardListState {
     internal var currentActiveMaxDepth: Float = MAX_STACK_DEPTH
     internal var currentPeekStepPx: Float = 0f
     internal var currentGapPx: Float = 0f
+
+    internal val currentAvgSlotPitchPx: Float
+        get() {
+            val count = currentKeys.size
+            if (count <= 0) return 1f
+            val span = (currentTotalLinearHeight - currentTopMarginPx - currentBottomMarginPx + currentGapPx)
+                .coerceAtLeast(1f)
+            return (span / count).coerceAtLeast(1f)
+        }
+
+    fun suppressNextReflowFor(key: Any) {
+        suppressedReflowKey = key
+    }
+
+    internal fun recordPinnedFrame(key: Any, visualTopY: Float) {
+        lastPinnedKey = key
+        lastPinnedVisualTopY = visualTopY
+    }
+
+    internal fun beginExitAnchorLock(
+        key: Any,
+        visualTopY: Float,
+        nowNanos: Long,
+        durationNanos: Long = 550_000_000L
+    ) {
+        exitAnchorKey = key
+        exitAnchorVisualTopY = visualTopY
+        exitAnchorExpireNanos = nowNanos + durationNanos
+    }
+
+    internal fun activeExitAnchorKey(nowNanos: Long): Any? {
+        val k = exitAnchorKey ?: return null
+        if (nowNanos >= exitAnchorExpireNanos) {
+            exitAnchorKey = null
+            return null
+        }
+        return k
+    }
+
+    fun hasActiveExitAnchor(): Boolean = exitAnchorKey != null
+
+    fun clearExitAnchorLock() {
+        exitAnchorKey = null
+        exitAnchorExpireNanos = 0L
+    }
+
+    fun resolveSlotTargetTopY(key: Any): Float? {
+        val idx = currentKeys.indexOf(key)
+        if (idx < 0 || idx >= currentItemTops.size) return null
+        if (idx < currentPlacedCount && visibleFlagsBuffer[idx]) {
+            return placedTopYsBuffer[idx]
+        }
+        return currentTopInsetPx + currentItemTops[idx] - scrollOffsetState.floatValue
+    }
+
+    fun fillCandidateSlotsForDraggedItem(
+        draggedKey: Any,
+        draggedHeightPx: Float,
+        outSlotTops: FloatArray,
+        outSlotCenters: FloatArray
+    ): Int {
+        val keys = currentKeys
+        val heights = currentItemHeights
+        val n = minOf(keys.size, heights.size)
+        if (n <= 0 || outSlotTops.size < n || outSlotCenters.size < n) return 0
+
+        val topInset = currentTopInsetPx
+        val scroll = scrollOffsetState.floatValue
+        val gap = currentGapPx
+        val halfDragged = draggedHeightPx * 0.5f
+
+        var cursorContentY = currentTopMarginPx
+        var slotIdx = 0
+        for (i in 0 until n) {
+            if (keys[i] == draggedKey) continue
+            val slotTopY = topInset + cursorContentY - scroll
+            outSlotTops[slotIdx] = slotTopY
+            outSlotCenters[slotIdx] = slotTopY + halfDragged
+            slotIdx++
+            cursorContentY += heights[i] + gap
+        }
+        val lastSlotTopY = topInset + cursorContentY - scroll
+        outSlotTops[slotIdx] = lastSlotTopY
+        outSlotCenters[slotIdx] = lastSlotTopY + halfDragged
+        return slotIdx + 1
+    }
+
+    internal fun clearWhenEmpty() {
+        maxScrollState.floatValue = 0f
+        scrollOffsetState.floatValue = 0f
+        clearOverscrollImmediate()
+        currentPlacedCount = 0
+        currentKeys = emptyList()
+        currentItemTops = FloatArray(0)
+        currentItemHeights = FloatArray(0)
+        currentTotalLinearHeight = 0f
+        lastReflowKeys = emptyList()
+        reflowAnims.clear()
+        slotStates.clear()
+        lastPinnedKey = null
+        exitAnchorKey = null
+    }
 
     val placedItemsInfo: List<PlacedStackedItemInfo>
         get() {
@@ -264,6 +549,9 @@ class StackedCardListState {
 
     internal fun consumeScrollDelta(delta: Float): Float {
         if (delta == 0f) return 0f
+        if (!isProgrammaticScroll && abs(delta) > 0.5f) {
+            clearExitAnchorLock()
+        }
         var remainingDelta = delta
         val currentVisual = visualOverscrollState.floatValue
         val maxVisual = maxOverscrollPx.coerceAtLeast(1f)
@@ -560,7 +848,14 @@ class StackedCardListState {
             val prevTop = entry.lastNaturalTopPx
             entry.lastNaturalTopPx = naturalTopPx
 
-            if (prevTop != null && allowNewReflowSpring) {
+            if (k == draggedItemKey || k == suppressedReflowKey || isReducedMotion) {
+                entry.currentOffsetPx = 0f
+                entry.activeAnim = null
+                entry.startNanos = 0L
+                if (k == suppressedReflowKey) {
+                    suppressedReflowKey = null
+                }
+            } else if (prevTop != null && allowNewReflowSpring) {
                 val delta = prevTop - naturalTopPx
                 if (abs(delta) > 0.5f) {
                     val startOffset = entry.currentOffsetPx + delta
@@ -574,22 +869,18 @@ class StackedCardListState {
                     entry.startNanos = 0L
                     reflowSignal.tryEmit(Unit)
                 }
-            } else if (isReducedMotion) {
-                entry.currentOffsetPx = 0f
-                entry.activeAnim = null
-                entry.startNanos = 0L
             }
         }
     }
 
     internal fun pruneRemovedKeys(activeKeySet: Set<Any>) {
-        if (reflowAnims.size > activeKeySet.size + 8) {
+        if (reflowAnims.size > activeKeySet.size) {
             val it = reflowAnims.keys.iterator()
             while (it.hasNext()) {
                 if (it.next() !in activeKeySet) it.remove()
             }
         }
-        if (slotStates.size > activeKeySet.size + 8) {
+        if (slotStates.size > activeKeySet.size) {
             val it = slotStates.keys.iterator()
             while (it.hasNext()) {
                 if (it.next() !in activeKeySet) it.remove()
@@ -842,16 +1133,13 @@ fun <T> BidirectionalStackedCardList(
             val width = constraints.maxWidth
             val height = constraints.maxHeight
             val viewportH = height.toFloat()
-            state.viewportHeightState.floatValue = viewportH
+            if (state.viewportHeightState.floatValue != viewportH) {
+                state.viewportHeightState.floatValue = viewportH
+            }
 
             val count = minOf(measurables.size, itemsList.size)
             if (count == 0 || width <= 0 || height <= 0) {
-                state.maxScrollState.floatValue = 0f
-                state.scrollOffsetState.floatValue = 0f
-                state.clearOverscrollImmediate()
-                state.currentPlacedCount = 0
-                state.currentKeys = emptyList()
-                state.currentTotalLinearHeight = 0f
+                state.clearWhenEmpty()
                 return@Layout layout(width, height) {}
             }
 
@@ -917,18 +1205,16 @@ fun <T> BidirectionalStackedCardList(
                 state.currentTopInsetPx = topInsetPx
                 state.currentBottomInsetPx = bottomInsetPx
 
-                val usableHeight = (viewportH - topInsetPx - bottomInsetPx).coerceAtLeast(1f)
+                val effectiveBottomForMaxScroll = maxOf(
+                    bottomInsetPx,
+                    state.editBottomInsetFloorState.floatValue
+                )
+                val usableHeight = (viewportH - topInsetPx - effectiveBottomForMaxScroll).coerceAtLeast(1f)
                 val maxScroll = (totalLinearHeight - usableHeight).coerceAtLeast(0f)
-                state.maxScrollState.floatValue = maxScroll
-
-                val clampedScroll = state.scrollOffsetState.floatValue.coerceIn(0f, maxScroll)
-                if (clampedScroll != state.scrollOffsetState.floatValue) {
-                    state.scrollOffsetState.floatValue = clampedScroll
-                }
-                val visualOverscrollPx = if (reducedMotion || pinnedKey != null) {
-                    0f
-                } else {
-                    state.visualOverscrollState.floatValue
+                if (abs(state.maxScrollState.floatValue - maxScroll) > 0.05f ||
+                    (maxScroll == 0f && state.maxScrollState.floatValue != 0f)
+                ) {
+                    state.maxScrollState.floatValue = maxScroll
                 }
 
                 val effectiveTopBound = topInsetPx + topPaddingPx
@@ -940,6 +1226,62 @@ fun <T> BidirectionalStackedCardList(
                 val effectiveMaxStackPx = (peekStepPx * MAX_STACK_DEPTH).coerceAtMost(maxAllowedHeadroom)
                 val activeMaxDepth = (effectiveMaxStackPx / peekStepPx.coerceAtLeast(1f)).coerceAtLeast(0f)
                 state.currentActiveMaxDepth = activeMaxDepth
+
+                val needsExitAnchorCheck = pinnedKey == null &&
+                    (state.lastPinnedKey != null || state.hasActiveExitAnchor())
+                val nowNanos = if (needsExitAnchorCheck) System.nanoTime() else 0L
+                if (pinnedKey == null && state.lastPinnedKey != null) {
+                    state.beginExitAnchorLock(
+                        key = state.lastPinnedKey!!,
+                        visualTopY = state.lastPinnedVisualTopY,
+                        nowNanos = nowNanos
+                    )
+                    state.lastPinnedKey = null
+                }
+
+                if (pinnedKey == null && state.hasActiveExitAnchor()) {
+                    val activeAnchorKey = state.activeExitAnchorKey(nowNanos)
+                    if (activeAnchorKey != null) {
+                        val anchorIdx = keys.indexOf(activeAnchorKey)
+                        if (anchorIdx in 0 until count) {
+                            val anchorH = finalHeights[anchorIdx]
+                            val topStackReserve = if (maxScroll > 0.5f && activeMaxDepth > 0f) {
+                                peekStepPx * minOf(anchorIdx.toFloat(), activeMaxDepth)
+                            } else {
+                                0f
+                            }
+                            val bottomStackReserve = if (maxScroll > 0.5f && activeMaxDepth > 0f) {
+                                peekStepPx * minOf((count - 1 - anchorIdx).toFloat(), activeMaxDepth)
+                            } else {
+                                0f
+                            }
+                            val safeMinY = effectiveTopBound + topStackReserve
+                            val safeMaxY = (effectiveBottomBound - anchorH - bottomStackReserve)
+                                .coerceAtLeast(safeMinY)
+                            val desiredY = state.exitAnchorVisualTopY.coerceIn(safeMinY, safeMaxY)
+                            val idealScroll = (topInsetPx + finalTops[anchorIdx] - desiredY)
+                                .coerceIn(0f, maxScroll)
+                            if (abs(idealScroll - state.scrollOffsetState.floatValue) > 0.25f) {
+                                state.scrollOffsetState.floatValue = idealScroll
+                            }
+                            if (reducedMotion) {
+                                state.clearExitAnchorLock()
+                            }
+                        } else {
+                            state.clearExitAnchorLock()
+                        }
+                    }
+                }
+
+                val clampedScroll = state.scrollOffsetState.floatValue.coerceIn(0f, maxScroll)
+                if (clampedScroll != state.scrollOffsetState.floatValue) {
+                    state.scrollOffsetState.floatValue = clampedScroll
+                }
+                val visualOverscrollPx = if (reducedMotion || pinnedKey != null || state.draggedItemKey != null) {
+                    0f
+                } else {
+                    state.visualOverscrollState.floatValue
+                }
 
                 val topHeadroomPx = if (maxScroll > 0.5f && activeMaxDepth > 0f) {
                     peekStepPx * (clampedScroll / effectiveStride).coerceIn(0f, activeMaxDepth)
@@ -982,6 +1324,7 @@ fun <T> BidirectionalStackedCardList(
                         if (slotDepthState.floatValue != 0f) {
                             slotDepthState.floatValue = 0f
                         }
+                        state.recordPinnedFrame(k, clampedY)
 
                         placedTopYs[i] = clampedY
                         scales[i] = 1f
@@ -1082,10 +1425,10 @@ fun <T> BidirectionalStackedCardList(
 
                     val placedTopY = basePlacedTopY + itemOverscrollOffsetPx
 
-                    val zIndex = if (depth <= 0f) {
-                        10f
-                    } else {
-                        (10f - depth).coerceAtLeast(0f)
+                    val zIndex = when {
+                        k == state.draggedItemKey -> 0f
+                        depth <= 0f -> 10f
+                        else -> (10f - depth).coerceAtLeast(0f)
                     }
 
                     placedTopYs[i] = placedTopY

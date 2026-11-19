@@ -13,7 +13,13 @@ import com.example.totalcheck.data.reminder.NotificationHelper
 import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.data.reminder.ReminderScheduler
 import com.example.totalcheck.data.widget.WidgetSyncManager
+import java.time.LocalTime
 import kotlinx.coroutines.flow.Flow
+
+data class QuickReminderResult(
+    val saved: ReminderEntity,
+    val previousReminder: ReminderEntity?
+)
 
 class ChecklistRepository(
     context: Context,
@@ -229,6 +235,63 @@ class ChecklistRepository(
         ReminderScheduler.scheduleReminder(appContext, saved)
         WidgetSyncManager.notifyDataChanged(appContext)
         return saved
+    }
+
+    suspend fun scheduleQuickReminderIn15Min(
+        checklistId: Long,
+        itemId: Long?,
+    ): QuickReminderResult {
+        val existing = if (itemId == null) {
+            reminderDao.getChecklistLevelReminder(checklistId)
+        } else {
+            reminderDao.getItemLevelReminder(itemId)
+        }
+        val targetTime = LocalTime.now().plusMinutes(15)
+        val saved = upsertReminder(
+            checklistId = checklistId,
+            itemId = itemId,
+            hour = targetTime.hour,
+            minute = targetTime.minute,
+            repeatDaysBitmask = 0,
+            onlyIfUnchecked = true,
+        )
+        return QuickReminderResult(
+            saved = saved,
+            previousReminder = existing,
+        )
+    }
+
+    suspend fun undoQuickReminder(
+        savedReminderId: Long,
+        previousReminder: ReminderEntity?,
+    ) {
+        if (previousReminder == null) {
+            deleteReminder(savedReminderId)
+            return
+        }
+        ReminderScheduler.cancelReminder(appContext, savedReminderId)
+        NotificationHelper.cancelNotificationForReminder(appContext, savedReminderId)
+        val refreshedTriggerMillis = if (previousReminder.isEnabled) {
+            if (previousReminder.triggerEpochMillis > System.currentTimeMillis()) {
+                previousReminder.triggerEpochMillis
+            } else {
+                ReminderScheduler.computeNextTriggerEpochMillis(
+                    hour = previousReminder.hour,
+                    minute = previousReminder.minute,
+                    repeatDaysBitmask = previousReminder.repeatDaysBitmask,
+                )
+            }
+        } else {
+            previousReminder.triggerEpochMillis
+        }
+        val restored = previousReminder.copy(triggerEpochMillis = refreshedTriggerMillis)
+        reminderDao.insertReminder(restored)
+        if (restored.isEnabled) {
+            ReminderScheduler.scheduleReminder(appContext, restored)
+        } else {
+            ReminderScheduler.cancelReminder(appContext, restored.id)
+        }
+        WidgetSyncManager.notifyDataChanged(appContext)
     }
 
     suspend fun deleteReminder(reminderId: Long) {

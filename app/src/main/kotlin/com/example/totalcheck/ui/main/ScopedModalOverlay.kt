@@ -54,18 +54,13 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -133,6 +128,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.hypot
 
 private val MODAL_ENTRANCE_EASING = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -178,6 +174,7 @@ internal fun ScopedModalHost(
         onlyIfUnchecked: Boolean,
     ) -> Unit = { _, _, _, _, _, _ -> },
     onDeleteReminder: (reminderId: Long) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER")
     onSendTestReminder: (
         checklistId: Long,
         itemId: Long?,
@@ -224,16 +221,21 @@ internal fun ScopedModalHost(
 
     val isTextInputModal = modalContent is ChecklistModalContent.CreateChecklist ||
         modalContent is ChecklistModalContent.RenameChecklist
+    val supportsDynamicIme = isTextInputModal ||
+        modalContent is ChecklistModalContent.ConfigureReminder
     var expectImeForModal by remember(sessionKey) { mutableStateOf(isTextInputModal) }
     var isPrimaryInputFocused by remember(sessionKey) { mutableStateOf(false) }
     var isTitleInputFocused by remember(sessionKey) { mutableStateOf(false) }
     val isAnyInputFocused = isPrimaryInputFocused || isTitleInputFocused
     var lastImeHiddenUptimeMs by remember(sessionKey) { mutableLongStateOf(0L) }
+    var activeCancelSignal by remember(sessionKey) { mutableIntStateOf(0) }
+    var systemImeHideSignal by remember(sessionKey) { mutableIntStateOf(0) }
     val dismissImeAndFocus: () -> Unit = {
         lastImeHiddenUptimeMs = android.os.SystemClock.uptimeMillis()
         expectImeForModal = false
         isPrimaryInputFocused = false
         isTitleInputFocused = false
+        activeCancelSignal++
         keyboardController?.hide()
         focusManager.clearFocus()
     }
@@ -345,8 +347,8 @@ internal fun ScopedModalHost(
     }
 
     // 追蹤鍵盤於當前彈窗會話中的實際展開與退場：若使用者以系統操作直接收起鍵盤，即刻解除上方鎖定並平滑歸位
-    LaunchedEffect(isOpen, sessionKey, isTextInputModal) {
-        if (!isOpen || !isTextInputModal) return@LaunchedEffect
+    LaunchedEffect(isOpen, sessionKey, supportsDynamicIme, expectImeForModal) {
+        if (!isOpen || !supportsDynamicIme || !expectImeForModal) return@LaunchedEffect
         var hasSeenImeOpen = false
         var peakImeExtraPx = 0f
         val openThresholdPx = with(density) { 40.dp.toPx() }
@@ -370,14 +372,15 @@ internal fun ScopedModalHost(
                 expectImeForModal = false
                 isPrimaryInputFocused = false
                 isTitleInputFocused = false
+                systemImeHideSignal++
                 focusManager.clearFocus()
             }
         }
     }
 
-    // 協調輸入型彈窗垂直落點：開啟時鎖定於鍵盤上方零位移展開；收起鍵盤時平滑回落至畫面正中央
-    LaunchedEffect(isOpen, expectImeForModal, isReducedMotion, sessionKey) {
-        if (!isOpen || !isTextInputModal) return@LaunchedEffect
+    // 協調輸入型與動態直輸彈窗垂直落點：支援 false <-> true 雙向平滑抬升與精準歸位中央
+    LaunchedEffect(isOpen, supportsDynamicIme, expectImeForModal, rememberedImeExtraPx, isReducedMotion, sessionKey) {
+        if (!isOpen || !supportsDynamicIme) return@LaunchedEffect
         if (expectImeForModal) {
             val targetLift = maxOf(
                 sessionAnchorImePx,
@@ -386,7 +389,7 @@ internal fun ScopedModalHost(
                     .coerceAtLeast(0)
                     .toFloat()
             )
-            if (modalImeLiftAnim.value < targetLift - 1f) {
+            if (abs(modalImeLiftAnim.value - targetLift) > 1f) {
                 if (isReducedMotion) {
                     modalImeLiftAnim.snapTo(targetLift)
                 } else {
@@ -397,13 +400,15 @@ internal fun ScopedModalHost(
                 }
             }
         } else {
-            if (isReducedMotion) {
-                modalImeLiftAnim.snapTo(0f)
-            } else {
-                modalImeLiftAnim.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-                )
+            if (abs(modalImeLiftAnim.value) > 0.5f) {
+                if (isReducedMotion) {
+                    modalImeLiftAnim.snapTo(0f)
+                } else {
+                    modalImeLiftAnim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                    )
+                }
             }
         }
     }
@@ -1049,8 +1054,8 @@ internal fun ScopedModalHost(
                         if (existing != null) {
                             existing.hour to existing.minute
                         } else {
-                            val plusTwoMin = LocalTime.now().plusMinutes(2)
-                            plusTwoMin.hour to plusTwoMin.minute
+                            val now = LocalTime.now()
+                            now.hour to now.minute
                         }
                     }
                     var selectedHour by remember(sessionKey) { mutableIntStateOf(initialTime.first) }
@@ -1061,6 +1066,9 @@ internal fun ScopedModalHost(
                     var onlyIfUnchecked by remember(sessionKey) {
                         mutableStateOf(existing?.onlyIfUnchecked ?: true)
                     }
+                    var isDirectInputMode by remember(sessionKey) { mutableStateOf(false) }
+                    var smartTimeState by remember(sessionKey) { mutableStateOf(SmartTimeInputState()) }
+                    var invalidShakeSignal by remember(sessionKey) { mutableIntStateOf(0) }
                     var pendingPermissionAction by remember(sessionKey) {
                         mutableStateOf<Pair<Boolean, () -> Unit>?>(null)
                     }
@@ -1109,12 +1117,19 @@ internal fun ScopedModalHost(
                             targetChecklist.name
                         )
                     }
+                    val onlyIfUncheckedTitle = stringResource(
+                        if (targetItem == null) {
+                            R.string.reminder_only_if_unchecked_checklist_title
+                        } else {
+                            R.string.reminder_only_if_unchecked_item_title
+                        }
+                    )
 
                     ModalPanelContainer(
                         panelProgressProvider = { panelProgress.value },
                         translateYPx = translateYPx,
                         isReducedMotion = isReducedMotion,
-                        hasTextInput = false,
+                        hasTextInput = isDirectInputMode,
                         confirmEnabled = true,
                         primaryFocus = primaryFocus,
                         cancelFocus = cancelFocus,
@@ -1142,10 +1157,10 @@ internal fun ScopedModalHost(
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
                         },
                         footerContent = { onFocusIndexChanged ->
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
                             ModalActionRow(
                                 cancelFocus = cancelFocus,
                                 confirmFocus = confirmFocus,
@@ -1156,12 +1171,34 @@ internal fun ScopedModalHost(
                                 onCancel = { if (isOpen) onRequestClose(true) },
                                 onConfirm = {
                                     if (isOpen) {
+                                        var saveHour = selectedHour
+                                        var saveMinute = selectedMinute
+                                        if (isDirectInputMode) {
+                                            if (smartTimeState.hasAnyDigit) {
+                                                val resolved = resolveSmartTime(smartTimeState)
+                                                if (resolved != null) {
+                                                    saveHour = resolved.first
+                                                    saveMinute = resolved.second
+                                                    selectedHour = resolved.first
+                                                    selectedMinute = resolved.second
+                                                } else {
+                                                    invalidShakeSignal++
+                                                    return@ModalActionRow
+                                                }
+                                            }
+                                            smartTimeState = SmartTimeInputState()
+                                            isDirectInputMode = false
+                                            expectImeForModal = false
+                                            isPrimaryInputFocused = false
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                        }
                                         withNotificationPermission(true) {
                                             onSaveReminder(
                                                 targetChecklist.id,
                                                 targetItem?.id,
-                                                selectedHour,
-                                                selectedMinute,
+                                                saveHour,
+                                                saveMinute,
                                                 repeatMask,
                                                 onlyIfUnchecked
                                             )
@@ -1171,406 +1208,58 @@ internal fun ScopedModalHost(
                             )
                         }
                     ) { _ ->
-                        // Time Picker Stepper + Quick Presets
-                        Text(
-                            text = stringResource(R.string.reminder_time_section_label),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TimeUnitStepper(
-                                value = selectedHour,
-                                unitLabel = stringResource(R.string.reminder_hour_label),
-                                decrementDescription = stringResource(R.string.cd_decrease_hour),
-                                incrementDescription = stringResource(R.string.cd_increase_hour),
-                                onDecrement = { selectedHour = (selectedHour + 23) % 24 },
-                                onIncrement = { selectedHour = (selectedHour + 1) % 24 },
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = ":",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.primary
-                            )
-                            TimeUnitStepper(
-                                value = selectedMinute,
-                                unitLabel = stringResource(R.string.reminder_minute_label),
-                                decrementDescription = stringResource(R.string.cd_decrease_minute),
-                                incrementDescription = stringResource(R.string.cd_increase_minute),
-                                onDecrement = { selectedMinute = (selectedMinute + 59) % 60 },
-                                onIncrement = { selectedMinute = (selectedMinute + 1) % 60 },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val timePresets = remember {
-                            listOf(8 to 0, 9 to 0, 18 to 0, 22 to 0)
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            timePresets.forEach { (presetHour, presetMinute) ->
-                                val selected = selectedHour == presetHour && selectedMinute == presetMinute
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .slideOutCancelClickable(
-                                            shape = RoundedCornerShape(50),
-                                            role = Role.Button,
-                                            onClick = {
-                                                selectedHour = presetHour
-                                                selectedMinute = presetMinute
-                                            }
-                                        ),
-                                    shape = RoundedCornerShape(50),
-                                    color = if (selected) {
-                                        colorScheme.primaryContainer
-                                    } else {
-                                        colorScheme.surfaceContainer
-                                    },
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (selected) colorScheme.primary else colorScheme.outlineVariant
-                                    )
-                                ) {
-                                    Text(
-                                        text = ReminderFormatter.formatTime(presetHour, presetMinute),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (selected) {
-                                            colorScheme.onPrimaryContainer
-                                        } else {
-                                            colorScheme.onSurfaceVariant
-                                        },
-                                        maxLines = 1,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 6.dp),
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // Repeat Weekday Chips
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.reminder_repeat_section_label),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = ReminderFormatter.formatRepeatSummary(context, repeatMask),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.primary
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val repeatPresets = listOf(
-                            0 to stringResource(R.string.reminder_repeat_once),
-                            ReminderFormatter.DAILY_MASK to stringResource(R.string.reminder_repeat_daily),
-                            ReminderFormatter.WEEKDAYS_MASK to stringResource(R.string.reminder_repeat_weekdays),
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            repeatPresets.forEach { (presetMask, label) ->
-                                val active = (repeatMask and ReminderFormatter.DAILY_MASK) == presetMask
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .slideOutCancelClickable(
-                                            shape = RoundedCornerShape(50),
-                                            role = Role.Button,
-                                            onClick = { repeatMask = presetMask }
-                                        ),
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) {
-                                        colorScheme.tertiaryContainer
-                                    } else {
-                                        colorScheme.surfaceContainer
-                                    },
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (active) colorScheme.tertiary else colorScheme.outlineVariant
-                                    )
-                                ) {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (active) {
-                                            colorScheme.onTertiaryContainer
-                                        } else {
-                                            colorScheme.onSurfaceVariant
-                                        },
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val dayLabels = listOf(
-                            stringResource(R.string.reminder_day_mon),
-                            stringResource(R.string.reminder_day_tue),
-                            stringResource(R.string.reminder_day_wed),
-                            stringResource(R.string.reminder_day_thu),
-                            stringResource(R.string.reminder_day_fri),
-                            stringResource(R.string.reminder_day_sat),
-                            stringResource(R.string.reminder_day_sun),
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            dayLabels.forEachIndexed { bitIdx, dayLabel ->
-                                val bit = 1 shl bitIdx
-                                val isDaySelected = (repeatMask and bit) != 0
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(34.dp)
-                                        .slideOutCancelClickable(
-                                            shape = CircleShape,
-                                            role = Role.Checkbox,
-                                            onClick = {
-                                                repeatMask = if (isDaySelected) {
-                                                    repeatMask and bit.inv()
-                                                } else {
-                                                    repeatMask or bit
-                                                }
-                                            }
-                                        ),
-                                    shape = CircleShape,
-                                    color = if (isDaySelected) {
-                                        colorScheme.primary
-                                    } else {
-                                        colorScheme.surfaceContainerHighest
-                                    },
-                                    border = if (isDaySelected) null else BorderStroke(
-                                        1.dp,
-                                        colorScheme.outlineVariant
-                                    )
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = dayLabel,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isDaySelected) {
-                                                colorScheme.onPrimary
-                                            } else {
-                                                colorScheme.onSurfaceVariant
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        if ((repeatMask and ReminderFormatter.DAILY_MASK) == 0) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = stringResource(R.string.reminder_repeat_once_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // Only If Unchecked Switch
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            color = colorScheme.surfaceContainer,
-                            border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.6f))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = stringResource(
-                                            if (targetItem == null) {
-                                                R.string.reminder_only_if_unchecked_checklist_title
-                                            } else {
-                                                R.string.reminder_only_if_unchecked_item_title
-                                            }
-                                        ),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = stringResource(R.string.reminder_only_if_unchecked_desc),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = onlyIfUnchecked,
-                                    onCheckedChange = { onlyIfUnchecked = it }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Test Notification & Delete Existing Actions
-                        TactileButton(
-                            onClick = {
-                                withNotificationPermission(false) {
-                                    onSendTestReminder(
-                                        targetChecklist.id,
-                                        targetItem?.id,
-                                        selectedHour,
-                                        selectedMinute,
-                                        repeatMask,
-                                        onlyIfUnchecked
-                                    )
+                        ReminderConfigBody(
+                            sessionKey = sessionKey,
+                            selectedHour = selectedHour,
+                            selectedMinute = selectedMinute,
+                            repeatMask = repeatMask,
+                            onlyIfUnchecked = onlyIfUnchecked,
+                            hasExistingReminder = existing != null,
+                            onlyIfUncheckedTitle = onlyIfUncheckedTitle,
+                            isDirectInputMode = isDirectInputMode,
+                            smartTimeState = smartTimeState,
+                            invalidShakeSignal = invalidShakeSignal,
+                            primaryFocus = primaryFocus,
+                            activeCancelSignal = activeCancelSignal,
+                            systemImeHideSignal = systemImeHideSignal,
+                            onHourChange = { selectedHour = it },
+                            onMinuteChange = { selectedMinute = it },
+                            onSmartTimeStateChange = { smartTimeState = it },
+                            onRepeatMaskChange = { repeatMask = it },
+                            onOnlyIfUncheckedChange = { onlyIfUnchecked = it },
+                            onEnterDirectInput = {
+                                isDirectInputMode = true
+                                expectImeForModal = true
+                                isPrimaryInputFocused = true
+                                runCatching {
+                                    primaryFocus.requestFocus()
+                                    keyboardController?.show()
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(50),
-                            containerColor = colorScheme.secondaryContainer,
-                            contentColor = colorScheme.onSecondaryContainer,
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.NotificationsActive,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(R.string.action_send_test_notification),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
-                        if (existing != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TactileButton(
-                                onClick = {
-                                    if (isOpen) onDeleteReminder(existing.id)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(50),
-                                containerColor = colorScheme.errorContainer.copy(alpha = 0.72f),
-                                contentColor = colorScheme.onErrorContainer,
-                                border = BorderStroke(1.dp, colorScheme.error.copy(alpha = 0.35f)),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.DeleteOutline,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.action_delete_reminder),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                            onExitDirectInput = { imeAlreadyDismissed ->
+                                isDirectInputMode = false
+                                if (!imeAlreadyDismissed) {
+                                    lastImeHiddenUptimeMs = android.os.SystemClock.uptimeMillis()
+                                    expectImeForModal = false
+                                    isPrimaryInputFocused = false
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                }
+                            },
+                            onDirectInputFocusChanged = { focused ->
+                                isPrimaryInputFocused = focused
+                                if (focused && isDirectInputMode) {
+                                    expectImeForModal = true
+                                    keyboardController?.show()
+                                }
+                            },
+                            onDeleteExisting = {
+                                val reminderId = existing?.id ?: return@ReminderConfigBody
+                                if (isOpen) onDeleteReminder(reminderId)
                             }
-                        }
+                        )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TimeUnitStepper(
-    value: Int,
-    unitLabel: String,
-    decrementDescription: String,
-    incrementDescription: String,
-    onDecrement: () -> Unit,
-    onIncrement: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, colorScheme.outlineVariant.copy(alpha = 0.6f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            TactileIconButton(
-                onClick = onDecrement,
-                modifier = Modifier.size(32.dp),
-                shape = CircleShape,
-                containerColor = colorScheme.surfaceContainerHighest,
-                contentColor = colorScheme.onSurface
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Remove,
-                    contentDescription = decrementDescription,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = String.format(Locale.US, "%02d", value),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = colorScheme.onSurface
-                )
-                Text(
-                    text = unitLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colorScheme.onSurfaceVariant
-                )
-            }
-            TactileIconButton(
-                onClick = onIncrement,
-                modifier = Modifier.size(32.dp),
-                shape = CircleShape,
-                containerColor = colorScheme.surfaceContainerHighest,
-                contentColor = colorScheme.onSurface
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = incrementDescription,
-                    modifier = Modifier.size(18.dp)
-                )
             }
         }
     }

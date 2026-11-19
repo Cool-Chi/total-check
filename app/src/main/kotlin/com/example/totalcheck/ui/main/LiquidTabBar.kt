@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import com.example.totalcheck.ui.theme.LocalReducedMotion
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -66,14 +68,15 @@ private data class LiquidTabBounds(
  * Reusable Liquid Tab Indicator bar.
  *
  * Features asymmetric leading/trailing edge springs ("stretch then settle"),
- * mid-flight interruption continuity on rapid taps, actual tab bounds tracking
+ * mid-flight interruption continuity on rapid taps, nullable selection support
+ * (smooth shrink/fade-out when no tab is active), actual tab bounds tracking
  * for equal-width or variable-width tabs, pixel-accurate dual-layer text contrast
  * clipping, and configurable Tab vs. Navigation-Button semantics.
  */
 @Composable
 fun LiquidTabBar(
     labels: List<String>,
-    selectedIndex: Int,
+    selectedIndex: Int?,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     equalWidth: Boolean = true,
@@ -91,7 +94,7 @@ fun LiquidTabBar(
 ) {
     if (labels.isEmpty()) return
 
-    val safeSelectedIndex = selectedIndex.coerceIn(0, labels.lastIndex)
+    val validSelectedIndex = selectedIndex?.takeIf { it in labels.indices }
     val isReducedMotion = LocalReducedMotion.current
 
     val tabBounds = remember(labels.size) { mutableStateMapOf<Int, LiquidTabBounds>() }
@@ -99,25 +102,69 @@ fun LiquidTabBar(
 
     val leadingEdge = remember { Animatable(0f) }
     val trailingEdge = remember { Animatable(0f) }
+    val indicatorPresence = remember { Animatable(if (validSelectedIndex != null) 1f else 0f) }
     var hasInitialized by remember { mutableStateOf(false) }
-    var lastSelectedIndex by remember { mutableIntStateOf(safeSelectedIndex) }
+    var lastSelectedIndex by remember { mutableStateOf<Int?>(validSelectedIndex) }
 
-    val targetBounds = tabBounds[safeSelectedIndex]
+    val targetBounds = validSelectedIndex?.let { tabBounds[it] }
 
-    LaunchedEffect(safeSelectedIndex, targetBounds, isReducedMotion) {
+    LaunchedEffect(validSelectedIndex, targetBounds, isReducedMotion) {
+        if (validSelectedIndex == null) {
+            lastSelectedIndex = null
+            if (!hasInitialized || isReducedMotion) {
+                indicatorPresence.snapTo(0f)
+                hasInitialized = true
+            } else {
+                indicatorPresence.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = 0.86f,
+                        stiffness = 480f,
+                        visibilityThreshold = 0.005f
+                    )
+                )
+            }
+            return@LaunchedEffect
+        }
+
         val bounds = targetBounds ?: return@LaunchedEffect
-        if (!hasInitialized || isReducedMotion || safeSelectedIndex == lastSelectedIndex) {
+        if (!hasInitialized || isReducedMotion) {
             leadingEdge.snapTo(bounds.left)
             trailingEdge.snapTo(bounds.right)
+            indicatorPresence.snapTo(1f)
             hasInitialized = true
-            lastSelectedIndex = safeSelectedIndex
+            lastSelectedIndex = validSelectedIndex
+            return@LaunchedEffect
+        }
+
+        if (lastSelectedIndex == null || indicatorPresence.value <= 0.05f) {
+            leadingEdge.snapTo(bounds.left)
+            trailingEdge.snapTo(bounds.right)
+            lastSelectedIndex = validSelectedIndex
+            indicatorPresence.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = 0.78f,
+                    stiffness = 460f,
+                    visibilityThreshold = 0.005f
+                )
+            )
+            return@LaunchedEffect
+        }
+
+        if (validSelectedIndex == lastSelectedIndex) {
+            leadingEdge.snapTo(bounds.left)
+            trailingEdge.snapTo(bounds.right)
+            if (indicatorPresence.value < 0.999f) {
+                indicatorPresence.snapTo(1f)
+            }
             return@LaunchedEffect
         }
 
         val currentCenter = (leadingEdge.value + trailingEdge.value) * 0.5f
         val targetCenter = (bounds.left + bounds.right) * 0.5f
         val movingRight = targetCenter >= currentCenter
-        lastSelectedIndex = safeSelectedIndex
+        lastSelectedIndex = validSelectedIndex
 
         val fastSpring = spring<Float>(
             dampingRatio = 0.82f,
@@ -142,6 +189,18 @@ fun LiquidTabBar(
                     targetValue = bounds.right,
                     animationSpec = if (movingRight) fastSpring else slowSpring
                 )
+            }
+            if (indicatorPresence.value < 0.999f) {
+                launch {
+                    indicatorPresence.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(
+                            dampingRatio = 0.78f,
+                            stiffness = 460f,
+                            visibilityThreshold = 0.005f
+                        )
+                    )
+                }
             }
         }
     }
@@ -174,15 +233,24 @@ fun LiquidTabBar(
                 .clipToBounds()
                 .onSizeChanged { trackWidthPx = it.width }
                 .drawBehind {
-                    if (!hasInitialized || size.width <= 0f || size.height <= 0f) return@drawBehind
+                    val presence = indicatorPresence.value.coerceIn(0f, 1f)
+                    if (!hasInitialized || presence <= 0.01f || size.width <= 0f || size.height <= 0f) {
+                        return@drawBehind
+                    }
                     val maxW = if (trackWidthPx > 0) trackWidthPx.toFloat() else size.width
-                    val left = min(leadingEdge.value, trailingEdge.value).coerceIn(0f, maxW)
-                    val right = max(leadingEdge.value, trailingEdge.value).coerceIn(left, maxW)
+                    val rawLeft = min(leadingEdge.value, trailingEdge.value).coerceIn(0f, maxW)
+                    val rawRight = max(leadingEdge.value, trailingEdge.value).coerceIn(rawLeft, maxW)
+                    val rawWidth = rawRight - rawLeft
+                    if (rawWidth <= 0.5f) return@drawBehind
+                    val center = (rawLeft + rawRight) * 0.5f
+                    val halfWidth = rawWidth * 0.5f * lerp(0.55f, 1f, presence)
+                    val left = (center - halfWidth).coerceIn(0f, maxW)
+                    val right = (center + halfWidth).coerceIn(left, maxW)
                     val width = right - left
                     if (width <= 0.5f) return@drawBehind
                     val radius = size.height * 0.5f
                     drawRoundRect(
-                        color = indicatorColor,
+                        color = indicatorColor.copy(alpha = indicatorColor.alpha * presence),
                         topLeft = Offset(left, 0f),
                         size = Size(width, size.height),
                         cornerRadius = CornerRadius(radius, radius)
@@ -192,7 +260,7 @@ fun LiquidTabBar(
             // Base interactive layer with unselected text color
             LiquidTabContentRow(
                 labels = labels,
-                selectedIndex = safeSelectedIndex,
+                selectedIndex = validSelectedIndex,
                 equalWidth = equalWidth,
                 useTabSemantics = useTabSemantics,
                 textColor = unselectedContentColor,
@@ -212,7 +280,7 @@ fun LiquidTabBar(
             // Non-interactive selected text overlay clipped to the liquid indicator pill
             LiquidTabContentRow(
                 labels = labels,
-                selectedIndex = safeSelectedIndex,
+                selectedIndex = validSelectedIndex,
                 equalWidth = equalWidth,
                 useTabSemantics = useTabSemantics,
                 textColor = selectedContentColor,
@@ -224,11 +292,23 @@ fun LiquidTabBar(
                 onTabBoundsMeasured = { _, _, _ -> },
                 modifier = Modifier
                     .clearAndSetSemantics { }
+                    .graphicsLayer {
+                        alpha = indicatorPresence.value.coerceIn(0f, 1f)
+                    }
                     .drawWithContent {
-                        if (!hasInitialized || size.width <= 0f || size.height <= 0f) return@drawWithContent
+                        val presence = indicatorPresence.value.coerceIn(0f, 1f)
+                        if (!hasInitialized || presence <= 0.01f || size.width <= 0f || size.height <= 0f) {
+                            return@drawWithContent
+                        }
                         val maxW = if (trackWidthPx > 0) trackWidthPx.toFloat() else size.width
-                        val left = min(leadingEdge.value, trailingEdge.value).coerceIn(0f, maxW)
-                        val right = max(leadingEdge.value, trailingEdge.value).coerceIn(left, maxW)
+                        val rawLeft = min(leadingEdge.value, trailingEdge.value).coerceIn(0f, maxW)
+                        val rawRight = max(leadingEdge.value, trailingEdge.value).coerceIn(rawLeft, maxW)
+                        val rawWidth = rawRight - rawLeft
+                        if (rawWidth <= 0.5f) return@drawWithContent
+                        val center = (rawLeft + rawRight) * 0.5f
+                        val halfWidth = rawWidth * 0.5f * lerp(0.55f, 1f, presence)
+                        val left = (center - halfWidth).coerceIn(0f, maxW)
+                        val right = (center + halfWidth).coerceIn(left, maxW)
                         if (right - left <= 0.5f) return@drawWithContent
                         val radius = size.height * 0.5f
                         indicatorPath.reset()
@@ -253,7 +333,7 @@ fun LiquidTabBar(
 @Composable
 private fun LiquidTabContentRow(
     labels: List<String>,
-    selectedIndex: Int,
+    selectedIndex: Int?,
     equalWidth: Boolean,
     useTabSemantics: Boolean,
     textColor: Color,
@@ -271,7 +351,7 @@ private fun LiquidTabContentRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         labels.forEachIndexed { index, label ->
-            val isSelected = index == selectedIndex
+            val isSelected = selectedIndex != null && index == selectedIndex
             val itemModifier = Modifier
                 .then(if (equalWidth) Modifier.weight(1f) else Modifier)
                 .then(

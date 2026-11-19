@@ -122,10 +122,10 @@ internal fun Modifier.trackKeyboardFocusVisibility(
         false
     }
 
-private val SLIDE_OUT_CANCEL_DISTANCE = 44.dp
-private const val PRESS_SINK_SCALE = 0.94f
-private val PRESS_SINK_TRANSLATION_Y = 1.5.dp
-private const val HOLD_LOCK_DELAY_MS = 70L
+internal val SLIDE_OUT_CANCEL_DISTANCE = 44.dp
+internal const val PRESS_SINK_SCALE = 0.94f
+internal val PRESS_SINK_TRANSLATION_Y = 1.5.dp
+internal const val HOLD_LOCK_DELAY_MS = 70L
 
 internal fun computeSlideOutPressStrength(
     posX: Float,
@@ -158,6 +158,8 @@ fun Modifier.slideOutCancelClickable(
     sinkScale: Float = PRESS_SINK_SCALE,
     sinkTranslationY: Dp = PRESS_SINK_TRANSLATION_Y,
     maxDeepenAlpha: Float? = null,
+    longPressTimeoutMs: Long? = null,
+    onLongClickLabel: String? = null,
     onPressChanged: ((Boolean) -> Unit)? = null,
     onPressDown: (() -> Unit)? = null,
     onPressCancelled: (() -> Unit)? = null,
@@ -176,6 +178,8 @@ fun Modifier.slideOutCancelClickable(
     val currentOnClick by rememberUpdatedState(onClick)
     val currentOnClickWithLocalOffset by rememberUpdatedState(onClickWithLocalOffset)
     val currentOnLongClick by rememberUpdatedState(onLongClick)
+    val currentLongPressTimeoutMs by rememberUpdatedState(longPressTimeoutMs)
+    val currentOnLongClickLabel by rememberUpdatedState(onLongClickLabel)
     val currentOnPressDown by rememberUpdatedState(onPressDown)
     val currentOnPressCancelled by rememberUpdatedState(onPressCancelled)
     val currentOnPressChanged by rememberUpdatedState(onPressChanged)
@@ -274,7 +278,7 @@ fun Modifier.slideOutCancelClickable(
                     true
                 }
                 if (currentOnLongClick != null) {
-                    onLongClick {
+                    onLongClick(label = currentOnLongClickLabel) {
                         currentOnLongClick?.invoke()
                         true
                     }
@@ -315,7 +319,7 @@ fun Modifier.slideOutCancelClickable(
                 longPressJob?.cancel()
                 if (currentOnLongClick != null) {
                     longPressJob = scope.launch {
-                        delay(viewConfig.longPressTimeoutMillis)
+                        delay(currentLongPressTimeoutMs ?: viewConfig.longPressTimeoutMillis)
                         if (isInsideBounds && !gestureCancelled) {
                             longPressFired = true
                             animateToRest()
@@ -438,6 +442,10 @@ fun TactileButton(
     disabledContentColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
     border: BorderStroke? = null,
     contentPadding: PaddingValues = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
+    sinkScale: Float = PRESS_SINK_SCALE,
+    longPressTimeoutMs: Long? = null,
+    onLongClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val resolvedContainer = if (enabled) containerColor else disabledContainerColor
@@ -449,6 +457,10 @@ fun TactileButton(
                 enabled = enabled,
                 shape = shape,
                 role = Role.Button,
+                sinkScale = sinkScale,
+                longPressTimeoutMs = longPressTimeoutMs,
+                onLongClickLabel = onLongClickLabel,
+                onLongClick = onLongClick,
                 onClick = onClick
             ),
         shape = shape,
@@ -510,6 +522,10 @@ fun TactileIconButton(
     disabledContainerColor: Color = Color.Transparent,
     disabledContentColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
     border: BorderStroke? = null,
+    sinkScale: Float = PRESS_SINK_SCALE,
+    longPressTimeoutMs: Long? = null,
+    onLongClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
     onPressChanged: ((Boolean) -> Unit)? = null,
     onPressDown: (() -> Unit)? = null,
     onPressCancelled: (() -> Unit)? = null,
@@ -524,6 +540,10 @@ fun TactileIconButton(
                 enabled = enabled,
                 shape = shape,
                 role = Role.Button,
+                sinkScale = sinkScale,
+                longPressTimeoutMs = longPressTimeoutMs,
+                onLongClickLabel = onLongClickLabel,
+                onLongClick = onLongClick,
                 onPressChanged = onPressChanged,
                 onPressDown = onPressDown,
                 onPressCancelled = onPressCancelled,

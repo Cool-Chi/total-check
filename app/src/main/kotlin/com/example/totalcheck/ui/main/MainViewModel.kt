@@ -12,6 +12,7 @@ import com.example.totalcheck.data.preferences.ThemeConfig
 import com.example.totalcheck.data.preferences.UserPreferencesRepository
 import com.example.totalcheck.data.reminder.NotificationHelper
 import com.example.totalcheck.data.repository.ChecklistRepository
+import com.example.totalcheck.data.repository.QuickReminderResult
 import com.example.totalcheck.data.widget.WidgetSyncManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -72,35 +74,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyList()
     )
 
+    private val itemReorderMutex = Mutex()
     private val _optimisticItemLabels = MutableStateFlow<Map<Long, String>>(emptyMap())
+    private val _optimisticCheckedStates = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
+    private val _optimisticItemOrders = MutableStateFlow<Map<Long, List<Long>>>(emptyMap())
 
     val itemsByChecklist: StateFlow<Map<Long, List<CheckItemEntity>>> = combine(
         repository.observeAllItems(),
-        _optimisticItemLabels
-    ) { items, optimisticLabels ->
-        val merged = if (optimisticLabels.isEmpty()) {
+        _optimisticItemLabels,
+        _optimisticCheckedStates,
+        _optimisticItemOrders
+    ) { items, optimisticLabels, optimisticChecked, optimisticOrders ->
+        val staleLabelKeys = if (optimisticLabels.isEmpty()) null else mutableSetOf<Long>()
+        val staleCheckedKeys = if (optimisticChecked.isEmpty()) null else mutableSetOf<Long>()
+        val mapped = if (optimisticLabels.isEmpty() && optimisticChecked.isEmpty()) {
             items
         } else {
-            val staleKeys = mutableListOf<Long>()
-            val mapped = items.map { item ->
+            items.map { item ->
                 val overrideLabel = optimisticLabels[item.id]
-                if (overrideLabel != null) {
+                val resolvedLabel = if (overrideLabel != null) {
                     if (item.label == overrideLabel) {
-                        staleKeys.add(item.id)
-                        item
+                        staleLabelKeys?.add(item.id)
+                        item.label
                     } else {
-                        item.copy(label = overrideLabel)
+                        overrideLabel
                     }
+                } else {
+                    item.label
+                }
+                val overrideChecked = optimisticChecked[item.id]
+                val resolvedChecked = if (overrideChecked != null) {
+                    if (item.isChecked == overrideChecked) {
+                        staleCheckedKeys?.add(item.id)
+                        item.isChecked
+                    } else {
+                        overrideChecked
+                    }
+                } else {
+                    item.isChecked
+                }
+                if (resolvedLabel != item.label || resolvedChecked != item.isChecked) {
+                    item.copy(label = resolvedLabel, isChecked = resolvedChecked)
                 } else {
                     item
                 }
             }
-            if (staleKeys.isNotEmpty()) {
-                _optimisticItemLabels.value = _optimisticItemLabels.value - staleKeys.toSet()
-            }
-            mapped
         }
-        merged.groupBy { it.checklistId }
+        if (!staleLabelKeys.isNullOrEmpty()) {
+            _optimisticItemLabels.update { it - staleLabelKeys }
+        }
+        if (!staleCheckedKeys.isNullOrEmpty()) {
+            _optimisticCheckedStates.update { it - staleCheckedKeys }
+        }
+
+        val grouped = mapped.groupBy { it.checklistId }
+        if (optimisticOrders.isEmpty()) {
+            grouped
+        } else {
+            val staleOrderKeys = mutableSetOf<Long>()
+            val reordered = grouped.mapValues { (checklistId, dbList) ->
+                val targetOrder = optimisticOrders[checklistId]
+                if (targetOrder == null) {
+                    dbList
+                } else {
+                    val dbIds = dbList.map { it.id }
+                    if (dbIds == targetOrder || dbIds.toSet() != targetOrder.toSet()) {
+                        staleOrderKeys.add(checklistId)
+                        dbList
+                    } else {
+                        val byId = dbList.associateBy { it.id }
+                        targetOrder.mapNotNull { byId[it] }
+                    }
+                }
+            }
+            for (keyId in optimisticOrders.keys) {
+                if (keyId !in grouped) {
+                    staleOrderKeys.add(keyId)
+                }
+            }
+            if (staleOrderKeys.isNotEmpty()) {
+                _optimisticItemOrders.update { it - staleOrderKeys }
+            }
+            reordered
+        }
     }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -314,8 +370,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleItemChecked(item: CheckItemEntity) {
+        val currentChecked = _optimisticCheckedStates.value[item.id] ?: item.isChecked
+        val nextChecked = !currentChecked
+        _optimisticCheckedStates.update { it + (item.id to nextChecked) }
         viewModelScope.launch {
-            repository.setItemChecked(itemId = item.id, isChecked = !item.isChecked)
+            repository.setItemChecked(itemId = item.id, isChecked = nextChecked)
         }
     }
 
@@ -350,6 +409,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetChecklist(checklistId: Long, onReset: (List<Long>) -> Unit = {}) {
+        val checklistItemIds = itemsByChecklist.value[checklistId].orEmpty().map { it.id }.toSet()
+        if (checklistItemIds.isNotEmpty()) {
+            _optimisticCheckedStates.update { it - checklistItemIds }
+        }
         viewModelScope.launch {
             val checkedSnapshot = repository.resetChecklistItems(checklistId)
             onReset(checkedSnapshot)
@@ -358,6 +421,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun restoreCheckedStates(itemIds: List<Long>) {
         if (itemIds.isEmpty()) return
+        _optimisticCheckedStates.update { current ->
+            current + itemIds.associateWith { true }
+        }
         viewModelScope.launch {
             repository.restoreCheckedStates(itemIds)
         }
@@ -389,12 +455,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             mapped
         }
+        if (fullOrderedIds == currentFullItems.map { it.id }) return
 
+        _optimisticItemOrders.update { it + (checklistId to fullOrderedIds) }
         viewModelScope.launch {
-            repository.reorderChecklistItems(
-                fullOrderedIds = fullOrderedIds,
-                currentItems = currentFullItems
-            )
+            itemReorderMutex.withLock {
+                val latestOrder = _optimisticItemOrders.value[checklistId] ?: fullOrderedIds
+                val freshItems = repository.getItemsByChecklist(checklistId)
+                repository.reorderChecklistItems(
+                    fullOrderedIds = latestOrder,
+                    currentItems = freshItems
+                )
+            }
         }
     }
 
@@ -443,6 +515,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onlyIfUnchecked = onlyIfUnchecked,
             )
             onSaved(saved)
+        }
+    }
+
+    fun scheduleQuickReminder15m(
+        checklistId: Long,
+        itemId: Long?,
+        onScheduled: (QuickReminderResult) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val result = repository.scheduleQuickReminderIn15Min(
+                checklistId = checklistId,
+                itemId = itemId,
+            )
+            onScheduled(result)
+        }
+    }
+
+    fun undoQuickReminder(
+        savedReminderId: Long,
+        previousReminder: ReminderEntity?,
+    ) {
+        if (savedReminderId <= 0L) return
+        viewModelScope.launch {
+            repository.undoQuickReminder(
+                savedReminderId = savedReminderId,
+                previousReminder = previousReminder,
+            )
         }
     }
 

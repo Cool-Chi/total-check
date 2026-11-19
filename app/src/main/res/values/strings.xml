@@ -108,6 +108,7 @@
     <string name="action_reminder_short">Remind</string>
     <string name="cd_checklist_reminder">Set checklist reminder</string>
     <string name="cd_item_reminder">Set reminder for \"%1$s\"</string>
+    <string name="a11y_quick_reminder_15m">Quick set 15-minute reminder</string>
     <string name="dialog_reminder_checklist_title">Checklist Reminder</string>
     <string name="dialog_reminder_item_title">Item Reminder</string>
     <string name="reminder_target_checklist">Checklist: %1$s</string>
@@ -115,6 +116,15 @@
     <string name="reminder_time_section_label">Reminder Time</string>
     <string name="reminder_hour_label">Hr</string>
     <string name="reminder_minute_label">Min</string>
+    <string name="cd_reminder_hour_wheel">Hour drum wheel</string>
+    <string name="cd_reminder_minute_wheel">Minute drum wheel</string>
+    <string name="cd_reminder_direct_input_hint">Tap selected time to type 4 digits</string>
+    <string name="reminder_direct_input_label">Type 4 digits (e.g. 0830)</string>
+    <string name="reminder_direct_input_error">Enter a valid time (00:00–23:59)</string>
+    <string name="reminder_quick_plus_15m">+15m</string>
+    <string name="reminder_quick_plus_1h">+1h</string>
+    <string name="reminder_quick_plus_4h">+4h</string>
+    <string name="reminder_quick_now">↺ Now</string>
     <string name="cd_increase_hour">Increase hour</string>
     <string name="cd_decrease_hour">Decrease hour</string>
     <string name="cd_increase_minute">Increase minute</string>
@@ -124,6 +134,9 @@
     <string name="reminder_repeat_daily">Daily</string>
     <string name="reminder_repeat_weekdays">Mon–Fri</string>
     <string name="reminder_repeat_weekends">Weekends</string>
+    <string name="reminder_tab_weekdays">Weekdays</string>
+    <string name="reminder_tab_weekends">Weekends</string>
+    <string name="reminder_tab_daily">Daily</string>
     <string name="reminder_repeat_once_hint">Leave all days unselected for a one-time reminder (auto-disables after firing; resetting list won\'t re-enable)</string>
     <string name="reminder_day_mon">M</string>
     <string name="reminder_day_tue">T</string>
@@ -140,6 +153,7 @@
     <string name="action_delete_reminder">Delete Reminder</string>
     <string name="action_save_reminder">Save Reminder</string>
     <string name="snackbar_reminder_saved">Reminder set: %1$s</string>
+    <string name="snackbar_quick_reminder_15m_set">15-min reminder set (%1$s)</string>
     <string name="snackbar_reminder_deleted">Reminder removed</string>
     <string name="snackbar_test_notification_sent">Test notification sent</string>
     <string name="snackbar_notif_permission_denied">Notification permission denied; alerts may not appear</string>

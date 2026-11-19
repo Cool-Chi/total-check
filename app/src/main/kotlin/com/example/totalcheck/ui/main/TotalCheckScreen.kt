@@ -1,6 +1,11 @@
 package com.example.totalcheck.ui.main
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
@@ -56,10 +61,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -92,7 +98,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.totalcheck.R
 import com.example.totalcheck.data.local.CheckItemEntity
@@ -100,6 +108,7 @@ import com.example.totalcheck.data.local.ChecklistEntity
 import com.example.totalcheck.data.local.ReminderEntity
 import com.example.totalcheck.data.reminder.ReminderFormatter
 import com.example.totalcheck.ui.theme.LocalReducedMotion
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -128,7 +137,6 @@ fun TotalCheckScreen(
     val checklists by viewModel.checklists.collectAsStateWithLifecycle()
     val itemsByChecklist by viewModel.itemsByChecklist.collectAsStateWithLifecycle()
     val reminders by viewModel.reminders.collectAsStateWithLifecycle()
-    val selectedChecklistId by viewModel.selectedChecklistId.collectAsStateWithLifecycle()
     val pendingScrollToChecklistId by viewModel.pendingScrollToChecklistId.collectAsStateWithLifecycle()
     val pendingAutoFocusInput by viewModel.pendingAutoFocusInput.collectAsStateWithLifecycle()
     val themeConfig by viewModel.themeConfig.collectAsStateWithLifecycle()
@@ -137,7 +145,7 @@ fun TotalCheckScreen(
     val showUncheckedOnly by viewModel.showUncheckedOnly.collectAsStateWithLifecycle()
     val isStartupLoading by viewModel.isStartupLoading.collectAsStateWithLifecycle()
 
-    var inputText by remember { mutableStateOf("") }
+    val inputTextState = remember { mutableStateOf("") }
     var modalContent by remember { mutableStateOf<ChecklistModalContent?>(null) }
     var isModalOpen by remember { mutableStateOf(false) }
     var modalSessionKey by remember { mutableIntStateOf(0) }
@@ -150,29 +158,14 @@ fun TotalCheckScreen(
     val deleteFocusRequesters = remember { HashMap<Long, FocusRequester>() }
     var editingItemId by remember { mutableStateOf<Long?>(null) }
     val editingDraftHolder = remember { EditingDraftHolder() }
-    val optimisticItemLabels = remember { mutableStateMapOf<Long, String>() }
     var suppressMainImeUntilClosed by remember { mutableStateOf(false) }
     val keyboardFocusController = remember { KeyboardFocusVisibleController() }
-
-    LaunchedEffect(itemsByChecklist) {
-        if (optimisticItemLabels.isNotEmpty()) {
-            val allDbItemsById = itemsByChecklist.values.flatten().associateBy { it.id }
-            val resolvedIds = optimisticItemLabels.entries
-                .filter { (id, optimisticLabel) ->
-                    val dbItem = allDbItemsById[id]
-                    dbItem == null || dbItem.label == optimisticLabel
-                }
-                .map { it.key }
-            resolvedIds.forEach { optimisticItemLabels.remove(it) }
-        }
-    }
 
     val commitActiveInlineEdit: () -> Unit = {
         val currentEditId = editingItemId
         if (currentEditId != null) {
             val trimmed = editingDraftHolder.text.trim()
             if (trimmed.isNotEmpty()) {
-                optimisticItemLabels[currentEditId] = trimmed
                 viewModel.renameItem(currentEditId, trimmed)
             }
             editingItemId = null
@@ -208,6 +201,58 @@ fun TotalCheckScreen(
         previousEditingItemId = editingItemId
     }
     val snackbarHostState = remember { SnackbarHostState() }
+    var pendingQuickReminderAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val quickReminderPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        val action = pendingQuickReminderAction
+        pendingQuickReminderAction = null
+        action?.invoke()
+    }
+    val triggerQuickReminder15m: (Long, Long?) -> Unit = { checklistId, itemId ->
+        commitActiveInlineEdit()
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        val executeSchedule: () -> Unit = {
+            viewModel.scheduleQuickReminder15m(
+                checklistId = checklistId,
+                itemId = itemId
+            ) { result ->
+                scope.launch {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    val formattedTime = ReminderFormatter.formatTime(
+                        result.saved.hour,
+                        result.saved.minute
+                    )
+                    val actionResult = snackbarHostState.showSnackbar(
+                        message = context.getString(
+                            R.string.snackbar_quick_reminder_15m_set,
+                            formattedTime
+                        ),
+                        actionLabel = context.getString(R.string.action_undo),
+                        duration = SnackbarDuration.Short
+                    )
+                    if (actionResult == SnackbarResult.ActionPerformed) {
+                        viewModel.undoQuickReminder(
+                            savedReminderId = result.saved.id,
+                            previousReminder = result.previousReminder
+                        )
+                    }
+                }
+            }
+        }
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingQuickReminderAction = executeSchedule
+            quickReminderPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            executeSchedule()
+        }
+    }
     val submitHolder = remember {
         object {
             var onSubmit: (() -> Unit)? = null
@@ -401,7 +446,6 @@ fun TotalCheckScreen(
         { itemId, newLabel ->
             val trimmed = newLabel.trim()
             if (trimmed.isNotEmpty()) {
-                optimisticItemLabels[itemId] = trimmed
                 viewModel.renameItem(itemId, trimmed)
             }
             editingItemId = null
@@ -461,19 +505,42 @@ fun TotalCheckScreen(
                     .clipToBounds()
             ) {
                 val isReadyForInput = !isStartupLoading && checklists.isNotEmpty()
+                val startupRevealAnim = remember { Animatable(if (isReadyForInput) 1f else 0f) }
+                var showSkeletonOverlay by remember { mutableStateOf(!isReadyForInput) }
+                LaunchedEffect(isReadyForInput, isReducedMotionGlobal) {
+                    if (isReadyForInput) {
+                        if (isReducedMotionGlobal) {
+                            startupRevealAnim.snapTo(1f)
+                        } else if (startupRevealAnim.value < 0.999f) {
+                            startupRevealAnim.animateTo(
+                                targetValue = 1f,
+                                animationSpec = tween(
+                                    durationMillis = 250,
+                                    easing = FastOutSlowInEasing
+                                )
+                            )
+                        }
+                        showSkeletonOverlay = false
+                    } else {
+                        showSkeletonOverlay = true
+                        startupRevealAnim.snapTo(0f)
+                    }
+                }
+
                 Box(modifier = Modifier.fillMaxSize()) {
-                    if (isStartupLoading || checklists.isEmpty()) {
-                        TotalCheckSkeletonShimmer(
-                            isDarkTheme = isDarkMode,
-                            checklists = checklists,
-                            itemsByChecklist = itemsByChecklist,
-                            showUncheckedOnly = showUncheckedOnly,
+                    if (checklists.isNotEmpty()) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(bottom = with(density) { quickBarBodyHeightHolder.value.toDp() })
-                        )
-                    } else {
-                            val requestedInitialId = pendingScrollToChecklistId ?: selectedChecklistId
+                                .graphicsLayer {
+                                    val p = startupRevealAnim.value.coerceIn(0f, 1f)
+                                    alpha = p
+                                    val revealScale = if (isReducedMotionGlobal) 1f else lerp(0.988f, 1f, p)
+                                    scaleX = revealScale
+                                    scaleY = revealScale
+                                }
+                        ) {
+                            val requestedInitialId = pendingScrollToChecklistId ?: viewModel.selectedChecklistId.value
                             val initialPageIndex = requestedInitialId
                                 ?.let { id -> checklists.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
                                 ?: 0
@@ -482,94 +549,118 @@ fun TotalCheckScreen(
                                 pageCount = { checklists.size }
                             )
                             val isReducedMotion = LocalReducedMotion.current
-                            var distantTabTransition by remember { mutableStateOf<DistantTabTransition?>(null) }
-                            var activeTabScrollJob by remember { mutableStateOf<Job?>(null) }
-                            var activeChecklistId by remember {
+                            val distantTabTransitionState = remember { mutableStateOf<DistantTabTransition?>(null) }
+                            val activeTabScrollJobHolder = remember { TabScrollJobHolder() }
+                            val activeChecklistIdState = remember {
                                 mutableStateOf(checklists.getOrNull(initialPageIndex)?.id)
                             }
                             val currentChecklistsInPager by rememberUpdatedState(checklists)
+                            val pageViewModelHolder = remember(viewModel) { ChecklistPageViewModelHolder(viewModel) }
 
                             // 使用者手動拖曳 Pager 時立即取消遠距導航接管與編輯鎖定，保持 1:1 跟手控制
                             LaunchedEffect(pagerState) {
                                 pagerState.interactionSource.interactions.collect { interaction ->
                                     if (interaction is DragInteraction.Start) {
                                         commitActiveInlineEdit()
-                                        activeTabScrollJob?.cancel()
-                                        activeTabScrollJob = null
-                                        distantTabTransition = null
+                                        activeTabScrollJobHolder.job?.cancel()
+                                        activeTabScrollJobHolder.job = null
+                                        distantTabTransitionState.value = null
                                     }
                                 }
                             }
 
-                            val navigateToPage: (Int) -> Unit = { rawIndex ->
-                                val listNow = currentChecklistsInPager
-                                val targetIndex = rawIndex.coerceIn(0, (listNow.size - 1).coerceAtLeast(0))
-                                val targetId = listNow.getOrNull(targetIndex)?.id
-                                activeChecklistId = targetId
-                                if (targetId != null) {
-                                    viewModel.selectChecklist(targetId)
-                                }
-                                commitActiveInlineEdit()
-                                activeTabScrollJob?.cancel()
-                                val job = scope.launch {
-                                    try {
-                                        val currentPage = pagerState.currentPage
-                                        if (targetIndex == currentPage && abs(pagerState.currentPageOffsetFraction) < 0.01f) {
-                                            distantTabTransition = null
-                                            return@launch
-                                        }
-                                        if (isReducedMotion) {
-                                            distantTabTransition = null
-                                            pagerState.scrollToPage(targetIndex)
-                                            return@launch
-                                        }
-                                        val pageDistance = abs(targetIndex - currentPage)
-                                        val spec = tween<Float>(durationMillis = 280, easing = FastOutSlowInEasing)
-                                        if (pageDistance <= 1) {
-                                            distantTabTransition = null
-                                            pagerState.animateScrollToPage(
-                                                page = targetIndex,
-                                                animationSpec = spec
-                                            )
-                                        } else {
-                                            // 統一單一同步動效並取消中途預備跳頁 (stagingPage)，消除跨頁組合毛刺與動效重疊
-                                            val transition = DistantTabTransition(
-                                                fromPage = currentPage,
-                                                toPage = targetIndex
-                                            )
-                                            distantTabTransition = transition
-                                            val tabAnimJob = launch {
-                                                transition.progress.animateTo(targetValue = 1f, animationSpec = spec)
+                            val navigateToPage: (Int) -> Unit = remember(pagerState, scope, isReducedMotion, viewModel) {
+                                { rawIndex ->
+                                    val listNow = currentChecklistsInPager
+                                    val targetIndex = rawIndex.coerceIn(0, (listNow.size - 1).coerceAtLeast(0))
+                                    val targetId = listNow.getOrNull(targetIndex)?.id
+                                    activeChecklistIdState.value = targetId
+                                    if (targetId != null) {
+                                        viewModel.selectChecklist(targetId)
+                                    }
+                                    commitActiveInlineEdit()
+                                    activeTabScrollJobHolder.job?.cancel()
+                                    val job = scope.launch {
+                                        try {
+                                            val currentPage = pagerState.currentPage
+                                            if (targetIndex == currentPage && abs(pagerState.currentPageOffsetFraction) < 0.01f) {
+                                                distantTabTransitionState.value = null
+                                                return@launch
                                             }
-                                            pagerState.animateScrollToPage(
-                                                page = targetIndex,
-                                                animationSpec = spec
-                                            )
-                                            tabAnimJob.join()
-                                        }
-                                    } finally {
-                                        if (activeTabScrollJob == coroutineContext[Job]) {
-                                            distantTabTransition = null
-                                            activeTabScrollJob = null
+                                            if (isReducedMotion) {
+                                                distantTabTransitionState.value = null
+                                                pagerState.scrollToPage(targetIndex)
+                                                return@launch
+                                            }
+                                            val pageDistance = abs(targetIndex - currentPage)
+                                            val spec = tween<Float>(durationMillis = 320, easing = FastOutSlowInEasing)
+                                            val preloadedRadius = (listNow.size - 1).coerceIn(1, 5)
+                                            if (pageDistance <= 1) {
+                                                distantTabTransitionState.value = null
+                                                pagerState.animateScrollToPage(
+                                                    page = targetIndex,
+                                                    animationSpec = spec
+                                                )
+                                            } else if (pageDistance <= preloadedRadius) {
+                                                val transition = DistantTabTransition(
+                                                    fromPage = currentPage,
+                                                    toPage = targetIndex
+                                                )
+                                                distantTabTransitionState.value = transition
+                                                val tabAnimJob = launch {
+                                                    transition.progress.animateTo(targetValue = 1f, animationSpec = spec)
+                                                }
+                                                pagerState.animateScrollToPage(
+                                                    page = targetIndex,
+                                                    animationSpec = spec
+                                                )
+                                                tabAnimJob.join()
+                                            } else {
+                                                // 超出常駐預載池之遠距頁籤：先於跳板頁錯峰預熱 Composition & Layout，避免首幀掉幀
+                                                val stagingPage = if (targetIndex > currentPage) targetIndex - 1 else targetIndex + 1
+                                                val transition = DistantTabTransition(
+                                                    fromPage = currentPage,
+                                                    toPage = targetIndex,
+                                                    isPreparing = mutableStateOf(true)
+                                                )
+                                                distantTabTransitionState.value = transition
+                                                withFrameNanos { }
+                                                pagerState.scrollToPage(stagingPage)
+                                                withFrameNanos { }
+                                                transition.isPreparing.value = false
+                                                val tabAnimJob = launch {
+                                                    transition.progress.animateTo(targetValue = 1f, animationSpec = spec)
+                                                }
+                                                pagerState.animateScrollToPage(
+                                                    page = targetIndex,
+                                                    animationSpec = spec
+                                                )
+                                                tabAnimJob.join()
+                                            }
+                                        } finally {
+                                            if (activeTabScrollJobHolder.job == coroutineContext[Job]) {
+                                                distantTabTransitionState.value = null
+                                                activeTabScrollJobHolder.job = null
+                                            }
                                         }
                                     }
+                                    activeTabScrollJobHolder.job = job
                                 }
-                                activeTabScrollJob = job
                             }
 
                             LaunchedEffect(pagerState) {
                                 snapshotFlow {
-                                    val overrideTarget = distantTabTransition?.toPage
+                                    val overrideTarget = distantTabTransitionState.value?.toPage
                                     val target = overrideTarget ?: pagerState.targetPage
-                                    Triple(target, pagerState.isScrollInProgress, distantTabTransition != null)
+                                    Triple(target, pagerState.isScrollInProgress, distantTabTransitionState.value != null)
                                 }
                                     .collect { (targetIndex, inProgress, hasDistant) ->
                                         val listNow = currentChecklistsInPager
                                         val clamped = targetIndex.coerceIn(0, (listNow.size - 1).coerceAtLeast(0))
-                                        if (clamped in listNow.indices && (inProgress || hasDistant || activeChecklistId == null)) {
+                                        if (clamped in listNow.indices && (inProgress || hasDistant || activeChecklistIdState.value == null)) {
                                             val id = listNow[clamped].id
-                                            if (activeChecklistId != id) {
-                                                activeChecklistId = id
+                                            if (activeChecklistIdState.value != id) {
+                                                activeChecklistIdState.value = id
                                                 viewModel.selectChecklist(id)
                                             }
                                         }
@@ -578,10 +669,10 @@ fun TotalCheckScreen(
 
                             val checklistIdsKey = checklists.map { it.id }
                             LaunchedEffect(checklistIdsKey) {
-                                val currentActiveId = activeChecklistId
+                                val currentActiveId = activeChecklistIdState.value
                                 if (currentActiveId == null) {
                                     val firstId = checklistIdsKey.firstOrNull()
-                                    activeChecklistId = firstId
+                                    activeChecklistIdState.value = firstId
                                     if (firstId != null) {
                                         viewModel.selectChecklist(firstId)
                                     }
@@ -595,7 +686,7 @@ fun TotalCheckScreen(
                                 } else {
                                     val fallbackIdx = pagerState.currentPage.coerceIn(0, (checklistIdsKey.size - 1).coerceAtLeast(0))
                                     val fallbackId = checklistIdsKey.getOrNull(fallbackIdx)
-                                    activeChecklistId = fallbackId
+                                    activeChecklistIdState.value = fallbackId
                                     if (fallbackId != null) {
                                         viewModel.selectChecklist(fallbackId)
                                     }
@@ -632,39 +723,54 @@ fun TotalCheckScreen(
                             }
 
                             val submitNewItem: () -> Unit = {
-                                val trimmed = inputText.trim()
+                                val trimmed = inputTextState.value.trim()
                                 if (trimmed.isNotEmpty() && pagerState.currentPage in checklists.indices) {
                                     val currentChecklistId = checklists[pagerState.currentPage].id
                                     viewModel.addItem(currentChecklistId, trimmed)
-                                    inputText = ""
+                                    inputTextState.value = ""
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 }
                             }
                             submitHolder.onSubmit = submitNewItem
 
+                            val stableChecklists = remember(checklists) { ImmutableList(checklists) }
+                            val stableItemsByChecklist = remember(itemsByChecklist) { ImmutableMap(itemsByChecklist) }
+                            val distantTabTransitionProvider = remember(distantTabTransitionState) {
+                                { distantTabTransitionState.value }
+                            }
+                            val activeChecklistIdProvider = remember(activeChecklistIdState) {
+                                { activeChecklistIdState.value }
+                            }
+                            val onReorderChecklistsStable = remember(viewModel) {
+                                { orderedIds: List<Long> -> viewModel.reorderChecklists(orderedIds) }
+                            }
+                            val onMoveChecklistLeftStable = remember(viewModel) {
+                                { id: Long -> viewModel.moveChecklistByStep(id, -1) }
+                            }
+                            val onMoveChecklistRightStable = remember(viewModel) {
+                                { id: Long -> viewModel.moveChecklistByStep(id, 1) }
+                            }
+                            val onAddChecklistStable = remember(addChecklistFocusRequester) {
+                                {
+                                    openModal(
+                                        ChecklistModalContent.CreateChecklist,
+                                        addChecklistFocusRequester
+                                    )
+                                }
+                            }
+
                             Column(modifier = Modifier.fillMaxSize()) {
                                 ExpandingChecklistTabBar(
-                                    checklists = checklists,
-                                    itemsByChecklist = itemsByChecklist,
+                                    checklists = stableChecklists,
+                                    itemsByChecklist = stableItemsByChecklist,
                                     pagerState = pagerState,
-                                    distantTabTransition = distantTabTransition,
-                                    activeChecklistId = activeChecklistId,
+                                    distantTabTransitionProvider = distantTabTransitionProvider,
+                                    activeChecklistIdProvider = activeChecklistIdProvider,
                                     onSelectPage = navigateToPage,
-                                    onReorderChecklists = { orderedIds ->
-                                        viewModel.reorderChecklists(orderedIds)
-                                    },
-                                    onMoveChecklistLeft = { id ->
-                                        viewModel.moveChecklistByStep(id, -1)
-                                    },
-                                    onMoveChecklistRight = { id ->
-                                        viewModel.moveChecklistByStep(id, 1)
-                                    },
-                                    onAddChecklist = {
-                                        openModal(
-                                            ChecklistModalContent.CreateChecklist,
-                                            addChecklistFocusRequester
-                                        )
-                                    },
+                                    onReorderChecklists = onReorderChecklistsStable,
+                                    onMoveChecklistLeft = onMoveChecklistLeftStable,
+                                    onMoveChecklistRight = onMoveChecklistRightStable,
+                                    onAddChecklist = onAddChecklistStable,
                                     addButtonFocusRequester = addChecklistFocusRequester
                                 )
 
@@ -677,37 +783,35 @@ fun TotalCheckScreen(
                                     HorizontalPager(
                                         state = pagerState,
                                         key = { page -> checklists.getOrNull(page)?.id ?: page },
-                                        beyondViewportPageCount = 1,
+                                        beyondViewportPageCount = (checklists.size - 1).coerceIn(1, 5),
                                         modifier = Modifier.fillMaxSize()
                                     ) { pageIndex ->
                                         val checklist = checklists.getOrNull(pageIndex) ?: return@HorizontalPager
-                                        val isActivePage = pageIndex == pagerState.currentPage || pageIndex == pagerState.targetPage
                                         val rawItems = itemsByChecklist[checklist.id].orEmpty()
-                                        val items = if (optimisticItemLabels.isEmpty()) {
-                                            rawItems
-                                        } else {
-                                            rawItems.map { item ->
-                                                val optimistic = optimisticItemLabels[item.id]
-                                                if (optimistic != null && optimistic != item.label) {
-                                                    item.copy(label = optimistic)
-                                                } else {
-                                                    item
-                                                }
-                                            }
-                                        }
-                                        val pageEditingItemId = if (editingItemId != null && items.any { it.id == editingItemId }) {
+                                        val stableItems = remember(rawItems) { ImmutableList(rawItems) }
+                                        val pageEditingItemId = if (editingItemId != null && rawItems.any { it.id == editingItemId }) {
                                             editingItemId
                                         } else {
                                             null
                                         }
-                                        val reminderBtnFocus = reminderFocusRequesters.getOrPut(checklist.id) {
-                                            FocusRequester()
+                                        val isActivePageProvider = remember(pageIndex, pagerState, distantTabTransitionState) {
+                                            {
+                                                val distant = distantTabTransitionState.value
+                                                if (distant != null) {
+                                                    pageIndex == distant.fromPage || pageIndex == distant.toPage
+                                                } else {
+                                                    pageIndex == pagerState.currentPage || pageIndex == pagerState.targetPage
+                                                }
+                                            }
                                         }
-                                        val renameBtnFocus = renameFocusRequesters.getOrPut(checklist.id) {
-                                            FocusRequester()
+                                        val reminderBtnFocus = remember(checklist.id) {
+                                            reminderFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
                                         }
-                                        val deleteBtnFocus = deleteFocusRequesters.getOrPut(checklist.id) {
-                                            FocusRequester()
+                                        val renameBtnFocus = remember(checklist.id) {
+                                            renameFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
+                                        }
+                                        val deleteBtnFocus = remember(checklist.id) {
+                                            deleteFocusRequesters.getOrPut(checklist.id) { FocusRequester() }
                                         }
                                         val checklistReminders = remember(reminders, checklist.id) {
                                             reminders.filter { it.checklistId == checklist.id }
@@ -716,35 +820,49 @@ fun TotalCheckScreen(
                                             checklistReminders.firstOrNull { it.itemId == null }
                                         }
                                         val itemRemindersById = remember(checklistReminders) {
-                                            checklistReminders.mapNotNull { r ->
-                                                r.itemId?.let { id -> id to r }
-                                            }.toMap()
+                                            ImmutableMap(
+                                                checklistReminders.mapNotNull { r ->
+                                                    r.itemId?.let { id -> id to r }
+                                                }.toMap()
+                                            )
                                         }
-                                        ChecklistPageContent(
-                                            checklist = checklist,
-                                            items = items,
-                                            checklistReminder = activeChecklistReminder,
-                                            itemRemindersById = itemRemindersById,
-                                            canDeleteChecklist = checklists.size > 1,
-                                            showUncheckedOnly = showUncheckedOnly,
-                                            editingItemId = pageEditingItemId,
-                                            isActivePage = isActivePage,
-                                            isReducedMotion = isReducedMotion,
-                                            viewModel = viewModel,
-                                            snackbarHostState = snackbarHostState,
-                                            progressCollapseFractionProvider = progressCollapseFractionProvider,
-                                            bottomOverlayInsetPxProvider = bottomOverlayInsetPxProvider,
-                                            baseBottomOverlayInsetPxProvider = baseBottomOverlayInsetPxProvider,
-                                            reminderButtonFocusRequester = reminderBtnFocus,
-                                            renameButtonFocusRequester = renameBtnFocus,
-                                            deleteButtonFocusRequester = deleteBtnFocus,
-                                            onStartEdit = onStartInlineEditStable,
-                                            onEditDraftChanged = onEditDraftChangedStable,
-                                            onConfirmEdit = onConfirmInlineEditStable,
-                                            onCancelEdit = onCancelInlineEditStable,
-                                            onClearEditingIfMatches = onClearEditingIfMatchesStable,
-                                            onOpenModal = onOpenModalStable
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer {
+                                                    val distant = distantTabTransitionState.value
+                                                    if (distant != null && distant.isPreparing.value) {
+                                                        alpha = 0f
+                                                    }
+                                                }
+                                        ) {
+                                            ChecklistPageContent(
+                                                checklist = checklist,
+                                                stableItems = stableItems,
+                                                checklistReminder = activeChecklistReminder,
+                                                stableItemRemindersById = itemRemindersById,
+                                                canDeleteChecklist = checklists.size > 1,
+                                                showUncheckedOnly = showUncheckedOnly,
+                                                editingItemId = pageEditingItemId,
+                                                isActivePageProvider = isActivePageProvider,
+                                                isReducedMotion = isReducedMotion,
+                                                viewModelHolder = pageViewModelHolder,
+                                                snackbarHostState = snackbarHostState,
+                                                progressCollapseFractionProvider = progressCollapseFractionProvider,
+                                                bottomOverlayInsetPxProvider = bottomOverlayInsetPxProvider,
+                                                baseBottomOverlayInsetPxProvider = baseBottomOverlayInsetPxProvider,
+                                                reminderButtonFocusRequester = reminderBtnFocus,
+                                                renameButtonFocusRequester = renameBtnFocus,
+                                                deleteButtonFocusRequester = deleteBtnFocus,
+                                                onStartEdit = onStartInlineEditStable,
+                                                onEditDraftChanged = onEditDraftChangedStable,
+                                                onConfirmEdit = onConfirmInlineEditStable,
+                                                onCancelEdit = onCancelInlineEditStable,
+                                                onClearEditingIfMatches = onClearEditingIfMatchesStable,
+                                                onOpenModal = onOpenModalStable,
+                                                onQuickReminder15m = triggerQuickReminder15m
+                                            )
+                                        }
                                     }
 
                                     SnackbarHost(
@@ -768,13 +886,51 @@ fun TotalCheckScreen(
                             }
                         }
                     }
+                    if (showSkeletonOverlay) {
+                        val skeletonBottomPadDp = with(density) {
+                            (navBarInsets.getBottom(density).toFloat() + quickBarBodyHeightHolder.value).toDp()
+                        }
+                        TotalCheckSkeletonShimmer(
+                            isDarkTheme = isDarkMode,
+                            checklists = checklists,
+                            itemsByChecklist = itemsByChecklist,
+                            showUncheckedOnly = showUncheckedOnly,
+                            activeChecklistId = pendingScrollToChecklistId ?: viewModel.selectedChecklistId.value,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(10f)
+                                .graphicsLayer {
+                                    val p = startupRevealAnim.value.coerceIn(0f, 1f)
+                                    alpha = 1f - p
+                                    val exitScale = if (isReducedMotionGlobal) 1f else lerp(1f, 1.012f, p)
+                                    scaleX = exitScale
+                                    scaleY = exitScale
+                                }
+                                .then(
+                                    if (!isReadyForInput) {
+                                        Modifier.pointerInput(Unit) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                    event.changes.forEach { it.consume() }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .padding(bottom = skeletonBottomPadDp)
+                        )
+                    }
+                }
 
-                    QuickInputBar(
-                        value = inputText,
+                    QuickInputBarHost(
+                        inputTextState = inputTextState,
                         onValueChange = {
                             if (editingItemId == null) {
                                 suppressMainImeUntilClosed = false
-                                inputText = it
+                                inputTextState.value = it
                             }
                         },
                         canSubmit = isReadyForInput,
@@ -1014,18 +1170,56 @@ private fun TopAppHeaderBar(
     }
 }
 
+private class TabScrollJobHolder(var job: Job? = null)
+
+private class VisibleListTopTracker(var size: Int, var firstId: Long?)
+
+@Stable
+private class ChecklistPageViewModelHolder(val viewModel: MainViewModel)
+
+@Composable
+private fun QuickInputBarHost(
+    inputTextState: MutableState<String>,
+    onValueChange: (String) -> Unit,
+    canSubmit: Boolean,
+    onSubmit: () -> Unit,
+    imeInsets: WindowInsets,
+    navBarInsets: WindowInsets,
+    shouldFreezeImeProvider: () -> Boolean,
+    hideProgressProvider: () -> Float,
+    onBodyHeightChanged: (Float) -> Unit,
+    onInputFocused: () -> Unit,
+    inputFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    QuickInputBar(
+        value = inputTextState.value,
+        onValueChange = onValueChange,
+        canSubmit = canSubmit,
+        onSubmit = onSubmit,
+        imeInsets = imeInsets,
+        navBarInsets = navBarInsets,
+        shouldFreezeImeProvider = shouldFreezeImeProvider,
+        hideProgressProvider = hideProgressProvider,
+        onBodyHeightChanged = onBodyHeightChanged,
+        onInputFocused = onInputFocused,
+        inputFocusRequester = inputFocusRequester,
+        modifier = modifier
+    )
+}
+
 @Composable
 private fun ChecklistPageContent(
     checklist: ChecklistEntity,
-    items: List<CheckItemEntity>,
+    stableItems: ImmutableList<CheckItemEntity>,
     checklistReminder: ReminderEntity?,
-    itemRemindersById: Map<Long, ReminderEntity>,
+    stableItemRemindersById: ImmutableMap<Long, ReminderEntity>,
     canDeleteChecklist: Boolean,
     showUncheckedOnly: Boolean,
     editingItemId: Long?,
-    isActivePage: Boolean,
+    isActivePageProvider: () -> Boolean,
     isReducedMotion: Boolean,
-    viewModel: MainViewModel,
+    viewModelHolder: ChecklistPageViewModelHolder,
     snackbarHostState: SnackbarHostState,
     progressCollapseFractionProvider: () -> Float,
     bottomOverlayInsetPxProvider: () -> Float,
@@ -1038,22 +1232,26 @@ private fun ChecklistPageContent(
     onConfirmEdit: (Long, String) -> Unit,
     onCancelEdit: () -> Unit,
     onClearEditingIfMatches: (Long) -> Unit,
-    onOpenModal: (ChecklistModalContent, FocusRequester?) -> Unit
+    onOpenModal: (ChecklistModalContent, FocusRequester?) -> Unit,
+    onQuickReminder15m: (Long, Long?) -> Unit
 ) {
+    val items = stableItems.items
+    val itemRemindersById = stableItemRemindersById.map
+    val viewModel = viewModelHolder.viewModel
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val imeInsets = WindowInsets.ime
     val navBarInsets = WindowInsets.navigationBars
-    val isActivePageState = rememberUpdatedState(isActivePage)
+    val currentIsActivePageProvider by rememberUpdatedState(isActivePageProvider)
 
     val pageCollapseProvider: () -> Float = remember(
         checklist.id,
         progressCollapseFractionProvider
     ) {
         {
-            if (isActivePageState.value) progressCollapseFractionProvider() else 0f
+            if (currentIsActivePageProvider()) progressCollapseFractionProvider() else 0f
         }
     }
     val pageBottomOverlayInsetPxProvider: () -> Float = remember(
@@ -1062,7 +1260,7 @@ private fun ChecklistPageContent(
         baseBottomOverlayInsetPxProvider
     ) {
         {
-            if (isActivePageState.value) {
+            if (currentIsActivePageProvider()) {
                 bottomOverlayInsetPxProvider()
             } else {
                 baseBottomOverlayInsetPxProvider()
@@ -1077,14 +1275,13 @@ private fun ChecklistPageContent(
     val progressAnimatable = remember(checklist.id) { Animatable(targetProgress) }
     var resetWave by remember(checklist.id) { mutableStateOf(ResetWaveState()) }
 
-    LaunchedEffect(targetProgress, isReducedMotion) {
-        if (isReducedMotion) {
-            progressAnimatable.snapTo(targetProgress)
-        } else if (
-            abs(progressAnimatable.targetValue - targetProgress) > 0.0001f ||
-            abs(progressAnimatable.value - targetProgress) > 0.0005f
-        ) {
-            if (targetProgress > progressAnimatable.value) {
+    val needsProgressAnim = abs(progressAnimatable.targetValue - targetProgress) > 0.0001f ||
+        abs(progressAnimatable.value - targetProgress) > 0.0005f
+    if (needsProgressAnim) {
+        LaunchedEffect(targetProgress, isReducedMotion) {
+            if (isReducedMotion) {
+                progressAnimatable.snapTo(targetProgress)
+            } else if (targetProgress > progressAnimatable.value) {
                 progressAnimatable.animateTo(
                     targetValue = targetProgress,
                     initialVelocity = 1.6f,
@@ -1107,42 +1304,72 @@ private fun ChecklistPageContent(
         }
     }
 
-    val visibleItems = remember(items, showUncheckedOnly) {
+    var stagingCheckedItemIds by remember(checklist.id) { mutableStateOf<Set<Long>>(emptySet()) }
+    val stagingJobs = remember(checklist.id) { HashMap<Long, Job>() }
+    DisposableEffect(checklist.id) {
+        onDispose {
+            stagingJobs.values.forEach { it.cancel() }
+            stagingJobs.clear()
+        }
+    }
+    if ((!showUncheckedOnly || isReducedMotion) && (stagingCheckedItemIds.isNotEmpty() || stagingJobs.isNotEmpty())) {
+        LaunchedEffect(showUncheckedOnly, isReducedMotion) {
+            stagingJobs.values.forEach { it.cancel() }
+            stagingJobs.clear()
+            stagingCheckedItemIds = emptySet()
+        }
+    }
+
+    val visibleItems = remember(items, showUncheckedOnly, stagingCheckedItemIds) {
         if (showUncheckedOnly) {
-            items.filter { !it.isChecked }
+            items.filter { !it.isChecked || it.id in stagingCheckedItemIds }
         } else {
             items
         }
     }
 
-    var previousSize by remember(checklist.id) { mutableIntStateOf(visibleItems.size) }
-    var previousFirstId by remember(checklist.id) { mutableStateOf(visibleItems.firstOrNull()?.id) }
-
-    LaunchedEffect(visibleItems.size, visibleItems.firstOrNull()?.id) {
-        val currentFirstId = visibleItems.firstOrNull()?.id
-        if (visibleItems.size > previousSize && currentFirstId != previousFirstId) {
-            stackedListState.scrollToTop(animated = !isReducedMotion)
-        }
-        previousSize = visibleItems.size
-        previousFirstId = currentFirstId
+    val currentFirstItemId = visibleItems.firstOrNull()?.id
+    val visibleTopTracker = remember(checklist.id) {
+        VisibleListTopTracker(size = visibleItems.size, firstId = currentFirstItemId)
     }
 
-    // 進入單項原地編輯時，單次平滑置中於鍵盤上方可視區（搭配 Placement 階段 pinnedExpandedKey 即時邊界保護）
-    LaunchedEffect(editingItemId) {
-        val targetEditId = editingItemId ?: return@LaunchedEffect
-        if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
+    if (visibleItems.size != visibleTopTracker.size || currentFirstItemId != visibleTopTracker.firstId) {
+        LaunchedEffect(visibleItems.size, currentFirstItemId) {
+            if (visibleItems.size > visibleTopTracker.size && currentFirstItemId != visibleTopTracker.firstId) {
+                stackedListState.scrollToTop(animated = !isReducedMotion)
+            }
+            visibleTopTracker.size = visibleItems.size
+            visibleTopTracker.firstId = currentFirstItemId
+        }
+    }
 
-        val minExpectedImePx = with(density) { 280.dp.toPx() }
-        val targetBottomInset = maxOf(
-            imeInsets.getBottom(density).toFloat(),
-            navBarInsets.getBottom(density).toFloat() + minExpectedImePx
-        )
-        stackedListState.scrollToCenterItem(
-            key = targetEditId,
-            targetTopInsetPx = 0f,
-            targetBottomInsetPx = targetBottomInset,
-            animated = !isReducedMotion
-        )
+    // 進入單項原地編輯時，預留軟鍵盤可捲動空間並置中；退出編輯時由 Layout 階段 Anchor Lock 保持原位定錨
+    if (editingItemId != null || stackedListState.editBottomInsetFloorState.floatValue != 0f) {
+        LaunchedEffect(editingItemId) {
+            val targetEditId = editingItemId
+            if (targetEditId == null) {
+                if (stackedListState.editBottomInsetFloorState.floatValue != 0f) {
+                    stackedListState.editBottomInsetFloorState.floatValue = 0f
+                }
+                return@LaunchedEffect
+            }
+            if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
+
+            stackedListState.clearExitAnchorLock()
+            val minExpectedImePx = with(density) { 280.dp.toPx() }
+            val targetBottomInset = maxOf(
+                imeInsets.getBottom(density).toFloat(),
+                navBarInsets.getBottom(density).toFloat() + minExpectedImePx
+            )
+            stackedListState.editBottomInsetFloorState.floatValue = targetBottomInset
+            withFrameNanos { }
+            stackedListState.scrollToCenterItem(
+                key = targetEditId,
+                targetTopInsetPx = 0f,
+                targetBottomInsetPx = targetBottomInset,
+                animated = !isReducedMotion
+            )
+        }
     }
 
     val progressCardHeightHolder = remember(checklist.id) {
@@ -1162,12 +1389,27 @@ private fun ChecklistPageContent(
     var containerHeightPx by remember(checklist.id) { mutableFloatStateOf(0f) }
     var draggedItemId by remember(checklist.id) { mutableStateOf<Long?>(null) }
     var workingItems by remember(checklist.id) { mutableStateOf<List<CheckItemEntity>>(emptyList()) }
+    var initialWorkingItems by remember(checklist.id) { mutableStateOf<List<CheckItemEntity>>(emptyList()) }
     var committedOrderIds by remember(checklist.id) { mutableStateOf<List<Long>?>(null) }
     var draggedItemHeightPx by remember(checklist.id) { mutableFloatStateOf(0f) }
-    var dragOverlayY by remember(checklist.id) { mutableFloatStateOf(0f) }
+    var rawDragOverlayY by remember(checklist.id) { mutableFloatStateOf(0f) }
     var isSettlingDrop by remember(checklist.id) { mutableStateOf(false) }
-    val overlayOffsetY = remember(checklist.id) { Animatable(0f) }
+    val springTracker = remember(checklist.id) {
+        MagneticSpringTracker(
+            dampingRatio = 0.85f,
+            stiffness = 520f,
+            visibilityThreshold = 0.5f,
+            velocityThreshold = 4f
+        )
+    }
     val pointerYInContainerState = remember(checklist.id) { mutableFloatStateOf(0f) }
+
+    val enterRadiusPx = with(density) { 72.dp.toPx() }
+    val magneticAttractor = remember(checklist.id, enterRadiusPx) {
+        MagneticAttractorState(defaultEnterRadiusPx = enterRadiusPx, commitThreshold = 0.35f)
+    }
+    var slotTopsBuffer by remember(checklist.id) { mutableStateOf(FloatArray(64)) }
+    var slotCentersBuffer by remember(checklist.id) { mutableStateOf(FloatArray(64)) }
 
     val currentVisibleItemsState = rememberUpdatedState(visibleItems)
     val currentShowUncheckedOnlyState = rememberUpdatedState(showUncheckedOnly)
@@ -1176,10 +1418,13 @@ private fun ChecklistPageContent(
 
     DisposableEffect(checklist.id) {
         onDispose {
+            stackedListState.draggedItemKey = null
             draggedItemId = null
             isSettlingDrop = false
             workingItems = emptyList()
+            initialWorkingItems = emptyList()
             committedOrderIds = null
+            magneticAttractor.reset()
         }
     }
 
@@ -1208,48 +1453,72 @@ private fun ChecklistPageContent(
         }
     }
 
-    val recalculateInsertionSlot = {
+    val recalculateInsertionAndMagnet: (Float) -> Unit = { rawTopY ->
         val currentDraggedId = draggedItemId
         val currentList = workingItems
         if (currentDraggedId != null && currentList.isNotEmpty()) {
             val currentIndex = currentList.indexOfFirst { it.id == currentDraggedId }
             if (currentIndex >= 0) {
-                val floatingCenterY = dragOverlayY + draggedItemHeightPx / 2f
-                val indexById = HashMap<Long, Int>(currentList.size)
-                for (i in currentList.indices) {
-                    indexById[currentList[i].id] = i
+                val requiredSlots = currentList.size + 1
+                if (slotTopsBuffer.size < requiredSlots) {
+                    slotTopsBuffer = FloatArray(maxOf(requiredSlots, slotTopsBuffer.size * 2))
                 }
-                var targetIndex = currentIndex
-                for (info in stackedListState.placedItemsInfo) {
-                    val itemId = info.key as? Long ?: continue
-                    if (itemId == currentDraggedId) continue
-                    val idx = indexById[itemId] ?: continue
-                    val itemCenterY = info.visualCenterY
-                    if (idx < currentIndex && floatingCenterY < itemCenterY) {
-                        if (idx < targetIndex) targetIndex = idx
-                    } else if (idx > currentIndex && floatingCenterY > itemCenterY) {
-                        if (idx > targetIndex) targetIndex = idx
+                if (slotCentersBuffer.size < requiredSlots) {
+                    slotCentersBuffer = FloatArray(maxOf(requiredSlots, slotCentersBuffer.size * 2))
+                }
+                val slotCount = stackedListState.fillCandidateSlotsForDraggedItem(
+                    draggedKey = currentDraggedId,
+                    draggedHeightPx = draggedItemHeightPx,
+                    outSlotTops = slotTopsBuffer,
+                    outSlotCenters = slotCentersBuffer
+                )
+                val count = minOf(currentList.size, slotCount)
+                val blendedTopY = magneticAttractor.resolveBlendedTopY(
+                    rawTopY = rawTopY,
+                    draggedHeightPx = draggedItemHeightPx,
+                    slotCount = count,
+                    slotTopsY = slotTopsBuffer,
+                    slotCentersY = slotCentersBuffer,
+                    avgSlotPitchPx = stackedListState.currentAvgSlotPitchPx
+                )
+                val minY = topOverlayInsetPxProvider().coerceAtLeast(0f)
+                val maxY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - draggedItemHeightPx)
+                    .coerceAtLeast(minY)
+                val clampedTargetY = blendedTopY.coerceIn(minY, maxY)
+                if (isReducedMotionState.value) {
+                    springTracker.snapTo(clampedTargetY)
+                } else {
+                    springTracker.setTarget(clampedTargetY)
+                }
+
+                if (magneticAttractor.canCommit()) {
+                    val targetSlotIdx = magneticAttractor.activeTargetSlotIndex
+                    if (targetSlotIdx in 0 until currentList.size && targetSlotIdx != currentIndex) {
+                        val mutable = currentList.toMutableList()
+                        val moved = mutable.removeAt(currentIndex)
+                        mutable.add(targetSlotIdx, moved)
+                        workingItems = mutable
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
-                }
-                if (targetIndex != currentIndex) {
-                    val mutable = currentList.toMutableList()
-                    val moved = mutable.removeAt(currentIndex)
-                    mutable.add(targetIndex, moved)
-                    workingItems = mutable
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                } else if (initialWorkingItems.isNotEmpty() && currentList != initialWorkingItems) {
+                    workingItems = initialWorkingItems
                 }
             }
         }
     }
 
-    // 漸變觸發區域 (48.dp) 與漸變速度 (t²) 邊緣自動捲動（動態對齊頂部進度卡底界與底部鍵盤/輸入列頂界）
+    // 單一 VSYNC 迴圈同時步進連續欠阻尼彈簧與漸變邊緣自動捲動（0 Cancellation Starvation / 0 重組）
     LaunchedEffect(draggedItemId, isSettlingDrop) {
         if (draggedItemId != null && !isSettlingDrop) {
+            springTracker.resetFrameClock()
             val maxEdgeZonePx = with(density) { 48.dp.toPx() }
             val maxSpeedPxPerSec = with(density) { 300.dp.toPx() }
             var lastFrameNanos = 0L
             while (isActive) {
                 withFrameNanos { frameNanos ->
+                    if (!isReducedMotionState.value) {
+                        springTracker.stepFrame(frameNanos)
+                    }
                     val dtSec = if (lastFrameNanos == 0L) {
                         0f
                     } else {
@@ -1279,7 +1548,7 @@ private fun ChecklistPageContent(
                         if (scrollDeltaPx != 0f) {
                             val consumed = stackedListState.dispatchRawDelta(scrollDeltaPx)
                             if (consumed != 0f) {
-                                recalculateInsertionSlot()
+                                recalculateInsertionAndMagnet(rawDragOverlayY)
                             }
                         }
                     }
@@ -1301,6 +1570,9 @@ private fun ChecklistPageContent(
                 onToggleUncheckedOnly = { viewModel.toggleShowUncheckedOnly() },
                 onReset = {
                     onCancelEdit()
+                    stagingJobs.values.forEach { it.cancel() }
+                    stagingJobs.clear()
+                    stagingCheckedItemIds = emptySet()
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     val checkedInOrder = items.filter { it.isChecked }.map { it.id }
                     if (!isReducedMotion && checkedInOrder.isNotEmpty()) {
@@ -1343,6 +1615,9 @@ private fun ChecklistPageContent(
                         ),
                         reminderButtonFocusRequester
                     )
+                },
+                onQuickChecklistReminder15m = {
+                    onQuickReminder15m(checklist.id, null)
                 },
                 onRenameChecklist = {
                     onOpenModal(
@@ -1417,7 +1692,7 @@ private fun ChecklistPageContent(
                             val matchedInfo = hitInfo ?: return@awaitEachGesture
                             val hitItemId = matchedInfo.key as? Long ?: return@awaitEachGesture
 
-                            // 命中右側六點拖曳手把：立即消費事件並開啟零延遲拖曳
+                            // 命中右側六點拖曳手把：立即消費事件並開啟零延遲拖曳與磁吸追蹤
                             down.consume()
 
                             val rowTopInContainer = matchedInfo.placedTopY
@@ -1427,19 +1702,34 @@ private fun ChecklistPageContent(
                             val maxOverlayY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - rowHeightPx)
                                 .coerceAtLeast(minOverlayY)
 
+                            stackedListState.clearOverscrollImmediate()
+                            stackedListState.clearExitAnchorLock()
+                            val initialOrder = itemsNow.toList()
+                            val startIdx = initialOrder.indexOfFirst { it.id == hitItemId }
+                            initialWorkingItems = initialOrder
+                            workingItems = initialOrder
+                            magneticAttractor.reset(initialSlotIndex = startIdx)
                             draggedItemHeightPx = rowHeightPx
-                            dragOverlayY = rowTopInContainer.coerceIn(minOverlayY, maxOverlayY)
+                            val startTopY = rowTopInContainer.coerceIn(minOverlayY, maxOverlayY)
+                            rawDragOverlayY = startTopY
+                            springTracker.snapTo(startTopY)
                             pointerYInContainerState.floatValue = down.position.y
-                            workingItems = itemsNow.toList()
+                            stackedListState.draggedItemKey = hitItemId
                             draggedItemId = hitItemId
                             onCancelEdit()
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
+                            var gestureCancelled = false
+                            var scopeDisposed = false
                             try {
                                 while (true) {
                                     val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                     val change = event.changes.firstOrNull { it.id == down.id }
-                                    if (change == null || !change.pressed) {
+                                    if (change == null) {
+                                        gestureCancelled = true
+                                        break
+                                    }
+                                    if (!change.pressed) {
                                         break
                                     }
                                     change.consume()
@@ -1448,46 +1738,75 @@ private fun ChecklistPageContent(
                                     val minY = topOverlayInsetPxProvider().coerceAtLeast(0f)
                                     val maxY = (containerHeightPx - pageBottomOverlayInsetPxProvider() - draggedItemHeightPx)
                                         .coerceAtLeast(minY)
-                                    dragOverlayY = (newPointerY - grabOffsetY).coerceIn(minY, maxY)
-                                    recalculateInsertionSlot()
+                                    val nextRawTopY = (newPointerY - grabOffsetY).coerceIn(minY, maxY)
+                                    rawDragOverlayY = nextRawTopY
+                                    recalculateInsertionAndMagnet(nextRawTopY)
                                 }
+                            } catch (e: CancellationException) {
+                                scopeDisposed = true
+                                throw e
                             } finally {
-                                val finalOrderIds = workingItems.map { it.id }
                                 val activeId = draggedItemId
-                                if (activeId != null && finalOrderIds.isNotEmpty()) {
-                                    isSettlingDrop = true
-                                    committedOrderIds = finalOrderIds
-                                    viewModel.reorderChecklistItems(
-                                        checklistId = checklist.id,
-                                        reorderedVisibleIds = finalOrderIds,
-                                        showUncheckedOnly = currentShowUncheckedOnlyState.value
-                                    )
-                                    scope.launch {
-                                        try {
-                                            overlayOffsetY.snapTo(dragOverlayY)
-                                            val targetInfo = stackedListState.placedItemsInfo
-                                                .firstOrNull { (it.key as? Long) == activeId }
-                                            val targetY = targetInfo?.placedTopY ?: dragOverlayY
-                                            if (!isReducedMotionState.value) {
-                                                overlayOffsetY.animateTo(
-                                                    targetValue = targetY,
-                                                    animationSpec = spring(
-                                                        dampingRatio = 0.8f,
-                                                        stiffness = 420f,
-                                                        visibilityThreshold = 0.5f
-                                                    )
-                                                )
-                                            }
-                                        } finally {
-                                            draggedItemId = null
-                                            isSettlingDrop = false
-                                            workingItems = emptyList()
-                                        }
-                                    }
-                                } else {
+                                val finalOrderIds = workingItems.map { it.id }
+                                val canCommitOrder = !gestureCancelled &&
+                                    magneticAttractor.canCommit() &&
+                                    finalOrderIds.isNotEmpty()
+                                if (scopeDisposed) {
+                                    stackedListState.draggedItemKey = null
                                     draggedItemId = null
                                     isSettlingDrop = false
                                     workingItems = emptyList()
+                                    initialWorkingItems = emptyList()
+                                    magneticAttractor.reset()
+                                } else if (activeId != null) {
+                                    isSettlingDrop = true
+                                    if (canCommitOrder) {
+                                        committedOrderIds = finalOrderIds
+                                        viewModel.reorderChecklistItems(
+                                            checklistId = checklist.id,
+                                            reorderedVisibleIds = finalOrderIds,
+                                            showUncheckedOnly = currentShowUncheckedOnlyState.value
+                                        )
+                                    } else if (initialWorkingItems.isNotEmpty()) {
+                                        workingItems = initialWorkingItems
+                                    }
+                                    scope.launch {
+                                        try {
+                                            val firstFrameNanos = withFrameNanos { it }
+                                            val targetY = stackedListState.resolveSlotTargetTopY(activeId)
+                                                ?: springTracker.currentValueState.floatValue
+                                            if (isReducedMotionState.value) {
+                                                springTracker.snapTo(targetY)
+                                            } else {
+                                                springTracker.setTarget(targetY)
+                                                var settled = springTracker.stepFrame(firstFrameNanos)
+                                                val settleStartNanos = firstFrameNanos
+                                                while (isActive && !settled) {
+                                                    withFrameNanos { frameNanos ->
+                                                        val elapsedNanos = frameNanos - settleStartNanos
+                                                        settled = springTracker.stepFrame(frameNanos) ||
+                                                            elapsedNanos >= 500_000_000L
+                                                    }
+                                                }
+                                                springTracker.snapTo(targetY)
+                                            }
+                                        } finally {
+                                            stackedListState.suppressNextReflowFor(activeId)
+                                            stackedListState.draggedItemKey = null
+                                            draggedItemId = null
+                                            isSettlingDrop = false
+                                            workingItems = emptyList()
+                                            initialWorkingItems = emptyList()
+                                            magneticAttractor.reset()
+                                        }
+                                    }
+                                } else {
+                                    stackedListState.draggedItemKey = null
+                                    draggedItemId = null
+                                    isSettlingDrop = false
+                                    workingItems = emptyList()
+                                    initialWorkingItems = emptyList()
+                                    magneticAttractor.reset()
                                 }
                             }
                         }
@@ -1508,12 +1827,30 @@ private fun ChecklistPageContent(
                     if (draggedItemId == item.id) {
                         val slotHeightDp = with(density) { draggedItemHeightPx.toDp() }
                             .coerceAtLeast(52.dp)
-                        DashedCapsuleEmptySlot(heightDp = slotHeightDp)
+                        DashedCapsuleEmptySlot(
+                            heightDp = slotHeightDp,
+                            attractionWeightProvider = { magneticAttractor.weightState.floatValue }
+                        )
                     } else {
                         val itemReminder = itemRemindersById[item.id]
                         CapsuleCheckItemRow(
                             item = item,
                             onToggle = {
+                                val wasChecked = item.isChecked
+                                if (showUncheckedOnly && !isReducedMotion) {
+                                    if (!wasChecked) {
+                                        stagingJobs[item.id]?.cancel()
+                                        stagingCheckedItemIds = stagingCheckedItemIds + item.id
+                                        stagingJobs[item.id] = scope.launch {
+                                            delay(220L)
+                                            stagingCheckedItemIds = stagingCheckedItemIds - item.id
+                                            stagingJobs.remove(item.id)
+                                        }
+                                    } else {
+                                        stagingJobs.remove(item.id)?.cancel()
+                                        stagingCheckedItemIds = stagingCheckedItemIds - item.id
+                                    }
+                                }
                                 viewModel.toggleItemChecked(item)
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 stackedListState.triggerNeighborRipple(
@@ -1534,6 +1871,9 @@ private fun ChecklistPageContent(
                                     null
                                 )
                             },
+                            onQuickItemReminder15m = {
+                                onQuickReminder15m(checklist.id, item.id)
+                            },
                             stackDepthProvider = { slotState.depthState.floatValue },
                             isCompressedProvider = { slotState.isCompressed },
                             onCompressedClick = {
@@ -1553,6 +1893,8 @@ private fun ChecklistPageContent(
                             onConfirmEdit = { newLabel -> onConfirmEdit(item.id, newLabel) },
                             onCancelEdit = onCancelEdit,
                             onDelete = {
+                                stagingJobs.remove(item.id)?.cancel()
+                                stagingCheckedItemIds = stagingCheckedItemIds - item.id
                                 onClearEditingIfMatches(item.id)
                                 viewModel.deleteItem(item) { deletedItem ->
                                     scope.launch {
@@ -1609,15 +1951,12 @@ private fun ChecklistPageContent(
                         onToggle = {},
                         isEditing = false,
                         isFloatingDragged = !isSettlingDrop,
+                        activeItemReminder = itemRemindersById[draggedItem.id],
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
                             .graphicsLayer {
-                                translationY = if (isSettlingDrop) {
-                                    overlayOffsetY.value
-                                } else {
-                                    dragOverlayY
-                                }
+                                translationY = springTracker.currentValueState.floatValue
                             }
                     )
                 }

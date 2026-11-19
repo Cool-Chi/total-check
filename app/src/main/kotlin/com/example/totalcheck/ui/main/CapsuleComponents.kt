@@ -89,6 +89,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -101,6 +102,7 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -120,8 +122,11 @@ import com.example.totalcheck.ui.theme.LocalThemeTransitioning
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+
+private class CheckedStateTracker(var value: Boolean)
 
 @Composable
 fun CapsuleProgressModule(
@@ -136,6 +141,7 @@ fun CapsuleProgressModule(
     onDeleteChecklist: () -> Unit,
     activeChecklistReminder: ReminderEntity? = null,
     onOpenChecklistReminder: () -> Unit = {},
+    onQuickChecklistReminder15m: () -> Unit = {},
     reminderButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     renameButtonFocusRequester: FocusRequester = remember { FocusRequester() },
     deleteButtonFocusRequester: FocusRequester = remember { FocusRequester() },
@@ -201,7 +207,9 @@ fun CapsuleProgressModule(
                         } else {
                             stringResource(R.string.progress_left_count, uncheckedCount)
                         },
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontFeatureSettings = "tnum"
+                        ),
                         fontWeight = FontWeight.ExtraBold,
                         color = accentColor,
                         modifier = Modifier.graphicsLayer {
@@ -213,7 +221,9 @@ fun CapsuleProgressModule(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = stringResource(R.string.progress_total_count, totalCount),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontFeatureSettings = "tnum"
+                        ),
                         color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
@@ -348,6 +358,10 @@ fun CapsuleProgressModule(
                     }
                     TactileButton(
                         onClick = onOpenChecklistReminder,
+                        onLongClick = onQuickChecklistReminder15m,
+                        onLongClickLabel = stringResource(R.string.a11y_quick_reminder_15m),
+                        longPressTimeoutMs = 350L,
+                        sinkScale = 0.92f,
                         modifier = Modifier
                             .weight(1f, fill = false)
                             .height(40.dp)
@@ -451,26 +465,37 @@ fun CapsuleProgressModule(
 @Composable
 fun DashedCapsuleEmptySlot(
     heightDp: Dp,
+    attractionWeightProvider: () -> Float = { 0f },
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val fillColor = colorScheme.surfaceContainerLow.copy(alpha = 0.45f)
-    val dashColor = colorScheme.primary.copy(alpha = 0.42f)
+    val baseFillColor = colorScheme.surfaceContainerLow.copy(alpha = 0.45f)
+    val activeFillColor = colorScheme.primaryContainer.copy(alpha = 0.38f)
+    val baseDashColor = colorScheme.primary.copy(alpha = 0.40f)
+    val activeDashColor = colorScheme.primary.copy(alpha = 0.92f)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(heightDp)
+            .graphicsLayer {
+                val w = attractionWeightProvider().coerceIn(0f, 1f)
+                val s = lerp(0.985f, 1f, w)
+                scaleX = s
+                scaleY = s
+                transformOrigin = TransformOrigin(0.5f, 0.5f)
+            }
             .clip(RoundedCornerShape(24.dp))
             .drawBehind {
+                val w = attractionWeightProvider().coerceIn(0f, 1f)
                 val r = 24.dp.toPx()
                 val corner = CornerRadius(r, r)
                 drawRoundRect(
-                    color = fillColor,
+                    color = lerpColor(baseFillColor, activeFillColor, w),
                     cornerRadius = corner
                 )
-                val strokePx = 1.5.dp.toPx()
+                val strokePx = lerp(1.5f, 2.25f, w).dp.toPx()
                 drawRoundRect(
-                    color = dashColor,
+                    color = lerpColor(baseDashColor, activeDashColor, w),
                     cornerRadius = corner,
                     style = Stroke(
                         width = strokePx,
@@ -489,6 +514,7 @@ fun CapsuleCheckItemRow(
     isFloatingDragged: Boolean = false,
     activeItemReminder: ReminderEntity? = null,
     onOpenItemReminder: () -> Unit = {},
+    onQuickItemReminder15m: () -> Unit = {},
     stackDepthProvider: () -> Float = { 0f },
     isCompressedProvider: () -> Boolean = { false },
     onCompressedClick: (() -> Unit)? = null,
@@ -514,6 +540,7 @@ fun CapsuleCheckItemRow(
     val scope = rememberCoroutineScope()
     val isReducedMotion = LocalReducedMotion.current
     val currentOnToggle by rememberUpdatedState(onToggle)
+    val currentOnQuickItemReminder15m by rememberUpdatedState(onQuickItemReminder15m)
     val currentIsCompressedProvider by rememberUpdatedState(isCompressedProvider)
     val currentOnCompressedClick by rememberUpdatedState(onCompressedClick)
     val currentOnDelete by rememberUpdatedState(onDelete)
@@ -530,74 +557,109 @@ fun CapsuleCheckItemRow(
     }
     var lastConsumedWaveKey by remember(item.id) { mutableIntStateOf(0) }
     var isWaveWaitingOrAnimating by remember(item.id) { mutableStateOf(false) }
-    var previousIsChecked by remember(item.id) { mutableStateOf(item.isChecked) }
+    val previousCheckedTracker = remember(item.id) { CheckedStateTracker(item.isChecked) }
     val wavePulseScale = remember(item.id) { Animatable(1f) }
     val checkedProgress = remember(item.id) {
         Animatable(if (visualChecked && !isEditing) 1f else 0f)
     }
 
+    val triggerToggleOptimistic: () -> Unit = {
+        isWaveWaitingOrAnimating = false
+        visualChecked = !visualChecked
+        currentOnToggle()
+    }
+
     if (resetWaveKey > 0) {
         LaunchedEffect(resetWaveKey) {
             val delayMs = resetDelayMs
-            if (resetWaveKey != lastConsumedWaveKey && delayMs != null && !isReducedMotion) {
-                val elapsed = (android.os.SystemClock.uptimeMillis() - resetTriggeredAtMillis).coerceAtLeast(0L)
-                if (elapsed < delayMs + 450L) {
-                    lastConsumedWaveKey = resetWaveKey
-                    isWaveWaitingOrAnimating = true
-                    visualChecked = true
-                    wavePulseScale.snapTo(1f)
-                    val remainingDelay = (delayMs.toLong() - elapsed).coerceAtLeast(0L)
-                    if (remainingDelay > 0L) {
-                        delay(remainingDelay)
+            if (resetWaveKey != lastConsumedWaveKey) {
+                if (delayMs != null && !isReducedMotion) {
+                    val elapsed = (android.os.SystemClock.uptimeMillis() - resetTriggeredAtMillis).coerceAtLeast(0L)
+                    if (elapsed < delayMs + 450L) {
+                        lastConsumedWaveKey = resetWaveKey
+                        isWaveWaitingOrAnimating = true
+                        visualChecked = true
+                        wavePulseScale.snapTo(1f)
+                        val remainingDelay = (delayMs.toLong() - elapsed).coerceAtLeast(0L)
+                        if (remainingDelay > 0L) {
+                            delay(remainingDelay)
+                        }
+                        if (!isWaveWaitingOrAnimating) return@LaunchedEffect
+                        visualChecked = false
+                        isWaveWaitingOrAnimating = false
+                        wavePulseScale.animateTo(
+                            targetValue = 1.045f,
+                            animationSpec = spring(dampingRatio = 0.7f, stiffness = 900f)
+                        )
+                        wavePulseScale.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.45f, stiffness = 360f)
+                        )
+                    } else {
+                        lastConsumedWaveKey = resetWaveKey
                     }
-                    if (!isWaveWaitingOrAnimating) return@LaunchedEffect
-                    visualChecked = false
-                    isWaveWaitingOrAnimating = false
-                    wavePulseScale.animateTo(
-                        targetValue = 1.045f,
-                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 900f)
-                    )
-                    wavePulseScale.animateTo(
-                        targetValue = 1f,
-                        animationSpec = spring(dampingRatio = 0.45f, stiffness = 360f)
-                    )
+                } else {
+                    lastConsumedWaveKey = resetWaveKey
                 }
             }
         }
     }
 
-    LaunchedEffect(item.isChecked) {
-        val wasChecked = previousIsChecked
-        previousIsChecked = item.isChecked
-        if (item.isChecked) {
-            if (!wasChecked || !isWaveWaitingOrAnimating) {
-                isWaveWaitingOrAnimating = false
-                visualChecked = true
-                wavePulseScale.snapTo(1f)
-            }
-        } else {
-            val expectingWave = !isReducedMotion &&
-                resetWaveKey > 0 &&
-                resetDelayMs != null &&
-                (resetWaveKey != lastConsumedWaveKey || isWaveWaitingOrAnimating)
-            if (!expectingWave) {
-                visualChecked = false
+    if (item.isChecked != previousCheckedTracker.value || isWaveWaitingOrAnimating || isInActiveWave) {
+        LaunchedEffect(item.isChecked) {
+            val wasChecked = previousCheckedTracker.value
+            previousCheckedTracker.value = item.isChecked
+            if (item.isChecked) {
+                if (!wasChecked || !isWaveWaitingOrAnimating) {
+                    isWaveWaitingOrAnimating = false
+                    visualChecked = true
+                    wavePulseScale.snapTo(1f)
+                }
+            } else {
+                val elapsedSinceReset = if (resetTriggeredAtMillis > 0L) {
+                    (android.os.SystemClock.uptimeMillis() - resetTriggeredAtMillis).coerceAtLeast(0L)
+                } else {
+                    Long.MAX_VALUE
+                }
+                val expectingWave = !isReducedMotion &&
+                    resetWaveKey > 0 &&
+                    resetDelayMs != null &&
+                    elapsedSinceReset < (resetDelayMs + 450L) &&
+                    (resetWaveKey != lastConsumedWaveKey || isWaveWaitingOrAnimating)
+                if (!expectingWave) {
+                    isWaveWaitingOrAnimating = false
+                    visualChecked = false
+                }
             }
         }
     }
 
     val targetCheckedProgress = if (visualChecked && !isEditing) 1f else 0f
-    LaunchedEffect(targetCheckedProgress, isReducedMotion) {
-        if (isReducedMotion) {
-            checkedProgress.snapTo(targetCheckedProgress)
-        } else if (
-            checkedProgress.targetValue != targetCheckedProgress ||
-            checkedProgress.value != targetCheckedProgress
-        ) {
-            checkedProgress.animateTo(
-                targetValue = targetCheckedProgress,
-                animationSpec = spring(dampingRatio = 0.8f, stiffness = 380f)
-            )
+    val needsCheckedProgressSync = abs(checkedProgress.targetValue - targetCheckedProgress) > 0.0001f ||
+        abs(checkedProgress.value - targetCheckedProgress) > 0.0005f
+    if (needsCheckedProgressSync) {
+        LaunchedEffect(targetCheckedProgress, isReducedMotion) {
+            if (isReducedMotion) {
+                checkedProgress.snapTo(targetCheckedProgress)
+            } else if (targetCheckedProgress > checkedProgress.value) {
+                checkedProgress.animateTo(
+                    targetValue = targetCheckedProgress,
+                    animationSpec = spring(
+                        dampingRatio = 0.68f,
+                        stiffness = 460f,
+                        visibilityThreshold = 0.001f
+                    )
+                )
+            } else {
+                checkedProgress.animateTo(
+                    targetValue = targetCheckedProgress,
+                    animationSpec = spring(
+                        dampingRatio = 0.88f,
+                        stiffness = 480f,
+                        visibilityThreshold = 0.001f
+                    )
+                )
+            }
         }
     }
 
@@ -691,6 +753,8 @@ fun CapsuleCheckItemRow(
     val dragReorderDescription = stringResource(R.string.cd_drag_reorder_item, item.label)
     val moveUpActionLabel = stringResource(R.string.a11y_move_up)
     val moveDownActionLabel = stringResource(R.string.a11y_move_down)
+    val quickReminder15mLabel = stringResource(R.string.a11y_quick_reminder_15m)
+    val itemReminderActionLabel = stringResource(R.string.cd_item_reminder, item.label)
 
     Box(
         modifier = modifier
@@ -794,7 +858,7 @@ fun CapsuleCheckItemRow(
                                 if (currentIsCompressedProvider()) {
                                     currentOnCompressedClick?.invoke()
                                 } else {
-                                    currentOnToggle()
+                                    triggerToggleOptimistic()
                                 }
                                 true
                             }
@@ -811,9 +875,21 @@ fun CapsuleCheckItemRow(
                             if (currentIsCompressedProvider()) {
                                 currentOnCompressedClick?.invoke()
                             } else {
-                                currentOnToggle()
+                                triggerToggleOptimistic()
                             }
                             true
+                        }
+                        if (!currentIsCompressedProvider()) {
+                            customActions = listOf(
+                                CustomAccessibilityAction(itemReminderActionLabel) {
+                                    onOpenItemReminder()
+                                    true
+                                },
+                                CustomAccessibilityAction(quickReminder15mLabel) {
+                                    currentOnQuickItemReminder15m()
+                                    true
+                                }
+                            )
                         }
                     }
                 }
@@ -896,7 +972,7 @@ fun CapsuleCheckItemRow(
                                     currentHoldJob.cancel()
                                     val movedDist = hypot(pos.x - down.position.x, pos.y - down.position.y)
                                     if (movedDist <= touchSlop) {
-                                        currentOnToggle()
+                                        triggerToggleOptimistic()
                                     }
                                 }
                                 break
@@ -1058,6 +1134,31 @@ fun CapsuleCheckItemRow(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .slideOutCancelClickable(
+                                        enabled = !isDeleting,
+                                        shape = RoundedCornerShape(6.dp),
+                                        sinkScale = 0.96f,
+                                        longPressTimeoutMs = 350L,
+                                        onLongClickLabel = quickReminder15mLabel,
+                                        onPressChanged = { pressed -> isChildButtonPressed = pressed },
+                                        onLongClick = {
+                                            if (currentIsCompressedProvider()) {
+                                                currentOnCompressedClick?.invoke()
+                                            } else {
+                                                currentOnQuickItemReminder15m()
+                                            }
+                                        },
+                                        onClick = {
+                                            if (currentIsCompressedProvider()) {
+                                                currentOnCompressedClick?.invoke()
+                                            } else {
+                                                onOpenItemReminder()
+                                            }
+                                        }
+                                    )
+                                    .padding(horizontal = 2.dp, vertical = 1.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
@@ -1092,78 +1193,201 @@ fun CapsuleCheckItemRow(
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
+                    val badgeWidthPx = with(density) { 64.dp.roundToPx() }
+                    val badgeHeightPx = with(density) { 28.dp.roundToPx() }
+                    val badgeIconGapPx = with(density) { 3.dp.toPx() }
+                    val badgeUnboundedConstraints = remember { Constraints() }
+                    var isBellPressed by remember(item.id) { mutableStateOf(false) }
+                    val bellPressSinkScale by animateFloatAsState(
+                        targetValue = if (isBellPressed && !visualChecked && !isReducedMotion) 0.92f else 1f,
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 680f),
+                        label = "capsuleBellSinkScale"
+                    )
+
                     Box(
-                        modifier = Modifier
-                            .width(74.dp)
-                            .height(28.dp)
-                            .graphicsLayer {
-                                val badgeScale = 1f + (wavePulseScale.value - 1f) * 1.8f
-                                scaleX = badgeScale
-                                scaleY = badgeScale
-                            }
-                            .drawBehind {
-                                val r = size.height / 2f
-                                drawRoundRect(
-                                    color = lerpColor(uncheckedBadgeBgColor, checkedBadgeBgColor, checkedProgress.value.coerceIn(0f, 1f)),
-                                    cornerRadius = CornerRadius(r, r)
-                                )
-                            },
+                        modifier = Modifier.height(32.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
+                        Layout(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer { alpha = checkedProgress.value.coerceIn(0f, 1f) },
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = statusCheckedLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = colorScheme.onSurfaceVariant
+                                .width(64.dp)
+                                .height(28.dp)
+                                .graphicsLayer {
+                                    val badgeScale = (1f + (wavePulseScale.value - 1f) * 1.8f) * bellPressSinkScale
+                                    scaleX = badgeScale
+                                    scaleY = badgeScale
+                                    clip = true
+                                    shape = RoundedCornerShape(50)
+                                }
+                                .drawBehind {
+                                    val r = size.height / 2f
+                                    drawRoundRect(
+                                        color = lerpColor(
+                                            uncheckedBadgeBgColor,
+                                            checkedBadgeBgColor,
+                                            checkedProgress.value.coerceIn(0f, 1f)
+                                        ),
+                                        cornerRadius = CornerRadius(r, r)
+                                    )
+                                },
+                            content = {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(13.5.dp)
+                                )
+                                Text(
+                                    text = statusUncheckedLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colorScheme.onTertiaryContainer,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = statusCheckedLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                                Icon(
+                                    imageVector = if (hasActiveReminder) {
+                                        Icons.Rounded.NotificationsActive
+                                    } else {
+                                        Icons.Rounded.NotificationsNone
+                                    },
+                                    contentDescription = null,
+                                    tint = if (hasActiveReminder) {
+                                        colorScheme.primary
+                                    } else {
+                                        colorScheme.onTertiaryContainer
+                                    },
+                                    modifier = Modifier.size(13.5.dp)
+                                )
+                            }
+                        ) { badgeMeasurables, _ ->
+                            val checkPlaceable = badgeMeasurables[0].measure(badgeUnboundedConstraints)
+                            val uncheckedTextPlaceable = badgeMeasurables[1].measure(badgeUnboundedConstraints)
+                            val checkedTextPlaceable = badgeMeasurables[2].measure(badgeUnboundedConstraints)
+                            val bellPlaceable = badgeMeasurables[3].measure(badgeUnboundedConstraints)
+
+                            // 外層膠囊容器尺寸嚴格鎖定為 64.dp x 28.dp，整合待備鈴鐺與已備對勾雙向滑動轉場
+                            layout(badgeWidthPx, badgeHeightPx) {
+                                val rawT = checkedProgress.value
+                                val clampedT = rawT.coerceIn(0f, 1f)
+                                val spatialT = rawT.coerceIn(-0.04f, 1.08f)
+
+                                val leftFullSlotPx = checkPlaceable.width.toFloat() + badgeIconGapPx
+                                val rightFullSlotPx = bellPlaceable.width.toFloat() + badgeIconGapPx
+                                val leftExpandedSlotPx = leftFullSlotPx * spatialT.coerceAtLeast(0f)
+                                val rightExpandedSlotPx = rightFullSlotPx * (1f - spatialT).coerceAtLeast(0f)
+
+                                val currentTextWidth = lerp(
+                                    uncheckedTextPlaceable.width.toFloat(),
+                                    checkedTextPlaceable.width.toFloat(),
+                                    clampedT
+                                )
+                                val totalGroupWidth = leftExpandedSlotPx + currentTextWidth + rightExpandedSlotPx
+                                val groupStartX = (badgeWidthPx.toFloat() - totalGroupWidth) * 0.5f
+                                val textSlotLeftX = groupStartX + leftExpandedSlotPx
+
+                                if (clampedT > 0.01f) {
+                                    // 已備：對勾從文字左側推入展開，切回待備時向文字左側收合淡出
+                                    val checkX = (textSlotLeftX - leftFullSlotPx).roundToInt()
+                                    val checkY = (badgeHeightPx - checkPlaceable.height) / 2
+                                    val checkScale = lerp(0.38f, 1f, spatialT).coerceAtLeast(0.2f)
+                                    val checkAlpha = ((clampedT - 0.04f) / 0.78f).coerceIn(0f, 1f)
+                                    checkPlaceable.placeRelativeWithLayer(checkX, checkY) {
+                                        alpha = checkAlpha
+                                        scaleX = checkScale
+                                        scaleY = checkScale
+                                        transformOrigin = TransformOrigin(0.25f, 0.5f)
+                                    }
+                                }
+
+                                val uncheckedAlpha = (1f - clampedT * 1.15f).coerceIn(0f, 1f)
+                                if (uncheckedAlpha > 0.005f) {
+                                    val uncheckedX = (textSlotLeftX + (currentTextWidth - uncheckedTextPlaceable.width) * 0.5f)
+                                        .roundToInt()
+                                    val uncheckedY = (badgeHeightPx - uncheckedTextPlaceable.height) / 2
+                                    uncheckedTextPlaceable.placeRelativeWithLayer(uncheckedX, uncheckedY) {
+                                        alpha = uncheckedAlpha
+                                    }
+                                }
+
+                                val checkedAlpha = ((clampedT - 0.12f) / 0.88f).coerceIn(0f, 1f)
+                                if (checkedAlpha > 0.005f) {
+                                    val checkedX = (textSlotLeftX + (currentTextWidth - checkedTextPlaceable.width) * 0.5f)
+                                        .roundToInt()
+                                    val checkedY = (badgeHeightPx - checkedTextPlaceable.height) / 2
+                                    checkedTextPlaceable.placeRelativeWithLayer(checkedX, checkedY) {
+                                        alpha = checkedAlpha
+                                    }
+                                }
+
+                                val reverseT = 1f - clampedT
+                                if (reverseT > 0.01f) {
+                                    // 待備：鈴鐺從文字右側滑入展開，轉為已備時向右側收合滑出
+                                    val reverseSpatialT = 1f - spatialT
+                                    val bellX = (textSlotLeftX + currentTextWidth + badgeIconGapPx).roundToInt()
+                                    val bellY = (badgeHeightPx - bellPlaceable.height) / 2
+                                    val bellScale = lerp(0.38f, 1f, reverseSpatialT).coerceAtLeast(0.2f)
+                                    val bellAlpha = ((reverseT - 0.04f) / 0.78f).coerceIn(0f, 1f)
+                                    bellPlaceable.placeRelativeWithLayer(bellX, bellY) {
+                                        alpha = bellAlpha
+                                        scaleX = bellScale
+                                        scaleY = bellScale
+                                        transformOrigin = TransformOrigin(0.75f, 0.5f)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!visualChecked) {
+                            val itemReminderCd = stringResource(R.string.cd_item_reminder, displayedLabel)
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .width(32.dp)
+                                    .height(32.dp)
+                                    .testTag("reminder_item_button_${item.id}")
+                                    .semantics {
+                                        contentDescription = itemReminderCd
+                                    }
+                                    .slideOutCancelClickable(
+                                        enabled = !isEditing && !isDeleting,
+                                        shape = RoundedCornerShape(
+                                            topEndPercent = 50,
+                                            bottomEndPercent = 50,
+                                            topStartPercent = 25,
+                                            bottomStartPercent = 25
+                                        ),
+                                        sinkScale = 1f,
+                                        maxDeepenAlpha = 0f,
+                                        longPressTimeoutMs = 350L,
+                                        onLongClickLabel = quickReminder15mLabel,
+                                        onPressChanged = { pressed ->
+                                            isBellPressed = pressed
+                                            isChildButtonPressed = pressed
+                                        },
+                                        onLongClick = {
+                                            if (currentIsCompressedProvider()) {
+                                                currentOnCompressedClick?.invoke()
+                                            } else {
+                                                currentOnQuickItemReminder15m()
+                                            }
+                                        },
+                                        onClick = {
+                                            if (currentIsCompressedProvider()) {
+                                                currentOnCompressedClick?.invoke()
+                                            } else {
+                                                onOpenItemReminder()
+                                            }
+                                        }
+                                    )
                             )
                         }
-                        Text(
-                            text = statusUncheckedLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = colorScheme.onTertiaryContainer,
-                            modifier = Modifier.graphicsLayer {
-                                alpha = (1f - checkedProgress.value).coerceIn(0f, 1f)
-                            }
-                        )
-                    }
-                    TactileIconButton(
-                        onClick = {
-                            if (currentIsCompressedProvider()) {
-                                currentOnCompressedClick?.invoke()
-                            } else {
-                                onOpenItemReminder()
-                            }
-                        },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("reminder_item_button_${item.id}"),
-                        contentColor = if (hasActiveReminder) colorScheme.primary else colorScheme.onSurfaceVariant,
-                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
-                    ) {
-                        Icon(
-                            imageVector = if (hasActiveReminder) {
-                                Icons.Rounded.NotificationsActive
-                            } else {
-                                Icons.Rounded.NotificationsNone
-                            },
-                            contentDescription = stringResource(R.string.cd_item_reminder, displayedLabel),
-                            modifier = Modifier.size(17.dp)
-                        )
                     }
                     TactileIconButton(
                         onClick = {
