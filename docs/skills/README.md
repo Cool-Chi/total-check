@@ -17,6 +17,7 @@
 | 11 | Spring Stepper Progress<br>進度條物理過衝回彈 | [spring-stepper-progress](spring-stepper-progress/SKILL.md) | 進度 `ζ0.65/k320`（clamp 0..1）；過衝形變 `x0.08/y0.45`；徽章 `1.18/0.90` → `ζ0.4/k420` | 任務/步驟/上傳進度條 |
 | 12 | Hold-to-Delete Perimeter Ring<br>長按外圈進度環刪除 | [hold-to-delete-perimeter-ring](hold-to-delete-perimeter-ring/SKILL.md) | 按住 `150ms`；填滿 `1000ms` 線性；退回 `≤300ms`（80~300）；退出 `160ms` / `0.88f`；`PathMeasure` | 免對話框的危險操作 |
 | 13 | Neighbor Ripple Wave<br>鄰近項目波紋連動 | [neighbor-ripple-wave](neighbor-ripple-wave/SKILL.md) | 層延遲 `35ms`；持續 `320ms`；衰減 `exp(−0.48(d−1))`；最大距離 `9`；同時 `3` 波；推移 `6.dp` | 勾選/開關列表的連動回饋 |
+| 14 | Magnetic Attraction<br>磁吸效果 | [magnetic-attraction](magnetic-attraction/SKILL.md) | 遲滯半徑 `enter`/`exit=1.25×`；權重 `(1−d/r)^1.6`；混合後 `ζ0.85/k520` 阻尼追隨；`w≥0.35` 提交 | 拖放目標、吸附槽位、對齊輔助 |
 
 ## 通用約定
 
