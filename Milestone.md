@@ -8,7 +8,7 @@
 - **資料與狀態**：Room `2.8.5`（`AppDatabase` 單例 + `ChecklistRepository`）、Preferences DataStore `1.3.0`（`UserPreferencesRepository`）、`MainViewModel`（`StateFlow`）。
 - **核心設計**：風格 C（`24.dp` 觸感膠囊模組、大型進度數字、飽和色「待備 / ✓ 已備」標籤）、原地勾選狀態轉場（不隨勾選沉底）。
 
-## 2. 已完成里程碑（`v0.0.1` ~ `v0.18.0`）
+## 2. 已完成里程碑（`v0.0.1` ~ `v0.19.0`）
 
 | 版本標籤 | 里程碑 | 核心交付內容 |
 |---|---|---|
@@ -21,21 +21,21 @@
 | `v0.11.0` | **M6（頂部導覽與全域交互優化）** | `ExpandingChecklistTabBar` 長按拖曳重排、`SlideOutCancelModifier`（`0.94f` 下沉與 `44.dp` 滑出取消）、`ScopedModalOverlay`（記憶鍵盤高度首幀零跳動）、邊界手風琴過捲動（Overscroll Accordion）與三語系資源 |
 | `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析與快速匯入）** | 高容錯雙模式解析器 `ChecklistTextParser`、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（`LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調）及 App 圖標 |
 | `v0.13.0` ~ `v0.16.0` | **M8（原生 Direct RemoteViews 雙桌面小工具與雙軌主題同步）** | 以原生 `DirectWidgetRenderer` 實作「工具清單網格（`2x2+` 三級響應式 + `<ListView>`）」與「清單極簡計數條（`2x1~4x1`）」；按 `appWidgetId` 隔離多實例狀態；`WidgetThemePalette` 無反射同步四象限主題色彩；`260ms` 水波紋延遲合併、底部空白列點擊入 App 與 `+ 新增` 自動聚焦鍵盤 |
-| `v0.17.0` ~ `v0.18.0` | **M9（智慧清點提醒與 3D 時間互動）** | Part 1（`v0.17.0`）：Room `v1 → v2`（`reminders`）、`AlarmManager` 精準排程與智慧過濾通知閉環、雙桌面 Widget 提醒標記；Part 2（`v0.18.0`）：**3D 時間滾輪**（`TactileDrumWheel`）、四碼鍵盤直輸、**時間快捷與週期列**與 `64.dp` **項目狀態窗・提醒面**鈴鐺滑入整合動效 |
+| `v0.17.0` ~ `v0.19.0` | **M9（智慧清點提醒、體驗精雕與自動復原架構）** | 完成 Room `v1 → v4` 無損升級（`reminders`、`isArchived`、時間戳擴充欄位與 `item_status_logs`）、`TactileDrumWheel` 3D 時間選擇器與四碼鍵盤直輸、單品提醒／自動復原雙模式 `LiquidTabBar`、項目封存與檢索、左滑置底、連刪加速與資訊卡純圖示統一 |
 
 ## 3. 當前關鍵檔案結構
 ```text
 app/src/main/kotlin/com/example/totalcheck/
 ├── MainActivity.kt                        # ThemeConfig? 延遲首幀 + SystemBarStyle + RadialThemeTransitionContainer + Widget/Notification Intent 攔截
 ├── data/
-│   ├── local/                             # AppDatabase (Singleton), ChecklistEntity, CheckItemEntity, ReminderEntity (M9), ChecklistDao, ReminderDao (M9)
+│   ├── local/                             # AppDatabase (v4 Singleton + MIGRATION_1_2/2_3/3_4), ChecklistEntity, CheckItemEntity, ReminderEntity, ItemStatusLogEntity, ChecklistDao, ReminderDao, ItemStatusLogDao
 │   ├── parser/ChecklistTextParser.kt      # 單行與多行 Markdown/表格/CSV/TSV/JSON 高容錯清單解析引擎
 │   ├── preferences/UserPreferencesRepository.kt  # DataStore (ThemeConfig + 按 appWidgetId 隔離之 Widget 狀態)
-│   ├── reminder/                          # (M9 新增) ReminderScheduler, NotificationHelper, ReminderBroadcastReceiver, ReminderBootReceiver
-│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 提醒排程連動 + WidgetSyncManager 通知
+│   ├── reminder/                          # ReminderScheduler, NotificationHelper, ReminderBroadcastReceiver, ReminderBootReceiver (支援 REMINDER 與 AUTO_RESTORE)
+│   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 狀態異動紀錄 + 提醒/自動復原排程連動 + WidgetSyncManager 通知
 │   └── widget/                            # WidgetSyncManager, WidgetThemePalette, DirectWidgetRenderer, TotalCheckWidgetReceiver, TotalCheckCounterWidgetReceiver, TotalCheckWidgetViewsService
 └── ui/
-    ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ReminderConfigContent, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
+    ├── main/                              # MainViewModel, ChecklistFilterState, TotalCheckScreen, CapsuleComponents, ReminderConfigContent, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
 
 ```
@@ -86,8 +86,23 @@ M9 採開放式多階段迭代架構，分為 **Part 1（功能基底與系統�
 
 ### 🔹 M9 - Part 2：頂級時間互動與物理動效打磨（`v0.18.0`，已完成）
 
-* 實作 `TactileDrumWheel` **3D 時間滾輪**（含點擊選中時間直接輸入四位數字、星期循環 Tab 與快速時間偏移按鈕 `+15m` / `+1h` / `+4h` / `Now`）與物理彈簧回饋，並重構**項目狀態窗・提醒面**寬度至 `64.dp` 與鈴鐺滑入整合排版（支援長按快設 15 分鐘提醒）。
+* 實作 `TactileDrumWheel` **3D 時間滾輪**（含點擊選中時間直接輸入四位數字、星期循環 Tab 與快速時間偏移按鈕 `+15m` / `+1h` / `+4h` / `Now`）與物理彈簧回饋，並重構**項目狀態窗・提醒面**寬度至 `64.dp` 與鈴鐺滑入整合排版。
 
-### 🔹 M9 - Part 3+：更多進階提醒與清單擴充功能（預留迭代）
+### 🔹 M9 - Part 3：交互效率極致優化、封存檢索與自動復原（`v0.19.0`，已完成，十項修改簡要紀錄）
 
-* 依使用者後續提出的 M9 延伸需求持續擴充。
+1. **加速長按刪除與連續刪除遞減機制**：長按刪除改為 `120ms` 起環 + `800ms` 基準填滿，於 `4 秒` 內連續刪除每筆遞減 `100ms`（最低 `450ms`），大幅提升批量清理效率。
+2. **狀態膠囊「待備」點擊區拓展**：當項目處於「待備」狀態時，整個 `64.dp` 狀態膠囊整合為單品清點提醒設定入口；處於「✓ 已備」狀態時，點擊膠囊維持切換勾選狀態以防誤觸。
+3. **狀態膠囊長按循環管理（快設 / 略過一次 / 取消）**：無提醒時長按狀態膠囊（或待備狀態對應區）快設 15 分鐘後提醒；已有單次提醒時長按即取消；若為週期性提醒，首次長按推進至下一週期觸發日並於膠囊與徽章顯示「已略過」提示，再次長按則完全關閉提醒。
+4. **拖曳手把左滑移至列表底部**：按住右側六點拖曳手把向左滑動超過 `56.dp` 後放手，立即將該項目移動至清單底部，並於元件內預留 `DragSwipeBottomTransitionSpec` 過渡動畫介面供後續套用專業物理動效。
+5. **項目行內封存與「已封存項目」檢索面板**：項目僅於點擊鉛筆進入行內編輯模式時顯示封存按鈕（`isArchived = true`），封存瞬間透過錨點交接與凍結鍵盤確保清單不亂跳動；資訊卡提醒按鈕左側新增 `40.dp` 封存按鈕，開啟初版「已封存項目」面板提供瀏覽、單項還原與單項永久刪除（封存期間自動停用所屬排程，還原時復原）。
+6. **資訊卡「篩選」與「提醒」按鈕純圖示統一**：移除資訊卡「只看未帶」與「提醒」按鈕文字，統一為 `40.dp` 圓形純圖示按鈕並對齊改名／刪除按鈕樣式，依容器高亮色與圖示狀態區分啟用狀態。
+7. **重新定義「篩選」按鈕與可擴充狀態架構**：原「只看未帶」正式定義為「篩選」按鈕，建立獨立 `ChecklistFilterState`（涵蓋 `onlyUnchecked`、`selectedTags`、`selectedCategory`、`minPriority`）並將清單項目過濾邏輯遷移至該狀態模型，保留點擊直接切換未帶篩選與未來擴充能力。
+8. **項目時間戳、擴充欄位與狀態異動紀錄表（Room v4，零 UI 更動）**：於 `CheckItemEntity` 新增 `createdAt`、`updatedAt`、`lastCheckedAt`、`archivedAt`、`tags`、`note`、`quantity`、`priority`，並新增獨立 `item_status_logs`（`ItemStatusLogEntity` / `ItemStatusLogDao`）由 `ChecklistRepository` 自動記錄建立、勾選／取消、改名、封存／還原、自動復原、重置與排程異動（`MIGRATION_3_4` 無損升級，現有 UI 保持不變）。
+9. **長按刪除進度環套用資訊卡刪除按鈕填充色**：將 `Hold-to-Delete` 外框進度環填充色統一改採資訊卡刪除按鈕內部填充色（`colorScheme.errorContainer.copy(alpha = 0.72f)`），強化整體破壞性操作之視覺語意一致性。
+10. **定時週期項目自動復原功能**：於 `ReminderEntity` 加入 `scheduleKind`（`"REMINDER" | "AUTO_RESTORE"`）複用 `AlarmManager` 精確排程與 `TactileDrumWheel` 滾輪／週期選擇；單品彈窗頂部改用 `LiquidTabBar` 切換「清點提醒」與「自動復原」並各自保留編輯草稿；到點時靜默將項目恢復為待備、寫入 `AUTO_RESTORED` 紀錄並同步 Widget（不推送通知），已啟用自動復原之項目在主列表**僅將外框與左側指示條改為藍色（`primary`）**，不額外添加徽章。
+
+### 🔹 後續待辦方向（M10+ 預留）
+* 標籤／分類進階篩選面板（對接 `ChecklistFilterState` 與 `tags` / `category` / `priority`）。
+* 左滑置底視覺回饋與過渡動畫（實作 `DragSwipeBottomTransitionSpec`）。
+* 項目歷程統計檢視與清單匯出備份（Markdown / CSV）。
+

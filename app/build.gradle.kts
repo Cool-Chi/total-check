@@ -21,8 +21,8 @@ android {
     applicationId = "com.example.totalcheck"
     minSdk = 26
     targetSdk = 36
-    versionCode = 7
-    versionName = "0.18.0"
+    versionCode = 8
+    versionName = "0.19.0"
   }
 
   val rootDebugKeystore = rootProject.file("debug.keystore")
