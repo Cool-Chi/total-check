@@ -8,7 +8,7 @@
 - **資料與狀態**：Room `2.8.5`（`AppDatabase` 單例 + `ChecklistRepository`）、Preferences DataStore `1.3.0`（`UserPreferencesRepository`）、`MainViewModel`（`StateFlow`）。
 - **核心設計**：風格 C（`24.dp` 觸感膠囊模組、大型進度數字、飽和色「待備 / ✓ 已備」標籤）、原地勾選狀態轉場（不隨勾選沉底）。
 
-## 2. 已完成里程碑（`v0.0.1` ~ `v0.16.0`）
+## 2. 已完成里程碑（`v0.0.1` ~ `v0.18.0`）
 
 | 版本標籤 | 里程碑 | 核心交付內容 |
 |---|---|---|
@@ -21,6 +21,7 @@
 | `v0.11.0` | **M6（頂部導覽與全域交互優化）** | `ExpandingChecklistTabBar` 長按拖曳重排、`SlideOutCancelModifier`（`0.94f` 下沉與 `44.dp` 滑出取消）、`ScopedModalOverlay`（記憶鍵盤高度首幀零跳動）、邊界手風琴過捲動（Overscroll Accordion）與三語系資源 |
 | `v0.12.0` ~ `v0.12.1` | **M7（格式文檔解析與快速匯入）** | 高容錯雙模式解析器 `ChecklistTextParser`、`ScopedModalOverlay`「空白清單 / 快速匯入」雙模態切換（`LiquidTabBar`、AI 提示詞卡、剪貼簿貼上、`.txt`/`.md`/`.csv` 讀取、0 延遲即時預覽微調）及 App 圖標 |
 | `v0.13.0` ~ `v0.16.0` | **M8（原生 Direct RemoteViews 雙桌面小工具與雙軌主題同步）** | 以原生 `DirectWidgetRenderer` 實作「工具清單網格（`2x2+` 三級響應式 + `<ListView>`）」與「清單極簡計數條（`2x1~4x1`）」；按 `appWidgetId` 隔離多實例狀態；`WidgetThemePalette` 無反射同步四象限主題色彩；`260ms` 水波紋延遲合併、底部空白列點擊入 App 與 `+ 新增` 自動聚焦鍵盤 |
+| `v0.17.0` ~ `v0.18.0` | **M9（智慧清點提醒與 3D 時間互動）** | Part 1（`v0.17.0`）：Room `v1 → v2`（`reminders`）、`AlarmManager` 精準排程與智慧過濾通知閉環、雙桌面 Widget 提醒標記；Part 2（`v0.18.0`）：**3D 時間滾輪**（`TactileDrumWheel`）、四碼鍵盤直輸、**時間快捷與週期列**與 `64.dp` **項目狀態窗・提醒面**鈴鐺滑入整合動效 |
 
 ## 3. 當前關鍵檔案結構
 ```text
@@ -34,7 +35,7 @@ app/src/main/kotlin/com/example/totalcheck/
 │   ├── repository/ChecklistRepository.kt  # 封裝 DAO 寫入 + 提醒排程連動 + WidgetSyncManager 通知
 │   └── widget/                            # WidgetSyncManager, WidgetThemePalette, DirectWidgetRenderer, TotalCheckWidgetReceiver, TotalCheckCounterWidgetReceiver, TotalCheckWidgetViewsService
 └── ui/
-    ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
+    ├── main/                              # MainViewModel, TotalCheckScreen, CapsuleComponents, ReminderConfigContent, ExpandingChecklistTabBar, LiquidTabBar, StackedCardScrollLayout, ScopedModalOverlay, SlideOutCancelModifier, SkeletonShimmer
     └── theme/                             # Color, Theme (Curated + Dynamic), Type, RadialThemeTransitionContainer
 
 ```
@@ -43,7 +44,7 @@ app/src/main/kotlin/com/example/totalcheck/
 
 M9 採開放式多階段迭代架構，分為 **Part 1（功能基底與系統閉環）**、**Part 2（頂級時間選擇與物理動效注入）** 及 **Part 3+（後續延伸功能擴充）**。
 
-### 🔹 M9 - Part 1：功能基底、系統排程、通知互動與 Widget 狀態同步（當前首要任務）
+### 🔹 M9 - Part 1：功能基底、系統排程、通知互動與 Widget 狀態同步（`v0.17.0`，已完成）
 
 1. **資料庫升級與 Schema（`AppDatabase` `version = 1` → `version = 2`）**：
 * 新增 `ReminderEntity`（`reminders` 表，外鍵 `CASCADE` 綁定 `ChecklistEntity.id` 與可選 `CheckItemEntity.id`）與 `ReminderDao`。
@@ -83,9 +84,9 @@ M9 採開放式多階段迭代架構，分為 **Part 1（功能基底與系統�
 
 
 
-### 🔹 M9 - Part 2：頂級時間互動與物理動效打磨（待 Part 1 穩定後由使用者提供專屬 Skill 規範接入）
+### 🔹 M9 - Part 2：頂級時間互動與物理動效打磨（`v0.18.0`，已完成）
 
-* 預定針對時間滾輪/刻度選擇器、星期標籤選擇動效、開關聯動回饋與鈴鐺/徽章狀態過渡注入高階物理動效。
+* 實作 `TactileDrumWheel` **3D 時間滾輪**（含點擊選中時間直接輸入四位數字、星期循環 Tab 與快速時間偏移按鈕 `+15m` / `+1h` / `+4h` / `Now`）與物理彈簧回饋，並重構**項目狀態窗・提醒面**寬度至 `64.dp` 與鈴鐺滑入整合排版（支援長按快設 15 分鐘提醒）。
 
 ### 🔹 M9 - Part 3+：更多進階提醒與清單擴充功能（預留迭代）
 
