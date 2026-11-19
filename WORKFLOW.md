@@ -67,7 +67,11 @@ total-check/
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── .gitignore
+├── docs/
+│   ├── COMPONENTS.md # 49 項 UI 元件正式命名對照表（唯一溝通基準）
+│   └── skills/       # 14 份可重用 Compose 物理動效技能文件與索引
 ├── AGENT.md
+├── HANDOFF.md        # 跨對話交接指南（架構地圖、紅線與 M10+ 預留接口）
 ├── Milestone.md
 ├── README.md
 ├── SPEC.md
@@ -82,9 +86,9 @@ total-check/
 |---|---|---|
 | UI | Jetpack Compose + Material 3 | 不用 XML layout |
 | 狀態管理 | ViewModel + StateFlow | |
-| 資料持久化 | Room Database | 取代 SharedPreferences |
-| 桌面 Widget | Jetpack Glance | Compose 風格寫 Widget |
-| 動畫 | AnimatedVisibility / animate*AsState | |
+| 資料持久化 | Room Database (`v4`) + DataStore | 雙層標籤池與主題偏好存放於 DataStore |
+| 桌面 Widget | 原生 RemoteViews (`DirectWidgetRenderer`) | 嚴禁混入 Jetpack Glance；雙形態實例解耦 |
+| 動畫 | Physics Spring + 自訂 `Layout` / `graphicsLayer` | 零重組滑動與硬體觸覺分層回饋 |
 | 主題 | Material 3 Dynamic Color | |
 
 ---
