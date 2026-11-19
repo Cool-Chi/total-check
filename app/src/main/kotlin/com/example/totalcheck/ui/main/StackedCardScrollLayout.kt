@@ -409,7 +409,7 @@ class StackedCardListState {
         key: Any,
         visualTopY: Float,
         nowNanos: Long,
-        durationNanos: Long = 550_000_000L
+        durationNanos: Long = 900_000_000L
     ) {
         exitAnchorKey = key
         exitAnchorVisualTopY = visualTopY
@@ -1249,7 +1249,7 @@ fun <T> BidirectionalStackedCardList(
                 }
 
                 val effectiveTopBound = topInsetPx + topPaddingPx
-                val effectiveBottomBound = (viewportH - bottomInsetPx - bottomPaddingPx)
+                val effectiveBottomBound = (viewportH - effectiveBottomForMaxScroll - bottomPaddingPx)
                     .coerceAtLeast(effectiveTopBound + 1f)
                 val availableInnerH = (effectiveBottomBound - effectiveTopBound).coerceAtLeast(0f)
 

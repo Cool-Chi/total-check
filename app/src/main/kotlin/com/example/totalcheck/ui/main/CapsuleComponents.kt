@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.NotificationsPaused
@@ -113,6 +114,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp
 import com.example.totalcheck.R
@@ -137,7 +139,9 @@ fun CapsuleProgressModule(
     totalCount: Int,
     progressProvider: () -> Float,
     filterState: ChecklistFilterState,
+    tagPool: List<TagDefinition> = emptyList(),
     onToggleFilter: () -> Unit,
+    onLongClickFilter: () -> Unit = {},
     onReset: () -> Unit,
     canDeleteChecklist: Boolean,
     archivedCount: Int = 0,
@@ -324,9 +328,32 @@ fun CapsuleProgressModule(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                val activeFilterTagName = filterState.selectedTags.firstOrNull()
+                val activeFilterTagDef = remember(activeFilterTagName, tagPool) {
+                    activeFilterTagName?.let { name ->
+                        tagPool.firstOrNull { it.name == name } ?: TagDefinition(
+                            name = name,
+                            iconKey = if (name == TagCatalog.DEFAULT_TAG_NAME) TagCatalog.DEFAULT_ICON_KEY else "offer"
+                        )
+                    }
+                }
                 val isFilterActive = filterState.isActive
+                val filterIcon = if (activeFilterTagDef != null) {
+                    TagCatalog.resolveTagIcon(activeFilterTagDef.iconKey)
+                } else {
+                    Icons.Rounded.FilterList
+                }
+                val filterLongClickLabel = stringResource(R.string.a11y_filter_by_tag)
+                val filterContentDesc = if (activeFilterTagDef != null) {
+                    stringResource(R.string.cd_filter_items_with_tag, activeFilterTagDef.name)
+                } else {
+                    stringResource(R.string.cd_filter_items)
+                }
                 TactileIconButton(
                     onClick = onToggleFilter,
+                    onLongClick = onLongClickFilter,
+                    onLongClickLabel = filterLongClickLabel,
+                    longPressTimeoutMs = 350L,
                     modifier = Modifier
                         .size(40.dp)
                         .testTag("filter_checklist_button"),
@@ -351,8 +378,8 @@ fun CapsuleProgressModule(
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.FilterList,
-                        contentDescription = stringResource(R.string.cd_filter_items),
+                        imageVector = filterIcon,
+                        contentDescription = filterContentDesc,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -557,6 +584,7 @@ fun CapsuleCheckItemRow(
     isEditing: Boolean = false,
     isFloatingDragged: Boolean = false,
     hasAutoRestore: Boolean = false,
+    tagPool: List<TagDefinition> = emptyList(),
     activeItemReminder: ReminderEntity? = null,
     onOpenItemReminder: () -> Unit = {},
     onQuickItemReminder15m: () -> Unit = {},
@@ -568,6 +596,7 @@ fun CapsuleCheckItemRow(
     resetDelayMs: Int? = null,
     resetTriggeredAtMillis: Long = 0L,
     onStartEdit: () -> Unit = {},
+    onEditTags: () -> Unit = {},
     onEditDraftChanged: ((String) -> Unit)? = null,
     onConfirmEdit: (String) -> Unit = {},
     onCancelEdit: () -> Unit = {},
@@ -611,10 +640,13 @@ fun CapsuleCheckItemRow(
         Animatable(if (visualChecked && !isEditing) 1f else 0f)
     }
 
-    val triggerToggleOptimistic: () -> Unit = {
-        isWaveWaitingOrAnimating = false
-        visualChecked = !visualChecked
-        currentOnToggle()
+    val resolvedTags = remember(item.tags, tagPool) {
+        TagCatalog.resolveItemTagDefinitions(item.tags, tagPool)
+    }
+    val hasTags = resolvedTags.isNotEmpty()
+    var isShowingTagsFace by remember(item.id) { mutableStateOf(false) }
+    if ((!hasTags || isEditing) && isShowingTagsFace) {
+        isShowingTagsFace = false
     }
 
     if (resetWaveKey > 0) {
@@ -767,6 +799,29 @@ fun CapsuleCheckItemRow(
         }
     }
 
+    val currentVisualChecked by rememberUpdatedState(visualChecked)
+    val currentItemChecked by rememberUpdatedState(item.isChecked)
+    val currentIsEditing by rememberUpdatedState(isEditing)
+    val currentIsChildButtonPressed by rememberUpdatedState(isChildButtonPressed)
+
+    val cancelHoldAndRewind: () -> Unit = {
+        if (isPressed || holdRingProgress.value > 0.001f || holdAnimJob?.isActive == true) {
+            isPressed = false
+            startRewindRing()
+        }
+    }
+
+    LaunchedEffect(item.isChecked, visualChecked, isEditing) {
+        cancelHoldAndRewind()
+    }
+
+    val triggerToggleOptimistic: () -> Unit = {
+        cancelHoldAndRewind()
+        isWaveWaitingOrAnimating = false
+        visualChecked = !visualChecked
+        currentOnToggle()
+    }
+
     val pressScale = animateFloatAsState(
         targetValue = when {
             isFloatingDragged -> 1.03f
@@ -806,6 +861,9 @@ fun CapsuleCheckItemRow(
     val quickReminder15mLabel = stringResource(R.string.a11y_quick_reminder_15m)
     val cancelOrSkipReminderLabel = stringResource(R.string.a11y_cancel_or_skip_reminder)
     val itemReminderActionLabel = stringResource(R.string.cd_item_reminder, item.label)
+    val toggleTagsFaceActionLabel = stringResource(
+        if (isShowingTagsFace) R.string.a11y_hide_item_tags else R.string.a11y_show_item_tags
+    )
     val hasActiveReminder = activeItemReminder != null && activeItemReminder.isEnabled
     val isSkippedOnce = hasActiveReminder &&
         ReminderScheduler.isPeriodicReminderSkipped(activeItemReminder)
@@ -934,18 +992,30 @@ fun CapsuleCheckItemRow(
                             true
                         }
                         if (!currentIsCompressedProvider()) {
-                            customActions = listOf(
-                                CustomAccessibilityAction(itemReminderActionLabel) {
-                                    onOpenItemReminder()
-                                    true
-                                },
-                                CustomAccessibilityAction(
-                                    if (hasActiveReminder) cancelOrSkipReminderLabel else quickReminder15mLabel
-                                ) {
-                                    currentOnQuickItemReminder15m()
-                                    true
+                            customActions = buildList {
+                                add(
+                                    CustomAccessibilityAction(itemReminderActionLabel) {
+                                        onOpenItemReminder()
+                                        true
+                                    }
+                                )
+                                add(
+                                    CustomAccessibilityAction(
+                                        if (hasActiveReminder) cancelOrSkipReminderLabel else quickReminder15mLabel
+                                    ) {
+                                        currentOnQuickItemReminder15m()
+                                        true
+                                    }
+                                )
+                                if (hasTags) {
+                                    add(
+                                        CustomAccessibilityAction(toggleTagsFaceActionLabel) {
+                                            isShowingTagsFace = !isShowingTagsFace
+                                            true
+                                        }
+                                    )
                                 }
-                            )
+                            }
                         }
                     }
                 }
@@ -973,6 +1043,8 @@ fun CapsuleCheckItemRow(
                             }
                             return@awaitEachGesture
                         }
+                        val downItemChecked = currentItemChecked
+                        val downVisualChecked = currentVisualChecked
                         isPressed = true
                         var holdEngaged = false
                         var cancelledOrLeft = false
@@ -981,7 +1053,16 @@ fun CapsuleCheckItemRow(
                         holdAnimJob?.cancel()
                         val currentHoldJob = scope.launch {
                             delay(120L)
-                            if (cancelledOrLeft || isDeleting) return@launch
+                            if (
+                                cancelledOrLeft ||
+                                isDeleting ||
+                                currentIsEditing ||
+                                currentIsChildButtonPressed ||
+                                currentItemChecked != downItemChecked ||
+                                currentVisualChecked != downVisualChecked
+                            ) {
+                                return@launch
+                            }
                             holdEngaged = true
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             val startVal = holdRingProgress.value.coerceIn(0f, 1f)
@@ -993,7 +1074,15 @@ fun CapsuleCheckItemRow(
                                 targetValue = 1f,
                                 animationSpec = tween(durationMillis = fillDurationMs, easing = LinearEasing)
                             )
-                            if (!cancelledOrLeft && !isDeleting && holdRingProgress.value >= 0.999f) {
+                            if (
+                                !cancelledOrLeft &&
+                                !isDeleting &&
+                                !currentIsEditing &&
+                                !currentIsChildButtonPressed &&
+                                currentItemChecked == downItemChecked &&
+                                currentVisualChecked == downVisualChecked &&
+                                holdRingProgress.value >= 0.999f
+                            ) {
                                 triggerHoldDelete()
                             }
                         }
@@ -1002,7 +1091,14 @@ fun CapsuleCheckItemRow(
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Final)
                             val change = event.changes.firstOrNull { it.id == down.id }
-                            if (change == null || change.isConsumed) {
+                            if (
+                                change == null ||
+                                change.isConsumed ||
+                                currentIsEditing ||
+                                currentIsChildButtonPressed ||
+                                currentItemChecked != downItemChecked ||
+                                currentVisualChecked != downVisualChecked
+                            ) {
                                 cancelledOrLeft = true
                                 isPressed = false
                                 startRewindRing()
@@ -1107,6 +1203,7 @@ fun CapsuleCheckItemRow(
                                     event.type == KeyEventType.KeyDown &&
                                     event.key == Key.Escape
                                 ) {
+                                    keyboardController?.hide()
                                     val trimmed = editValue.text.trim()
                                     if (trimmed.isNotEmpty()) {
                                         localOptimisticLabel = trimmed
@@ -1129,6 +1226,7 @@ fun CapsuleCheckItemRow(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = {
+                                keyboardController?.hide()
                                 val trimmed = editValue.text.trim()
                                 if (trimmed.isNotEmpty()) {
                                     localOptimisticLabel = trimmed
@@ -1139,30 +1237,40 @@ fun CapsuleCheckItemRow(
                             }
                         )
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // 左起：標籤 (32.dp)、封存 (32.dp)［合佔原 64.dp 膠囊寬度］→ 確認(✓) (32.dp 對齊原鉛筆) → 取消(✗) (34.dp 對齊拖曳手把)
+                    val editTagIcon = if (hasTags) {
+                        TagCatalog.resolveTagIcon(resolvedTags.first().iconKey)
+                    } else {
+                        Icons.Rounded.LocalOffer
+                    }
                     TactileIconButton(
                         onClick = {
-                            val trimmed = editValue.text.trim()
-                            if (trimmed.isNotEmpty()) {
-                                localOptimisticLabel = trimmed
-                                onConfirmEdit(trimmed)
-                            }
+                            keyboardController?.hide()
+                            onEditTags()
                         },
-                        enabled = editValue.text.isNotBlank(),
-                        modifier = Modifier.size(34.dp),
-                        contentColor = colorScheme.primary
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("tag_item_button_${item.id}"),
+                        contentColor = if (hasTags) colorScheme.primary else colorScheme.onSurfaceVariant,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.Check,
-                            contentDescription = stringResource(R.string.cd_save_name),
+                            imageVector = editTagIcon,
+                            contentDescription = stringResource(R.string.cd_edit_item_tags),
                             modifier = Modifier.size(17.dp)
                         )
                     }
                     TactileIconButton(
-                        onClick = onArchive,
+                        onClick = {
+                            keyboardController?.hide()
+                            onArchive()
+                        },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .testTag("archive_item_button_${item.id}"),
-                        contentColor = colorScheme.onSurfaceVariant
+                        contentColor = colorScheme.onSurfaceVariant,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Archive,
@@ -1171,9 +1279,37 @@ fun CapsuleCheckItemRow(
                         )
                     }
                     TactileIconButton(
-                        onClick = onCancelEdit,
-                        modifier = Modifier.size(34.dp),
-                        contentColor = colorScheme.onSurfaceVariant
+                        onClick = {
+                            keyboardController?.hide()
+                            val trimmed = editValue.text.trim()
+                            if (trimmed.isNotEmpty()) {
+                                localOptimisticLabel = trimmed
+                                onConfirmEdit(trimmed)
+                            }
+                        },
+                        enabled = editValue.text.isNotBlank(),
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("save_item_button_${item.id}"),
+                        contentColor = colorScheme.primary,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = stringResource(R.string.cd_save_name),
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                    TactileIconButton(
+                        onClick = {
+                            keyboardController?.hide()
+                            onCancelEdit()
+                        },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("cancel_edit_item_button_${item.id}"),
+                        contentColor = colorScheme.onSurfaceVariant,
+                        onPressChanged = { pressed -> isChildButtonPressed = pressed }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
@@ -1284,16 +1420,26 @@ fun CapsuleCheckItemRow(
                     val badgeUnboundedConstraints = remember { Constraints() }
                     var isBellPressed by remember(item.id) { mutableStateOf(false) }
                     val bellPressSinkScale by animateFloatAsState(
-                        targetValue = if (isBellPressed && !visualChecked && !isReducedMotion) 0.92f else 1f,
+                        targetValue = if (isBellPressed && !isReducedMotion) 0.92f else 1f,
                         animationSpec = spring(dampingRatio = 0.78f, stiffness = 680f),
                         label = "capsuleBellSinkScale"
                     )
+                    val flipDegrees by animateFloatAsState(
+                        targetValue = if (isShowingTagsFace && hasTags) 180f else 0f,
+                        animationSpec = if (isReducedMotion) {
+                            snap()
+                        } else {
+                            spring(dampingRatio = 0.78f, stiffness = 420f)
+                        },
+                        label = "capsuleTagFlipDegrees"
+                    )
+                    val isBackFaceVisible = flipDegrees > 90f
 
                     Box(
                         modifier = Modifier.height(32.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Layout(
+                        Box(
                             modifier = Modifier
                                 .width(64.dp)
                                 .height(28.dp)
@@ -1301,136 +1447,236 @@ fun CapsuleCheckItemRow(
                                     val badgeScale = (1f + (wavePulseScale.value - 1f) * 1.8f) * bellPressSinkScale
                                     scaleX = badgeScale
                                     scaleY = badgeScale
+                                    rotationY = flipDegrees
+                                    cameraDistance = 12f * density.density
                                     clip = true
                                     shape = RoundedCornerShape(50)
                                 }
-                                .drawBehind {
-                                    val r = size.height / 2f
-                                    drawRoundRect(
-                                        color = lerpColor(
-                                            uncheckedBadgeBgColor,
-                                            checkedBadgeBgColor,
-                                            checkedProgress.value.coerceIn(0f, 1f)
-                                        ),
-                                        cornerRadius = CornerRadius(r, r)
-                                    )
-                                },
-                            content = {
-                                Icon(
-                                    imageVector = Icons.Rounded.Check,
-                                    contentDescription = null,
-                                    tint = colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(13.5.dp)
-                                )
-                                Text(
-                                    text = statusUncheckedLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colorScheme.onTertiaryContainer,
-                                    maxLines = 1
-                                )
-                                Text(
-                                    text = statusCheckedLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
-                                Icon(
-                                    imageVector = when {
-                                        isSkippedOnce -> Icons.Rounded.NotificationsPaused
-                                        hasActiveReminder -> Icons.Rounded.NotificationsActive
-                                        else -> Icons.Rounded.NotificationsNone
-                                    },
-                                    contentDescription = null,
-                                    tint = when {
-                                        isSkippedOnce -> colorScheme.onTertiaryContainer.copy(alpha = 0.62f)
-                                        hasActiveReminder -> colorScheme.primary
-                                        else -> colorScheme.onTertiaryContainer
-                                    },
-                                    modifier = Modifier.size(13.5.dp)
-                                )
-                            }
-                        ) { badgeMeasurables, _ ->
-                            val checkPlaceable = badgeMeasurables[0].measure(badgeUnboundedConstraints)
-                            val uncheckedTextPlaceable = badgeMeasurables[1].measure(badgeUnboundedConstraints)
-                            val checkedTextPlaceable = badgeMeasurables[2].measure(badgeUnboundedConstraints)
-                            val bellPlaceable = badgeMeasurables[3].measure(badgeUnboundedConstraints)
+                        ) {
+                            if (!isBackFaceVisible) {
+                                Layout(
+                                    modifier = Modifier
+                                        .width(64.dp)
+                                        .height(28.dp)
+                                        .drawBehind {
+                                            val r = size.height / 2f
+                                            drawRoundRect(
+                                                color = lerpColor(
+                                                    uncheckedBadgeBgColor,
+                                                    checkedBadgeBgColor,
+                                                    checkedProgress.value.coerceIn(0f, 1f)
+                                                ),
+                                                cornerRadius = CornerRadius(r, r)
+                                            )
+                                        },
+                                    content = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Check,
+                                            contentDescription = null,
+                                            tint = colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(13.5.dp)
+                                        )
+                                        Text(
+                                            text = statusUncheckedLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colorScheme.onTertiaryContainer,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = statusCheckedLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                        Icon(
+                                            imageVector = when {
+                                                isSkippedOnce -> Icons.Rounded.NotificationsPaused
+                                                hasActiveReminder -> Icons.Rounded.NotificationsActive
+                                                else -> Icons.Rounded.NotificationsNone
+                                            },
+                                            contentDescription = null,
+                                            tint = when {
+                                                isSkippedOnce -> colorScheme.onTertiaryContainer.copy(alpha = 0.62f)
+                                                hasActiveReminder -> colorScheme.primary
+                                                else -> colorScheme.onTertiaryContainer
+                                            },
+                                            modifier = Modifier.size(13.5.dp)
+                                        )
+                                    }
+                                ) { badgeMeasurables, _ ->
+                                    val checkPlaceable = badgeMeasurables[0].measure(badgeUnboundedConstraints)
+                                    val uncheckedTextPlaceable = badgeMeasurables[1].measure(badgeUnboundedConstraints)
+                                    val checkedTextPlaceable = badgeMeasurables[2].measure(badgeUnboundedConstraints)
+                                    val bellPlaceable = badgeMeasurables[3].measure(badgeUnboundedConstraints)
 
-                            // 外層膠囊容器尺寸嚴格鎖定為 64.dp x 28.dp，整合待備鈴鐺與已備對勾雙向滑動轉場
-                            layout(badgeWidthPx, badgeHeightPx) {
-                                val rawT = checkedProgress.value
-                                val clampedT = rawT.coerceIn(0f, 1f)
-                                val spatialT = rawT.coerceIn(-0.04f, 1.08f)
+                                    // 外層膠囊容器尺寸嚴格鎖定為 64.dp x 28.dp，整合待備鈴鐺與已備對勾雙向滑動轉場
+                                    layout(badgeWidthPx, badgeHeightPx) {
+                                        val rawT = checkedProgress.value
+                                        val clampedT = rawT.coerceIn(0f, 1f)
+                                        val spatialT = rawT.coerceIn(-0.04f, 1.08f)
 
-                                val leftFullSlotPx = checkPlaceable.width.toFloat() + badgeIconGapPx
-                                val rightFullSlotPx = bellPlaceable.width.toFloat() + badgeIconGapPx
-                                val leftExpandedSlotPx = leftFullSlotPx * spatialT.coerceAtLeast(0f)
-                                val rightExpandedSlotPx = rightFullSlotPx * (1f - spatialT).coerceAtLeast(0f)
+                                        val leftFullSlotPx = checkPlaceable.width.toFloat() + badgeIconGapPx
+                                        val rightFullSlotPx = bellPlaceable.width.toFloat() + badgeIconGapPx
+                                        val leftExpandedSlotPx = leftFullSlotPx * spatialT.coerceAtLeast(0f)
+                                        val rightExpandedSlotPx = rightFullSlotPx * (1f - spatialT).coerceAtLeast(0f)
 
-                                val currentTextWidth = lerp(
-                                    uncheckedTextPlaceable.width.toFloat(),
-                                    checkedTextPlaceable.width.toFloat(),
-                                    clampedT
-                                )
-                                val totalGroupWidth = leftExpandedSlotPx + currentTextWidth + rightExpandedSlotPx
-                                val groupStartX = (badgeWidthPx.toFloat() - totalGroupWidth) * 0.5f
-                                val textSlotLeftX = groupStartX + leftExpandedSlotPx
+                                        val currentTextWidth = lerp(
+                                            uncheckedTextPlaceable.width.toFloat(),
+                                            checkedTextPlaceable.width.toFloat(),
+                                            clampedT
+                                        )
+                                        val totalGroupWidth = leftExpandedSlotPx + currentTextWidth + rightExpandedSlotPx
+                                        val groupStartX = (badgeWidthPx.toFloat() - totalGroupWidth) * 0.5f
+                                        val textSlotLeftX = groupStartX + leftExpandedSlotPx
 
-                                if (clampedT > 0.01f) {
-                                    // 已備：對勾從文字左側推入展開，切回待備時向文字左側收合淡出
-                                    val checkX = (textSlotLeftX - leftFullSlotPx).roundToInt()
-                                    val checkY = (badgeHeightPx - checkPlaceable.height) / 2
-                                    val checkScale = lerp(0.38f, 1f, spatialT).coerceAtLeast(0.2f)
-                                    val checkAlpha = ((clampedT - 0.04f) / 0.78f).coerceIn(0f, 1f)
-                                    checkPlaceable.placeRelativeWithLayer(checkX, checkY) {
-                                        alpha = checkAlpha
-                                        scaleX = checkScale
-                                        scaleY = checkScale
-                                        transformOrigin = TransformOrigin(0.25f, 0.5f)
+                                        if (clampedT > 0.01f) {
+                                            // 已備：對勾從文字左側推入展開，切回待備時向文字左側收合淡出
+                                            val checkX = (textSlotLeftX - leftFullSlotPx).roundToInt()
+                                            val checkY = (badgeHeightPx - checkPlaceable.height) / 2
+                                            val checkScale = lerp(0.38f, 1f, spatialT).coerceAtLeast(0.2f)
+                                            val checkAlpha = ((clampedT - 0.04f) / 0.78f).coerceIn(0f, 1f)
+                                            checkPlaceable.placeRelativeWithLayer(checkX, checkY) {
+                                                alpha = checkAlpha
+                                                scaleX = checkScale
+                                                scaleY = checkScale
+                                                transformOrigin = TransformOrigin(0.25f, 0.5f)
+                                            }
+                                        }
+
+                                        val uncheckedAlpha = (1f - clampedT * 1.15f).coerceIn(0f, 1f)
+                                        if (uncheckedAlpha > 0.005f) {
+                                            val uncheckedX = (textSlotLeftX + (currentTextWidth - uncheckedTextPlaceable.width) * 0.5f)
+                                                .roundToInt()
+                                            val uncheckedY = (badgeHeightPx - uncheckedTextPlaceable.height) / 2
+                                            uncheckedTextPlaceable.placeRelativeWithLayer(uncheckedX, uncheckedY) {
+                                                alpha = uncheckedAlpha
+                                            }
+                                        }
+
+                                        val checkedAlpha = ((clampedT - 0.12f) / 0.88f).coerceIn(0f, 1f)
+                                        if (checkedAlpha > 0.005f) {
+                                            val checkedX = (textSlotLeftX + (currentTextWidth - checkedTextPlaceable.width) * 0.5f)
+                                                .roundToInt()
+                                            val checkedY = (badgeHeightPx - checkedTextPlaceable.height) / 2
+                                            checkedTextPlaceable.placeRelativeWithLayer(checkedX, checkedY) {
+                                                alpha = checkedAlpha
+                                            }
+                                        }
+
+                                        val reverseT = 1f - clampedT
+                                        if (reverseT > 0.01f) {
+                                            // 待備：鈴鐺從文字右側滑入展開，轉為已備時向右側收合滑出
+                                            val reverseSpatialT = 1f - spatialT
+                                            val bellX = (textSlotLeftX + currentTextWidth + badgeIconGapPx).roundToInt()
+                                            val bellY = (badgeHeightPx - bellPlaceable.height) / 2
+                                            val bellScale = lerp(0.38f, 1f, reverseSpatialT).coerceAtLeast(0.2f)
+                                            val bellAlpha = ((reverseT - 0.04f) / 0.78f).coerceIn(0f, 1f)
+                                            bellPlaceable.placeRelativeWithLayer(bellX, bellY) {
+                                                alpha = bellAlpha
+                                                scaleX = bellScale
+                                                scaleY = bellScale
+                                                transformOrigin = TransformOrigin(0.75f, 0.5f)
+                                            }
+                                        }
                                     }
                                 }
-
-                                val uncheckedAlpha = (1f - clampedT * 1.15f).coerceIn(0f, 1f)
-                                if (uncheckedAlpha > 0.005f) {
-                                    val uncheckedX = (textSlotLeftX + (currentTextWidth - uncheckedTextPlaceable.width) * 0.5f)
-                                        .roundToInt()
-                                    val uncheckedY = (badgeHeightPx - uncheckedTextPlaceable.height) / 2
-                                    uncheckedTextPlaceable.placeRelativeWithLayer(uncheckedX, uncheckedY) {
-                                        alpha = uncheckedAlpha
-                                    }
-                                }
-
-                                val checkedAlpha = ((clampedT - 0.12f) / 0.88f).coerceIn(0f, 1f)
-                                if (checkedAlpha > 0.005f) {
-                                    val checkedX = (textSlotLeftX + (currentTextWidth - checkedTextPlaceable.width) * 0.5f)
-                                        .roundToInt()
-                                    val checkedY = (badgeHeightPx - checkedTextPlaceable.height) / 2
-                                    checkedTextPlaceable.placeRelativeWithLayer(checkedX, checkedY) {
-                                        alpha = checkedAlpha
-                                    }
-                                }
-
-                                val reverseT = 1f - clampedT
-                                if (reverseT > 0.01f) {
-                                    // 待備：鈴鐺從文字右側滑入展開，轉為已備時向右側收合滑出
-                                    val reverseSpatialT = 1f - spatialT
-                                    val bellX = (textSlotLeftX + currentTextWidth + badgeIconGapPx).roundToInt()
-                                    val bellY = (badgeHeightPx - bellPlaceable.height) / 2
-                                    val bellScale = lerp(0.38f, 1f, reverseSpatialT).coerceAtLeast(0.2f)
-                                    val bellAlpha = ((reverseT - 0.04f) / 0.78f).coerceIn(0f, 1f)
-                                    bellPlaceable.placeRelativeWithLayer(bellX, bellY) {
-                                        alpha = bellAlpha
-                                        scaleX = bellScale
-                                        scaleY = bellScale
-                                        transformOrigin = TransformOrigin(0.75f, 0.5f)
+                            } else {
+                                // 翻轉背面：顯示 1~2 個項目標籤（固定 64.dp × 28.dp 膠囊內）
+                                val backBgColor = colorScheme.primaryContainer
+                                val backBorderColor = colorScheme.primary.copy(alpha = 0.45f)
+                                val backContentColor = colorScheme.onPrimaryContainer
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer { rotationY = 180f }
+                                        .drawBehind {
+                                            val r = size.height / 2f
+                                            drawRoundRect(
+                                                color = backBgColor,
+                                                cornerRadius = CornerRadius(r, r)
+                                            )
+                                            drawRoundRect(
+                                                color = backBorderColor,
+                                                cornerRadius = CornerRadius(r, r),
+                                                style = Stroke(width = 1.dp.toPx())
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (resolvedTags.size == 1) {
+                                        val tag = resolvedTags[0]
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = TagCatalog.resolveTagIcon(tag.iconKey),
+                                                contentDescription = null,
+                                                tint = backContentColor,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = tag.name,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = backContentColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            resolvedTags.take(TagCatalog.MAX_TAGS_PER_ITEM).forEach { tag ->
+                                                Row(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = TagCatalog.resolveTagIcon(tag.iconKey),
+                                                        contentDescription = null,
+                                                        tint = backContentColor,
+                                                        modifier = Modifier.size(11.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(1.5.dp))
+                                                    Text(
+                                                        text = tag.name,
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontSize = 10.sp
+                                                        ),
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = backContentColor,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        if (!visualChecked) {
+                        if (!visualChecked || hasTags || isShowingTagsFace) {
                             val itemReminderCd = stringResource(R.string.cd_item_reminder, displayedLabel)
+                            val tagsSummaryCd = if (hasTags) {
+                                resolvedTags.joinToString(", ") { it.name }
+                            } else {
+                                ""
+                            }
+                            val currentHasTags by rememberUpdatedState(hasTags)
+                            val currentIsShowingTagsFace by rememberUpdatedState(isShowingTagsFace)
+                            val currentOnOpenReminder by rememberUpdatedState(onOpenItemReminder)
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.Center)
@@ -1438,38 +1684,134 @@ fun CapsuleCheckItemRow(
                                     .height(32.dp)
                                     .testTag("reminder_item_button_${item.id}")
                                     .semantics {
-                                        contentDescription = itemReminderCd
-                                    }
-                                    .slideOutCancelClickable(
-                                        enabled = !isEditing && !isDeleting,
-                                        shape = RoundedCornerShape(50),
-                                        sinkScale = 1f,
-                                        maxDeepenAlpha = 0f,
-                                        longPressTimeoutMs = 350L,
-                                        onLongClickLabel = if (hasActiveReminder) {
-                                            cancelOrSkipReminderLabel
+                                        contentDescription = if (isShowingTagsFace && tagsSummaryCd.isNotEmpty()) {
+                                            tagsSummaryCd
                                         } else {
-                                            quickReminder15mLabel
-                                        },
-                                        onPressChanged = { pressed ->
-                                            isBellPressed = pressed
-                                            isChildButtonPressed = pressed
-                                        },
-                                        onLongClick = {
+                                            itemReminderCd
+                                        }
+                                        if (hasTags) {
+                                            customActions = listOf(
+                                                CustomAccessibilityAction(toggleTagsFaceActionLabel) {
+                                                    isShowingTagsFace = !isShowingTagsFace
+                                                    true
+                                                }
+                                            )
+                                        }
+                                    }
+                                    .pointerInput(item.id, isEditing, isDeleting, hasTags, visualChecked) {
+                                        if (isEditing || isDeleting) return@pointerInput
+                                        val swipeTriggerPx = 14.dp.toPx()
+                                        val touchSlop = viewConfiguration.touchSlop
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
                                             if (currentIsCompressedProvider()) {
-                                                currentOnCompressedClick?.invoke()
-                                            } else {
-                                                currentOnQuickItemReminder15m()
+                                                while (true) {
+                                                    val ev = awaitPointerEvent(PointerEventPass.Main)
+                                                    val ch = ev.changes.firstOrNull { it.id == down.id }
+                                                    if (ch == null || ch.isConsumed) break
+                                                    if (!ch.pressed) {
+                                                        val d = hypot(
+                                                            ch.position.x - down.position.x,
+                                                            ch.position.y - down.position.y
+                                                        )
+                                                        if (d <= touchSlop) {
+                                                            ch.consume()
+                                                            currentOnCompressedClick?.invoke()
+                                                        }
+                                                        break
+                                                    }
+                                                }
+                                                return@awaitEachGesture
                                             }
-                                        },
-                                        onClick = {
-                                            if (currentIsCompressedProvider()) {
-                                                currentOnCompressedClick?.invoke()
+                                            isChildButtonPressed = true
+                                            val showSink = !currentIsShowingTagsFace && !currentVisualChecked
+                                            if (showSink) {
+                                                isBellPressed = true
+                                            }
+                                            var didSwipeFlip = false
+                                            var didLongPress = false
+                                            val longPressJob = if (showSink) {
+                                                scope.launch {
+                                                    delay(350L)
+                                                    if (!didSwipeFlip && !currentIsEditing && !isDeleting) {
+                                                        didLongPress = true
+                                                        isBellPressed = false
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        currentOnQuickItemReminder15m()
+                                                    }
+                                                }
                                             } else {
-                                                onOpenItemReminder()
+                                                null
+                                            }
+                                            try {
+                                                while (true) {
+                                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                                    val change = event.changes.firstOrNull { it.id == down.id }
+                                                    if (change == null) {
+                                                        longPressJob?.cancel()
+                                                        break
+                                                    }
+                                                    val dx = change.position.x - down.position.x
+                                                    val dy = change.position.y - down.position.y
+                                                    val dist = hypot(dx, dy)
+
+                                                    // 若項目有標籤且明顯為水平滑動，搶先在 Main pass 消費以避免被 HorizontalPager 攔截
+                                                    if (
+                                                        currentHasTags &&
+                                                        !didLongPress &&
+                                                        abs(dx) > touchSlop * 0.45f &&
+                                                        abs(dx) > abs(dy)
+                                                    ) {
+                                                        change.consume()
+                                                        if (!didSwipeFlip && abs(dx) >= swipeTriggerPx) {
+                                                            didSwipeFlip = true
+                                                            longPressJob?.cancel()
+                                                            isBellPressed = false
+                                                            isShowingTagsFace = !currentIsShowingTagsFace
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        }
+                                                    } else if (!didSwipeFlip && abs(dy) > touchSlop && abs(dy) > abs(dx)) {
+                                                        // 讓垂直捲動順暢接手
+                                                        longPressJob?.cancel()
+                                                        isBellPressed = false
+                                                        break
+                                                    } else if (dist > touchSlop) {
+                                                        longPressJob?.cancel()
+                                                        isBellPressed = false
+                                                    }
+
+                                                    if (!change.pressed) {
+                                                        longPressJob?.cancel()
+                                                        isBellPressed = false
+                                                        if (!didSwipeFlip && !didLongPress && dist <= touchSlop) {
+                                                            val inBounds = change.position.x in 0f..size.width.toFloat() &&
+                                                                change.position.y in 0f..size.height.toFloat()
+                                                            if (inBounds) {
+                                                                change.consume()
+                                                                when {
+                                                                    currentIsShowingTagsFace -> {
+                                                                        isShowingTagsFace = false
+                                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    }
+                                                                    !currentVisualChecked -> {
+                                                                        currentOnOpenReminder()
+                                                                    }
+                                                                    else -> {
+                                                                        triggerToggleOptimistic()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        break
+                                                    }
+                                                }
+                                            } finally {
+                                                longPressJob?.cancel()
+                                                isBellPressed = false
+                                                isChildButtonPressed = false
                                             }
                                         }
-                                    )
+                                    }
                             )
                         }
                     }

@@ -145,6 +145,7 @@ fun TotalCheckScreen(
     val isDarkMode = themeConfig?.isDarkMode ?: true
     val useDynamicColor = themeConfig?.useDynamicColor ?: false
     val filterState by viewModel.filterState.collectAsStateWithLifecycle()
+    val tagPool by viewModel.tagPool.collectAsStateWithLifecycle()
     val showUncheckedOnly = filterState.showUncheckedOnly
     val isStartupLoading by viewModel.isStartupLoading.collectAsStateWithLifecycle()
 
@@ -174,6 +175,8 @@ fun TotalCheckScreen(
             }
             editingItemId = null
             editingDraftHolder.text = ""
+            softwareKeyboardController?.hide()
+            focusManager.clearFocus()
         }
     }
 
@@ -288,6 +291,7 @@ fun TotalCheckScreen(
 
     BackHandler(enabled = editingItemId != null) {
         commitActiveInlineEdit()
+        softwareKeyboardController?.hide()
         focusManager.clearFocus()
     }
 
@@ -477,6 +481,8 @@ fun TotalCheckScreen(
             }
             editingItemId = null
             editingDraftHolder.text = ""
+            softwareKeyboardController?.hide()
+            focusManager.clearFocus()
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
@@ -484,6 +490,8 @@ fun TotalCheckScreen(
         {
             editingItemId = null
             editingDraftHolder.text = ""
+            softwareKeyboardController?.hide()
+            focusManager.clearFocus()
         }
     }
     val onFinishEditForArchiveStable = remember<() -> Unit> {
@@ -771,6 +779,7 @@ fun TotalCheckScreen(
 
                             val stableChecklists = remember(checklists) { ImmutableList(checklists) }
                             val stableItemsByChecklist = remember(itemsByChecklist) { ImmutableMap(itemsByChecklist) }
+                            val stableTagPool = remember(tagPool) { ImmutableList(tagPool) }
                             val distantTabTransitionProvider = remember(distantTabTransitionState) {
                                 { distantTabTransitionState.value }
                             }
@@ -902,6 +911,7 @@ fun TotalCheckScreen(
                                                 stableItemAutoRestoresById = itemAutoRestoresById,
                                                 canDeleteChecklist = checklists.size > 1,
                                                 filterState = filterState,
+                                                stableTagPool = stableTagPool,
                                                 editingItemId = pageEditingItemId,
                                                 isActivePageProvider = isActivePageProvider,
                                                 isReducedMotion = isReducedMotion,
@@ -1172,6 +1182,18 @@ fun TotalCheckScreen(
                             }
                         }
                     },
+                    tagPool = tagPool,
+                    onSaveItemTags = { itemId, tags ->
+                        closeModal(restoreFocus = true)
+                        viewModel.updateItemTags(itemId, tags)
+                    },
+                    onCreateTagInPool = { name, iconKey, onCreated ->
+                        viewModel.createTagInPool(name, iconKey, onCreated)
+                    },
+                    onSelectFilterTag = { selectedTag ->
+                        closeModal(restoreFocus = true)
+                        viewModel.selectFilterTag(selectedTag)
+                    },
                     onExited = {
                         if (!isModalOpen) {
                             modalContent = null
@@ -1317,6 +1339,7 @@ private fun ChecklistPageContent(
     stableItemAutoRestoresById: ImmutableMap<Long, ReminderEntity>,
     canDeleteChecklist: Boolean,
     filterState: ChecklistFilterState,
+    stableTagPool: ImmutableList<TagDefinition>,
     editingItemId: Long?,
     isActivePageProvider: () -> Boolean,
     isReducedMotion: Boolean,
@@ -1339,6 +1362,7 @@ private fun ChecklistPageContent(
     onReminderLongPress: (Long, Long?, Boolean) -> Unit
 ) {
     val items = stableItems.items
+    val tagPool = stableTagPool.items
     val showUncheckedOnly = filterState.showUncheckedOnly
     val itemRemindersById = stableItemRemindersById.map
     val itemAutoRestoresById = stableItemAutoRestoresById.map
@@ -1448,33 +1472,46 @@ private fun ChecklistPageContent(
         }
     }
 
-    // 進入單項原地編輯時，預留軟鍵盤可捲動空間並置中；退出編輯時由 Layout 階段 Anchor Lock 保持原位定錨
-    if (editingItemId != null || stackedListState.editBottomInsetFloorState.floatValue != 0f) {
-        LaunchedEffect(editingItemId) {
-            val targetEditId = editingItemId
-            if (targetEditId == null) {
-                if (stackedListState.editBottomInsetFloorState.floatValue != 0f) {
+    // 進入單項原地編輯時，預留軟鍵盤可捲動空間並置中；退出編輯時由 Layout 階段 Anchor Lock 保持原位定錨並平滑收合底部墊高，避免任何瞬間跳動
+    val editBottomFloorAnim = remember(checklist.id) { Animatable(0f) }
+    LaunchedEffect(editingItemId, isReducedMotion) {
+        val targetEditId = editingItemId
+        if (targetEditId == null) {
+            val startFloor = stackedListState.editBottomInsetFloorState.floatValue
+            if (startFloor > 0.5f) {
+                if (isReducedMotion) {
+                    editBottomFloorAnim.snapTo(0f)
+                    stackedListState.editBottomInsetFloorState.floatValue = 0f
+                } else {
+                    editBottomFloorAnim.snapTo(startFloor)
+                    editBottomFloorAnim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
+                    ) {
+                        stackedListState.editBottomInsetFloorState.floatValue = value
+                    }
                     stackedListState.editBottomInsetFloorState.floatValue = 0f
                 }
-                return@LaunchedEffect
             }
-            if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
-
-            stackedListState.clearExitAnchorLock()
-            val minExpectedImePx = with(density) { 280.dp.toPx() }
-            val targetBottomInset = maxOf(
-                imeInsets.getBottom(density).toFloat(),
-                navBarInsets.getBottom(density).toFloat() + minExpectedImePx
-            )
-            stackedListState.editBottomInsetFloorState.floatValue = targetBottomInset
-            withFrameNanos { }
-            stackedListState.scrollToCenterItem(
-                key = targetEditId,
-                targetTopInsetPx = 0f,
-                targetBottomInsetPx = targetBottomInset,
-                animated = !isReducedMotion
-            )
+            return@LaunchedEffect
         }
+        if (visibleItems.none { it.id == targetEditId }) return@LaunchedEffect
+
+        stackedListState.clearExitAnchorLock()
+        val minExpectedImePx = with(density) { 280.dp.toPx() }
+        val targetBottomInset = maxOf(
+            imeInsets.getBottom(density).toFloat(),
+            navBarInsets.getBottom(density).toFloat() + minExpectedImePx
+        )
+        editBottomFloorAnim.snapTo(targetBottomInset)
+        stackedListState.editBottomInsetFloorState.floatValue = targetBottomInset
+        withFrameNanos { }
+        stackedListState.scrollToCenterItem(
+            key = targetEditId,
+            targetTopInsetPx = 0f,
+            targetBottomInsetPx = targetBottomInset,
+            animated = !isReducedMotion
+        )
     }
 
     val progressCardHeightHolder = remember(checklist.id) {
@@ -1677,7 +1714,17 @@ private fun ChecklistPageContent(
                 totalCount = totalCount,
                 progressProvider = { progressAnimatable.value },
                 filterState = filterState,
+                tagPool = tagPool,
                 onToggleFilter = { viewModel.toggleFilterUncheckedOnly() },
+                onLongClickFilter = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onOpenModal(
+                        ChecklistModalContent.SelectFilterTag(
+                            activeTagName = filterState.selectedTags.firstOrNull()
+                        ),
+                        null
+                    )
+                },
                 onReset = {
                     onCancelEdit()
                     stagingJobs.values.forEach { it.cancel() }
@@ -2099,6 +2146,7 @@ private fun ChecklistPageContent(
                             },
                             isEditing = editingItemId == item.id,
                             hasAutoRestore = itemAutoRestore?.isEnabled == true,
+                            tagPool = tagPool,
                             activeItemReminder = itemReminder,
                             onOpenItemReminder = {
                                 onOpenModal(
@@ -2136,6 +2184,12 @@ private fun ChecklistPageContent(
                             resetDelayMs = resetWave.delaysByItemId[item.id],
                             resetTriggeredAtMillis = resetWave.triggeredAtUptimeMs,
                             onStartEdit = { onStartEdit(item.id, item.label) },
+                            onEditTags = {
+                                onOpenModal(
+                                    ChecklistModalContent.ItemTagPicker(item),
+                                    null
+                                )
+                            },
                             onEditDraftChanged = { draft -> onEditDraftChanged(item.id, draft) },
                             onConfirmEdit = { newLabel -> onConfirmEdit(item.id, newLabel) },
                             onCancelEdit = onCancelEdit,
@@ -2224,6 +2278,7 @@ private fun ChecklistPageContent(
                         isEditing = false,
                         isFloatingDragged = !isSettlingDrop,
                         hasAutoRestore = itemAutoRestoresById[draggedItem.id]?.isEnabled == true,
+                        tagPool = tagPool,
                         activeItemReminder = itemRemindersById[draggedItem.id],
                         modifier = Modifier
                             .fillMaxWidth()
