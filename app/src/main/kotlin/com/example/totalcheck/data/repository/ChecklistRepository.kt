@@ -201,6 +201,76 @@ class ChecklistRepository(
         WidgetSyncManager.notifyDataChanged(appContext)
     }
 
+    suspend fun stripTagFromAllItems(
+        tagToken: String,
+        checklistId: Long? = null
+    ): Map<Long, String> {
+        val cleanTarget = com.example.totalcheck.ui.main.TagCatalog.sanitizeTagToken(tagToken)
+        if (cleanTarget.isEmpty()) return emptyMap()
+        val now = System.currentTimeMillis()
+        val targetItems = dao.getAllItems().let { all ->
+            if (checklistId != null) all.filter { it.checklistId == checklistId } else all
+        }
+        val previousTagsByItemId = LinkedHashMap<Long, String>()
+        val updatedEntities = ArrayList<CheckItemEntity>()
+        val logs = ArrayList<ItemStatusLogEntity>()
+        for (item in targetItems) {
+            val currentTags = com.example.totalcheck.ui.main.TagCatalog.parseItemTags(item.tags)
+            if (cleanTarget in currentTags) {
+                previousTagsByItemId[item.id] = item.tags
+                val nextSerialized = com.example.totalcheck.ui.main.TagCatalog.serializeItemTags(
+                    currentTags.filterNot { it == cleanTarget }
+                )
+                updatedEntities.add(item.copy(tags = nextSerialized, updatedAt = now))
+                logs.add(
+                    ItemStatusLogEntity(
+                        itemId = item.id,
+                        checklistId = item.checklistId,
+                        actionType = ItemStatusLogEntity.ActionType.TAGS_UPDATED,
+                        previousValue = item.tags,
+                        newValue = nextSerialized,
+                        occurredAt = now
+                    )
+                )
+            }
+        }
+        if (updatedEntities.isNotEmpty()) {
+            dao.updateItems(updatedEntities)
+            runCatching { itemStatusLogDao.insertLogs(logs) }
+            WidgetSyncManager.notifyDataChanged(appContext)
+        }
+        return previousTagsByItemId
+    }
+
+    suspend fun restoreItemTagsSnapshot(previousTagsByItemId: Map<Long, String>) {
+        if (previousTagsByItemId.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val allItems = dao.getAllItems().associateBy { it.id }
+        val updatedEntities = ArrayList<CheckItemEntity>()
+        val logs = ArrayList<ItemStatusLogEntity>()
+        for ((itemId, previousSerialized) in previousTagsByItemId) {
+            val existing = allItems[itemId] ?: continue
+            if (existing.tags != previousSerialized) {
+                updatedEntities.add(existing.copy(tags = previousSerialized, updatedAt = now))
+                logs.add(
+                    ItemStatusLogEntity(
+                        itemId = existing.id,
+                        checklistId = existing.checklistId,
+                        actionType = ItemStatusLogEntity.ActionType.TAGS_UPDATED,
+                        previousValue = existing.tags,
+                        newValue = previousSerialized,
+                        occurredAt = now
+                    )
+                )
+            }
+        }
+        if (updatedEntities.isNotEmpty()) {
+            dao.updateItems(updatedEntities)
+            runCatching { itemStatusLogDao.insertLogs(logs) }
+            WidgetSyncManager.notifyDataChanged(appContext)
+        }
+    }
+
     suspend fun restoreItem(item: CheckItemEntity) {
         val now = System.currentTimeMillis()
         dao.insertItem(item.copy(updatedAt = now))

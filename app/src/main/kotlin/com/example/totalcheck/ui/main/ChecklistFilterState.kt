@@ -5,13 +5,15 @@ import com.example.totalcheck.data.local.CheckItemEntity
 
 /**
  * 清單篩選狀態架構模型。
- * 目前由資訊卡「篩選」按鈕切換 [showUncheckedOnly]，並預留分類、標籤與關鍵字擴充欄位。
+ * 支援「只看未帶」、全域標籤（跨清單作用）、清單標籤（僅於所屬 [selectedTagChecklistId] 清單作用），
+ * 並預留分類與關鍵字擴充欄位。
  */
 @Immutable
 data class ChecklistFilterState(
     val showUncheckedOnly: Boolean = false,
     val selectedCategories: Set<String> = emptySet(),
     val selectedTags: Set<String> = emptySet(),
+    val selectedTagChecklistId: Long? = null,
     val searchQuery: String = ""
 ) {
     val isActive: Boolean
@@ -19,6 +21,24 @@ data class ChecklistFilterState(
             selectedCategories.isNotEmpty() ||
             selectedTags.isNotEmpty() ||
             searchQuery.isNotBlank()
+
+    fun effectiveSelectedTagsForChecklist(checklistId: Long): Set<String> {
+        if (selectedTags.isEmpty()) return emptySet()
+        return selectedTags.filterTo(LinkedHashSet()) { token ->
+            if (TagCatalog.isChecklistTagToken(token)) {
+                selectedTagChecklistId == null || selectedTagChecklistId == checklistId
+            } else {
+                true
+            }
+        }
+    }
+
+    fun isActiveForChecklist(checklistId: Long): Boolean {
+        return showUncheckedOnly ||
+            selectedCategories.isNotEmpty() ||
+            effectiveSelectedTagsForChecklist(checklistId).isNotEmpty() ||
+            searchQuery.isNotBlank()
+    }
 
     fun matches(
         item: CheckItemEntity,
@@ -31,13 +51,10 @@ data class ChecklistFilterState(
         if (selectedCategories.isNotEmpty() && item.category !in selectedCategories) {
             return false
         }
-        if (selectedTags.isNotEmpty()) {
-            val itemTagTokens = item.tags
-                .split(',')
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .toSet()
-            if (itemTagTokens.none { it in selectedTags }) {
+        val activeTagsForItemChecklist = effectiveSelectedTagsForChecklist(item.checklistId)
+        if (activeTagsForItemChecklist.isNotEmpty()) {
+            val itemTagTokens = TagCatalog.parseItemTags(item.tags).toSet()
+            if (itemTagTokens.none { it in activeTagsForItemChecklist }) {
                 return false
             }
         }

@@ -169,9 +169,11 @@ internal sealed interface ChecklistModalContent {
     ) : ChecklistModalContent
     data class ItemTagPicker(
         val item: CheckItemEntity,
+        val checklistId: Long,
     ) : ChecklistModalContent
     data class SelectFilterTag(
-        val activeTagName: String?,
+        val activeTagToken: String?,
+        val checklistId: Long,
     ) : ChecklistModalContent
 }
 
@@ -209,10 +211,15 @@ internal fun ScopedModalHost(
     archivedItemsByChecklist: Map<Long, List<CheckItemEntity>> = emptyMap(),
     onUnarchiveItem: (CheckItemEntity) -> Unit = {},
     onDeleteArchivedItemForever: (CheckItemEntity) -> Unit = {},
-    tagPool: List<TagDefinition> = TagCatalog.DEFAULT_SEED_TAGS,
-    onSaveItemTags: (itemId: Long, tags: List<String>) -> Unit = { _, _ -> },
-    onCreateTagInPool: (name: String, iconKey: String, onCreated: (TagDefinition) -> Unit) -> Unit = { _, _, _ -> },
-    onSelectFilterTag: (tagName: String?) -> Unit = {},
+    globalTagPool: List<TagDefinition> = TagCatalog.DEFAULT_SEED_TAGS,
+    checklistTagPools: Map<Long, List<TagDefinition>> = emptyMap(),
+    onSaveItemTags: (
+        checklistId: Long,
+        itemId: Long,
+        previousTags: List<String>,
+        tags: List<String>,
+    ) -> Unit = { _, _, _, _ -> },
+    onSelectFilterTag: (tagToken: String?, checklistId: Long) -> Unit = { _, _ -> },
     onExited: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -252,8 +259,7 @@ internal fun ScopedModalHost(
     val isTextInputModal = modalContent is ChecklistModalContent.CreateChecklist ||
         modalContent is ChecklistModalContent.RenameChecklist
     val supportsDynamicIme = isTextInputModal ||
-        modalContent is ChecklistModalContent.ConfigureReminder ||
-        modalContent is ChecklistModalContent.ItemTagPicker
+        modalContent is ChecklistModalContent.ConfigureReminder
     var expectImeForModal by remember(sessionKey) { mutableStateOf(isTextInputModal) }
     var isPrimaryInputFocused by remember(sessionKey) { mutableStateOf(false) }
     var isTitleInputFocused by remember(sessionKey) { mutableStateOf(false) }
@@ -1529,37 +1535,22 @@ internal fun ScopedModalHost(
 
                 is ChecklistModalContent.ItemTagPicker -> {
                     val targetItem = modalContent.item
+                    val checklistId = modalContent.checklistId
+                    val initialTags = remember(sessionKey) {
+                        TagCatalog.parseItemTags(targetItem.tags)
+                    }
                     var selectedTags by remember(sessionKey) {
-                        mutableStateOf(TagCatalog.parseItemTags(targetItem.tags))
+                        mutableStateOf(initialTags)
                     }
-                    var newTagName by remember(sessionKey) { mutableStateOf("") }
-                    var selectedIconKey by remember(sessionKey) {
-                        mutableStateOf(TagCatalog.DEFAULT_ICON_KEY)
-                    }
-                    val sanitizedNewName = TagCatalog.sanitizeTagName(newTagName)
-                    val canCreateNewTag = sanitizedNewName.isNotEmpty()
-                    val addAndApplyNewTag: () -> Unit = {
-                        if (canCreateNewTag && isOpen) {
-                            val iconToUse = selectedIconKey
-                            onCreateTagInPool(sanitizedNewName, iconToUse) { created ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                if (created.name !in selectedTags && selectedTags.size < TagCatalog.MAX_TAGS_PER_ITEM) {
-                                    selectedTags = selectedTags + created.name
-                                }
-                            }
-                            newTagName = ""
-                            expectImeForModal = false
-                            isPrimaryInputFocused = false
-                            keyboardController?.hide()
-                            focusManager.clearFocus()
-                        }
+                    val mergedTags = remember(globalTagPool, checklistTagPools, checklistId) {
+                        globalTagPool + checklistTagPools[checklistId].orEmpty()
                     }
 
                     ModalPanelContainer(
                         panelProgressProvider = { panelProgress.value },
                         translateYPx = translateYPx,
                         isReducedMotion = isReducedMotion,
-                        hasTextInput = true,
+                        hasTextInput = false,
                         confirmEnabled = true,
                         animateSize = true,
                         primaryFocus = primaryFocus,
@@ -1626,16 +1617,21 @@ internal fun ScopedModalHost(
                                 confirmLabel = stringResource(R.string.action_save),
                                 confirmEnabled = true,
                                 isDestructive = false,
-                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(1 + btnIdx) },
+                                onFocusIndexChanged = { btnIdx -> onFocusIndexChanged(btnIdx) },
                                 onCancel = { if (isOpen) onRequestClose(true) },
                                 onConfirm = {
                                     if (isOpen) {
-                                        onSaveItemTags(targetItem.id, selectedTags)
+                                        onSaveItemTags(
+                                            checklistId,
+                                            targetItem.id,
+                                            initialTags,
+                                            selectedTags
+                                        )
                                     }
                                 }
                             )
                         }
-                    ) { onFocusIndexChanged ->
+                    ) { _ ->
                         Text(
                             text = stringResource(R.string.item_tags_pool_label),
                             style = MaterialTheme.typography.labelLarge,
@@ -1644,178 +1640,80 @@ internal fun ScopedModalHost(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            tagPool.forEach { tagDef ->
-                                val isSelected = tagDef.name in selectedTags
-                                val canToggle = isSelected || selectedTags.size < TagCatalog.MAX_TAGS_PER_ITEM
-                                TactileButton(
-                                    onClick = {
-                                        if (isSelected) {
-                                            selectedTags = selectedTags - tagDef.name
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        } else if (canToggle) {
-                                            selectedTags = selectedTags + tagDef.name
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        }
-                                    },
-                                    enabled = canToggle,
-                                    shape = RoundedCornerShape(50),
-                                    containerColor = if (isSelected) {
-                                        colorScheme.primaryContainer
-                                    } else {
-                                        colorScheme.surfaceContainerHighest
-                                    },
-                                    contentColor = if (isSelected) {
-                                        colorScheme.onPrimaryContainer
-                                    } else {
-                                        colorScheme.onSurface
-                                    },
-                                    disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
-                                    disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
-                                    border = BorderStroke(
-                                        width = if (isSelected) 1.5.dp else 1.dp,
-                                        color = if (isSelected) {
-                                            colorScheme.primary
-                                        } else {
-                                            colorScheme.outlineVariant
-                                        }
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
-                                    modifier = Modifier.testTag("tag_pool_chip_${tagDef.name}")
-                                ) {
-                                    Icon(
-                                        imageVector = TagCatalog.resolveTagIcon(tagDef.iconKey),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = tagDef.name,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                    )
-                                    if (isSelected) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = Icons.Rounded.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = stringResource(R.string.item_tags_create_section_label),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = newTagName,
-                                onValueChange = { newTagName = it },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .focusRequester(primaryFocus)
-                                    .onFocusChanged {
-                                        val focused = it.hasFocus || it.isFocused
-                                        isPrimaryInputFocused = focused
-                                        if (focused) {
-                                            onFocusIndexChanged(0)
-                                            expectImeForModal = true
-                                        }
-                                    }
-                                    .testTag("new_tag_name_input"),
-                                placeholder = {
-                                    Text(stringResource(R.string.item_tags_new_name_placeholder))
-                                },
-                                singleLine = true,
-                                shape = RoundedCornerShape(16.dp),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(
-                                    onDone = { addAndApplyNewTag() }
-                                )
+                        if (mergedTags.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.item_tags_pool_empty_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
                             )
-                            TactileButton(
-                                onClick = addAndApplyNewTag,
-                                enabled = canCreateNewTag,
-                                shape = RoundedCornerShape(16.dp),
-                                containerColor = colorScheme.secondaryContainer,
-                                contentColor = colorScheme.onSecondaryContainer,
-                                disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
-                                disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                                modifier = Modifier.testTag("create_tag_button")
+                        } else {
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(R.string.action_create),
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TagCatalog.PRESET_ICONS.forEach { option ->
-                                val isIconSelected = selectedIconKey == option.key
-                                TactileIconButton(
-                                    onClick = {
-                                        selectedIconKey = option.key
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    },
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .testTag("tag_icon_option_${option.key}"),
-                                    shape = CircleShape,
-                                    containerColor = if (isIconSelected) {
-                                        colorScheme.primaryContainer
-                                    } else {
-                                        colorScheme.surfaceContainerHighest
-                                    },
-                                    contentColor = if (isIconSelected) {
-                                        colorScheme.onPrimaryContainer
-                                    } else {
-                                        colorScheme.onSurfaceVariant
-                                    },
-                                    border = BorderStroke(
-                                        width = if (isIconSelected) 1.5.dp else 1.dp,
-                                        color = if (isIconSelected) {
-                                            colorScheme.primary
+                                mergedTags.forEach { tagDef ->
+                                    val token = tagDef.storageToken
+                                    val isSelected = token in selectedTags
+                                    val canToggle = isSelected || selectedTags.size < TagCatalog.MAX_TAGS_PER_ITEM
+                                    TactileButton(
+                                        onClick = {
+                                            if (isSelected) {
+                                                selectedTags = selectedTags - token
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            } else if (canToggle) {
+                                                selectedTags = selectedTags + token
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            }
+                                        },
+                                        enabled = canToggle,
+                                        shape = RoundedCornerShape(50),
+                                        containerColor = if (isSelected) {
+                                            colorScheme.primaryContainer
                                         } else {
-                                            colorScheme.outlineVariant
+                                            colorScheme.surfaceContainerHighest
+                                        },
+                                        contentColor = if (isSelected) {
+                                            colorScheme.onPrimaryContainer
+                                        } else {
+                                            colorScheme.onSurface
+                                        },
+                                        disabledContainerColor = colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                                        disabledContentColor = colorScheme.onSurface.copy(alpha = 0.38f),
+                                        border = BorderStroke(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = if (isSelected) {
+                                                colorScheme.primary
+                                            } else {
+                                                colorScheme.outlineVariant
+                                            }
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                        modifier = Modifier.testTag(
+                                            "tag_pool_chip_${tagDef.scope.name.lowercase()}_${tagDef.name}"
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = TagCatalog.resolveTagIcon(tagDef.iconKey, tagDef.scope),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = tagDef.name,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                        if (isSelected) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                imageVector = Icons.Rounded.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
                                         }
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = option.icon,
-                                        contentDescription = option.key,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -1823,7 +1721,11 @@ internal fun ScopedModalHost(
                 }
 
                 is ChecklistModalContent.SelectFilterTag -> {
-                    val activeTag = modalContent.activeTagName
+                    val activeTagToken = modalContent.activeTagToken
+                    val checklistId = modalContent.checklistId
+                    val mergedTags = remember(globalTagPool, checklistTagPools, checklistId) {
+                        globalTagPool + checklistTagPools[checklistId].orEmpty()
+                    }
                     ModalPanelContainer(
                         panelProgressProvider = { panelProgress.value },
                         translateYPx = translateYPx,
@@ -1881,20 +1783,20 @@ internal fun ScopedModalHost(
                             FilterTagOptionRow(
                                 label = stringResource(R.string.filter_tag_all_items),
                                 icon = Icons.Rounded.FilterList,
-                                isSelected = activeTag == null,
+                                isSelected = activeTagToken == null,
                                 testTag = "filter_tag_option_all",
                                 onClick = {
-                                    if (isOpen) onSelectFilterTag(null)
+                                    if (isOpen) onSelectFilterTag(null, checklistId)
                                 }
                             )
-                            tagPool.forEach { tagDef ->
+                            mergedTags.forEach { tagDef ->
                                 FilterTagOptionRow(
                                     label = tagDef.name,
-                                    icon = TagCatalog.resolveTagIcon(tagDef.iconKey),
-                                    isSelected = activeTag == tagDef.name,
-                                    testTag = "filter_tag_option_${tagDef.name}",
+                                    icon = TagCatalog.resolveTagIcon(tagDef.iconKey, tagDef.scope),
+                                    isSelected = activeTagToken == tagDef.storageToken,
+                                    testTag = "filter_tag_option_${tagDef.scope.name.lowercase()}_${tagDef.name}",
                                     onClick = {
-                                        if (isOpen) onSelectFilterTag(tagDef.name)
+                                        if (isOpen) onSelectFilterTag(tagDef.storageToken, checklistId)
                                     }
                                 )
                             }

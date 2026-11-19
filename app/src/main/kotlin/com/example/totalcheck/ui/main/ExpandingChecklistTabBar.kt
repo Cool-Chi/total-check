@@ -1,5 +1,6 @@
 package com.example.totalcheck.ui.main
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.TargetBasedAnimation
@@ -7,6 +8,9 @@ import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,20 +18,27 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -67,6 +78,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -84,7 +96,9 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -96,7 +110,10 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -319,6 +336,8 @@ internal fun ExpandingChecklistTabBar(
     activeChecklistIdProvider: () -> Long?,
     onSelectPage: (Int) -> Unit,
     onReorderChecklists: (List<Long>) -> Unit,
+    onRenameChecklist: (Long, String) -> Unit = { _, _ -> },
+    onInlineRenameActiveChanged: (Boolean) -> Unit = {},
     onMoveChecklistLeft: ((Long) -> Unit)? = null,
     onMoveChecklistRight: ((Long) -> Unit)? = null,
     onAddChecklist: () -> Unit,
@@ -331,14 +350,27 @@ internal fun ExpandingChecklistTabBar(
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val viewConfig = LocalViewConfiguration.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val isReducedMotion = LocalReducedMotion.current
     val currentDistantProvider by rememberUpdatedState(distantTabTransitionProvider)
     val currentActiveChecklistIdProvider by rememberUpdatedState(activeChecklistIdProvider)
     val currentOnSelectPage by rememberUpdatedState(onSelectPage)
     val currentOnReorderChecklists by rememberUpdatedState(onReorderChecklists)
+    val currentOnRenameChecklist by rememberUpdatedState(onRenameChecklist)
+    val currentOnInlineRenameActiveChanged by rememberUpdatedState(onInlineRenameActiveChanged)
     val currentOnMoveChecklistLeft by rememberUpdatedState(onMoveChecklistLeft)
     val currentOnMoveChecklistRight by rememberUpdatedState(onMoveChecklistRight)
+
+    var editingChecklistId by remember { mutableStateOf<Long?>(null) }
+    var editingTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    val currentEditingChecklistIdState = rememberUpdatedState(editingChecklistId)
+    val currentEditingTextValueState = rememberUpdatedState(editingTextFieldValue)
+
+    LaunchedEffect(editingChecklistId) {
+        currentOnInlineRenameActiveChanged(editingChecklistId != null)
+    }
 
     val scrollState = rememberScrollState()
     var viewportWidthPx by remember { mutableIntStateOf(0) }
@@ -349,6 +381,7 @@ internal fun ExpandingChecklistTabBar(
     val tabPressStates = remember { HashMap<Long, TabPressState>() }
     DisposableEffect(Unit) {
         onDispose {
+            currentOnInlineRenameActiveChanged(false)
             tabPressStates.values.forEach { it.animJob?.cancel() }
             tabPressStates.clear()
         }
@@ -412,6 +445,48 @@ internal fun ExpandingChecklistTabBar(
                     .coerceIn(0, (list.size - 1).coerceAtLeast(0))
                 list.getOrNull(fallbackIdx)?.id
             }
+        }
+    }
+
+    val commitTabInlineRename: () -> Unit = {
+        val targetId = currentEditingChecklistIdState.value
+        if (targetId != null) {
+            val trimmed = currentEditingTextValueState.value.text.trim()
+            if (trimmed.isNotEmpty()) {
+                currentOnRenameChecklist(targetId, trimmed)
+            }
+            editingChecklistId = null
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        }
+    }
+
+    val startTabInlineRename: (Long) -> Unit = { targetId ->
+        val currentTarget = currentChecklistsState.value.firstOrNull { it.id == targetId }
+        if (currentTarget != null) {
+            val prevId = currentEditingChecklistIdState.value
+            if (prevId != null && prevId != targetId) {
+                val prevTrimmed = currentEditingTextValueState.value.text.trim()
+                if (prevTrimmed.isNotEmpty()) {
+                    currentOnRenameChecklist(prevId, prevTrimmed)
+                }
+            }
+            editingTextFieldValue = TextFieldValue(
+                text = currentTarget.name,
+                selection = TextRange(0, currentTarget.name.length)
+            )
+            editingChecklistId = targetId
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    BackHandler(enabled = editingChecklistId != null) {
+        commitTabInlineRename()
+    }
+
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress && currentEditingChecklistIdState.value != null) {
+            commitTabInlineRename()
         }
     }
     val isOrderFrozenState = remember(pagerState) {
@@ -732,6 +807,8 @@ internal fun ExpandingChecklistTabBar(
 
             Layout(
                 modifier = Modifier.pointerInput(isReducedMotion) {
+                    var lastSelectedTapId = -1L
+                    var lastSelectedTapUpTimeMs = 0L
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = true)
                         if (draggedChecklistId != null || isSettlingDrop) return@awaitEachGesture
@@ -755,8 +832,18 @@ internal fun ExpandingChecklistTabBar(
                                 }
                             }
                         }
+                        val activeEditId = currentEditingChecklistIdState.value
+                        if (activeEditId != null) {
+                            if (hitId == activeEditId) {
+                                // 讓行內編輯器之 BasicTextField 與確認按鈕直接接收觸控
+                                return@awaitEachGesture
+                            } else {
+                                commitTabInlineRename()
+                            }
+                        }
                         if (hitId <= 0L || hitId == draggedChecklistId) return@awaitEachGesture
 
+                        val wasAlreadySelectedOnDown = hitId == resolvedActiveChecklistIdProvider()
                         val pressState = tabPressStates.getOrPut(hitId) { TabPressState() }
                         val downTimeMs = down.uptimeMillis
                         var longPressFired = false
@@ -872,9 +959,27 @@ internal fun ExpandingChecklistTabBar(
                                     longPressJob?.cancel()
                                     animateToRest()
                                     if (!longPressFired && isInsideBounds) {
-                                        val realIdx = currentChecklistsState.value.indexOfFirst { it.id == hitId }
-                                        if (realIdx >= 0) {
-                                            currentOnSelectPage(realIdx)
+                                        val nowMs = change.uptimeMillis
+                                        if (
+                                            wasAlreadySelectedOnDown &&
+                                            lastSelectedTapId == hitId &&
+                                            (nowMs - lastSelectedTapUpTimeMs) in 1L..360L
+                                        ) {
+                                            lastSelectedTapId = -1L
+                                            lastSelectedTapUpTimeMs = 0L
+                                            startTabInlineRename(hitId)
+                                        } else {
+                                            if (wasAlreadySelectedOnDown) {
+                                                lastSelectedTapId = hitId
+                                                lastSelectedTapUpTimeMs = nowMs
+                                            } else {
+                                                lastSelectedTapId = -1L
+                                                lastSelectedTapUpTimeMs = 0L
+                                            }
+                                            val realIdx = currentChecklistsState.value.indexOfFirst { it.id == hitId }
+                                            if (realIdx >= 0) {
+                                                currentOnSelectPage(realIdx)
+                                            }
                                         }
                                     }
                                     break
@@ -952,85 +1057,100 @@ internal fun ExpandingChecklistTabBar(
                                 val tagMetricsHolder = remember(checklist.id) {
                                     metricsHoldersById.getOrPut(checklist.id) { ExpandingTagMetricsHolder() }
                                 }
-                                val tagPressState = remember(checklist.id) {
-                                    tabPressStates.getOrPut(checklist.id) { TabPressState() }
-                                }
-                                val currentIndexState = rememberUpdatedState(index)
-                                val totalListSizeState = rememberUpdatedState(displayedChecklists.size)
-                                val canReorder = displayedChecklists.size > 1
-                                val tabSelectionFractionProvider = remember(checklist.id, selectionFractionFor) {
-                                    { selectionFractionFor(currentIndexState.value, checklist.id) }
-                                }
-                                val tabIsSelectedProvider = remember(checklist.id, resolvedActiveChecklistIdProvider) {
-                                    { checklist.id == resolvedActiveChecklistIdProvider() }
-                                }
-                                val onSelectTab = remember(checklist.id) {
-                                    {
-                                        val realIdx = currentChecklistsState.value.indexOfFirst {
-                                            it.id == checklist.id
-                                        }
-                                        if (realIdx >= 0) {
-                                            currentOnSelectPage(realIdx)
-                                        }
+                                if (editingChecklistId == checklist.id) {
+                                    InlineEditingChecklistTag(
+                                        checklist = checklist,
+                                        value = editingTextFieldValue,
+                                        onValueChange = { nextVal ->
+                                            if (nextVal.text.length <= 40) {
+                                                editingTextFieldValue = nextVal
+                                            }
+                                        },
+                                        metricsHolder = tagMetricsHolder,
+                                        onConfirm = commitTabInlineRename
+                                    )
+                                } else {
+                                    val tagPressState = remember(checklist.id) {
+                                        tabPressStates.getOrPut(checklist.id) { TabPressState() }
                                     }
-                                }
-                                val hasMoveLeft = onMoveChecklistLeft != null
-                                val hasMoveRight = onMoveChecklistRight != null
-                                val onMoveLeftTab = remember(checklist.id, hasMoveLeft) {
-                                    if (hasMoveLeft) {
-                                        { currentOnMoveChecklistLeft?.invoke(checklist.id); Unit }
-                                    } else {
-                                        null
+                                    val currentIndexState = rememberUpdatedState(index)
+                                    val totalListSizeState = rememberUpdatedState(displayedChecklists.size)
+                                    val canReorder = displayedChecklists.size > 1
+                                    val tabSelectionFractionProvider = remember(checklist.id, selectionFractionFor) {
+                                        { selectionFractionFor(currentIndexState.value, checklist.id) }
                                     }
-                                }
-                                val onMoveRightTab = remember(checklist.id, hasMoveRight) {
-                                    if (hasMoveRight) {
-                                        { currentOnMoveChecklistRight?.invoke(checklist.id); Unit }
-                                    } else {
-                                        null
+                                    val tabIsSelectedProvider = remember(checklist.id, resolvedActiveChecklistIdProvider) {
+                                        { checklist.id == resolvedActiveChecklistIdProvider() }
                                     }
-                                }
-                                val onMoveFocusLeftTab = remember(checklist.id) {
-                                    {
-                                        val prevIdx = currentIndexState.value - 1
-                                        if (prevIdx >= 0) {
-                                            currentOnSelectPage(prevIdx)
-                                            currentDisplayedChecklistsState.value.getOrNull(prevIdx)?.let { prevList ->
-                                                focusRequesters[prevList.id]?.requestFocus()
+                                    val onSelectTab = remember(checklist.id) {
+                                        {
+                                            val realIdx = currentChecklistsState.value.indexOfFirst {
+                                                it.id == checklist.id
+                                            }
+                                            if (realIdx >= 0) {
+                                                currentOnSelectPage(realIdx)
                                             }
                                         }
                                     }
-                                }
-                                val onMoveFocusRightTab = remember(checklist.id) {
-                                    {
-                                        val nextIdx = currentIndexState.value + 1
-                                        if (nextIdx < totalListSizeState.value) {
-                                            currentOnSelectPage(nextIdx)
-                                            currentDisplayedChecklistsState.value.getOrNull(nextIdx)?.let { nextList ->
-                                                focusRequesters[nextList.id]?.requestFocus()
+                                    val hasMoveLeft = onMoveChecklistLeft != null
+                                    val hasMoveRight = onMoveChecklistRight != null
+                                    val onMoveLeftTab = remember(checklist.id, hasMoveLeft) {
+                                        if (hasMoveLeft) {
+                                            { currentOnMoveChecklistLeft?.invoke(checklist.id); Unit }
+                                        } else {
+                                            null
+                                        }
+                                    }
+                                    val onMoveRightTab = remember(checklist.id, hasMoveRight) {
+                                        if (hasMoveRight) {
+                                            { currentOnMoveChecklistRight?.invoke(checklist.id); Unit }
+                                        } else {
+                                            null
+                                        }
+                                    }
+                                    val onMoveFocusLeftTab = remember(checklist.id) {
+                                        {
+                                            val prevIdx = currentIndexState.value - 1
+                                            if (prevIdx >= 0) {
+                                                currentOnSelectPage(prevIdx)
+                                                currentDisplayedChecklistsState.value.getOrNull(prevIdx)?.let { prevList ->
+                                                    focusRequesters[prevList.id]?.requestFocus()
+                                                }
                                             }
                                         }
                                     }
-                                }
+                                    val onMoveFocusRightTab = remember(checklist.id) {
+                                        {
+                                            val nextIdx = currentIndexState.value + 1
+                                            if (nextIdx < totalListSizeState.value) {
+                                                currentOnSelectPage(nextIdx)
+                                                currentDisplayedChecklistsState.value.getOrNull(nextIdx)?.let { nextList ->
+                                                    focusRequesters[nextList.id]?.requestFocus()
+                                                }
+                                            }
+                                        }
+                                    }
 
-                                ExpandingChecklistTag(
-                                    checklist = checklist,
-                                    totalCount = totalCount,
-                                    uncheckedCount = uncheckedCount,
-                                    metricsHolder = tagMetricsHolder,
-                                    pressState = tagPressState,
-                                    isSelectedProvider = tabIsSelectedProvider,
-                                    canReorder = canReorder,
-                                    canMoveLeft = index > 0,
-                                    canMoveRight = index < displayedChecklists.size - 1,
-                                    selectionFractionProvider = tabSelectionFractionProvider,
-                                    focusRequester = requester,
-                                    onSelect = onSelectTab,
-                                    onMoveLeftAction = onMoveLeftTab,
-                                    onMoveRightAction = onMoveRightTab,
-                                    onMoveFocusLeft = onMoveFocusLeftTab,
-                                    onMoveFocusRight = onMoveFocusRightTab
-                                )
+                                    ExpandingChecklistTag(
+                                        checklist = checklist,
+                                        totalCount = totalCount,
+                                        uncheckedCount = uncheckedCount,
+                                        metricsHolder = tagMetricsHolder,
+                                        pressState = tagPressState,
+                                        isSelectedProvider = tabIsSelectedProvider,
+                                        canReorder = canReorder,
+                                        canMoveLeft = index > 0,
+                                        canMoveRight = index < displayedChecklists.size - 1,
+                                        selectionFractionProvider = tabSelectionFractionProvider,
+                                        focusRequester = requester,
+                                        onSelect = onSelectTab,
+                                        onStartInlineRename = { startTabInlineRename(checklist.id) },
+                                        onMoveLeftAction = onMoveLeftTab,
+                                        onMoveRightAction = onMoveRightTab,
+                                        onMoveFocusLeft = onMoveFocusLeftTab,
+                                        onMoveFocusRight = onMoveFocusRightTab
+                                    )
+                                }
                             }
                         }
                     }
@@ -1498,6 +1618,84 @@ private fun StaticExpandingTagTexts(
 }
 
 @Composable
+private fun InlineEditingChecklistTag(
+    checklist: ChecklistEntity,
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    metricsHolder: ExpandingTagMetricsHolder,
+    onConfirm: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val inputFocusRequester = remember(checklist.id) { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val titleStyle = MaterialTheme.typography.labelLarge.copy(
+        fontWeight = FontWeight.Bold,
+        color = colorScheme.onPrimaryContainer
+    )
+
+    LaunchedEffect(checklist.id) {
+        withFrameNanos { }
+        inputFocusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
+    Layout(
+        modifier = Modifier.testTag("checklist_tab_editing_${checklist.id}"),
+        content = {
+            Row(
+                modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(colorScheme.primaryContainer)
+                    .border(2.dp, colorScheme.primary, RoundedCornerShape(50))
+                    .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = titleStyle,
+                    cursorBrush = SolidColor(colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm() }),
+                    modifier = Modifier
+                        .widthIn(min = 56.dp, max = 160.dp)
+                        .focusRequester(inputFocusRequester)
+                        .testTag("checklist_tab_inline_input_${checklist.id}")
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(colorScheme.primary)
+                        .clickable(onClick = onConfirm)
+                        .testTag("checklist_tab_inline_confirm_${checklist.id}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.cd_save_name),
+                        tint = colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    ) { measurables, constraints ->
+        val p = measurables[0].measure(constraints)
+        metricsHolder.baseWidthPx = p.width.toFloat()
+        metricsHolder.expandedWidthPx = p.width.toFloat()
+        metricsHolder.pillHeightPx = p.height
+        layout(p.width, p.height) {
+            p.placeRelative(0, 0)
+        }
+    }
+}
+
+@Composable
 private fun ExpandingChecklistTag(
     checklist: ChecklistEntity,
     totalCount: Int,
@@ -1511,6 +1709,7 @@ private fun ExpandingChecklistTag(
     selectionFractionProvider: () -> Float,
     focusRequester: FocusRequester,
     onSelect: () -> Unit,
+    onStartInlineRename: () -> Unit,
     onMoveLeftAction: (() -> Unit)?,
     onMoveRightAction: (() -> Unit)?,
     onMoveFocusLeft: () -> Unit,
@@ -1561,6 +1760,7 @@ private fun ExpandingChecklistTag(
     }
     val moveLeftLabel = stringResource(R.string.a11y_move_left)
     val moveRightLabel = stringResource(R.string.a11y_move_right)
+    val inlineRenameLabel = stringResource(R.string.a11y_double_tap_rename_checklist)
 
     val basePadHPx = with(density) { 14.dp.toPx() }
     val expandedPadHPx = with(density) { 18.dp.toPx() }
@@ -1662,15 +1862,19 @@ private fun ExpandingChecklistTag(
                 }
             }
             .semantics {
+                val isSelectedNow = isSelectedProvider()
                 role = Role.Tab
-                selected = isSelectedProvider()
+                selected = isSelectedNow
                 contentDescription = a11yDescription
                 onClick {
                     onSelect()
                     true
                 }
-                if (canReorder) {
-                    val actions = buildList {
+                val actions = buildList {
+                    if (isSelectedNow) {
+                        add(CustomAccessibilityAction(inlineRenameLabel) { onStartInlineRename(); true })
+                    }
+                    if (canReorder) {
                         if (canMoveLeft && onMoveLeftAction != null) {
                             add(CustomAccessibilityAction(moveLeftLabel) { onMoveLeftAction(); true })
                         }
@@ -1678,9 +1882,9 @@ private fun ExpandingChecklistTag(
                             add(CustomAccessibilityAction(moveRightLabel) { onMoveRightAction(); true })
                         }
                     }
-                    if (actions.isNotEmpty()) {
-                        customActions = actions
-                    }
+                }
+                if (actions.isNotEmpty()) {
+                    customActions = actions
                 }
             },
         content = {

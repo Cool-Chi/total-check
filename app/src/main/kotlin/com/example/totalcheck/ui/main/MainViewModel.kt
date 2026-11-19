@@ -33,6 +33,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+data class DeletedTagSnapshot(
+    val tag: TagDefinition,
+    val checklistId: Long?,
+    val poolIndex: Int,
+    val previousTagsByItemId: Map<Long, String>,
+    val wasActiveFilterTag: Boolean
+)
+
+sealed interface QuickTagToggleResult {
+    data class Added(val tag: TagDefinition) : QuickTagToggleResult
+    data class Removed(val tag: TagDefinition) : QuickTagToggleResult
+    data object LimitReached : QuickTagToggleResult
+    data object NoTagAvailable : QuickTagToggleResult
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getInstance(application)
@@ -273,6 +288,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = TagCatalog.DEFAULT_SEED_TAGS
         )
 
+    val checklistTagPools: StateFlow<Map<Long, List<TagDefinition>>> =
+        preferencesRepository.checklistTagPools
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyMap()
+            )
+
+    private val lastAddedTagTokenByChecklist = HashMap<Long, String>()
+
     private val _filterState = MutableStateFlow(ChecklistFilterState())
     val filterState: StateFlow<ChecklistFilterState> = _filterState.asStateFlow()
 
@@ -325,12 +350,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectChecklist(checklistId: Long) {
         _selectedChecklistId.value = checklistId
+        clearForeignChecklistTagFilter(activeChecklistId = checklistId)
     }
 
     fun selectAndScrollToChecklist(checklistId: Long) {
         if (checklistId <= 0L) return
         _selectedChecklistId.value = checklistId
         _pendingScrollToChecklistId.value = checklistId
+        clearForeignChecklistTagFilter(activeChecklistId = checklistId)
+    }
+
+    private fun clearForeignChecklistTagFilter(activeChecklistId: Long) {
+        _filterState.update { current ->
+            val ownerId = current.selectedTagChecklistId
+            if (ownerId != null && ownerId != activeChecklistId) {
+                val remaining = current.selectedTags.filterNotTo(LinkedHashSet()) {
+                    TagCatalog.isChecklistTagToken(it)
+                }
+                current.copy(
+                    selectedTags = remaining,
+                    selectedTagChecklistId = null
+                )
+            } else {
+                current
+            }
+        }
     }
 
     fun createChecklist(name: String) {
@@ -471,10 +515,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(selectedTags = tags) }
     }
 
-    fun selectFilterTag(tagName: String?) {
-        val clean = tagName?.let { TagCatalog.sanitizeTagName(it) }?.takeIf { it.isNotEmpty() }
+    fun selectFilterTag(tagToken: String?, checklistId: Long? = null) {
+        val clean = tagToken?.let { TagCatalog.sanitizeTagToken(it) }?.takeIf { it.isNotEmpty() }
+        val scopedChecklistId = if (clean != null && TagCatalog.isChecklistTagToken(clean)) {
+            checklistId ?: _selectedChecklistId.value
+        } else {
+            null
+        }
         _filterState.update { current ->
-            current.copy(selectedTags = if (clean == null) emptySet() else setOf(clean))
+            current.copy(
+                selectedTags = if (clean == null) emptySet() else setOf(clean),
+                selectedTagChecklistId = scopedChecklistId
+            )
         }
     }
 
@@ -489,26 +541,192 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun createTagInPool(
         name: String,
         iconKey: String,
+        scope: TagScope = TagScope.GLOBAL,
+        checklistId: Long? = null,
         onCreated: (TagDefinition) -> Unit = {}
     ) {
         val cleanName = TagCatalog.sanitizeTagName(name)
         if (cleanName.isEmpty()) return
+        if (scope == TagScope.CHECKLIST && (checklistId == null || checklistId <= 0L)) return
         val newTag = TagDefinition(
             name = cleanName,
-            iconKey = iconKey.ifBlank { TagCatalog.DEFAULT_ICON_KEY }
+            iconKey = iconKey.ifBlank { TagCatalog.DEFAULT_ICON_KEY },
+            scope = scope
         )
         viewModelScope.launch {
-            preferencesRepository.addOrUpdateTag(newTag)
+            if (scope == TagScope.CHECKLIST && checklistId != null) {
+                preferencesRepository.addOrUpdateChecklistTag(checklistId, newTag)
+            } else {
+                preferencesRepository.addOrUpdateTag(newTag)
+            }
             onCreated(newTag)
         }
     }
 
-    fun updateItemTags(itemId: Long, tags: List<String>, onUpdated: () -> Unit = {}) {
-        val serialized = TagCatalog.serializeItemTags(tags)
+    fun deleteTagFromPool(
+        tag: TagDefinition,
+        checklistId: Long? = null,
+        onDeleted: (DeletedTagSnapshot) -> Unit = {}
+    ) {
+        val cleanName = TagCatalog.sanitizeTagName(tag.name)
+        if (cleanName.isEmpty()) return
+        val scope = tag.scope
+        val targetChecklistId = if (scope == TagScope.CHECKLIST) checklistId else null
+        if (scope == TagScope.CHECKLIST && (targetChecklistId == null || targetChecklistId <= 0L)) return
+
+        val targetToken = TagCatalog.encodeTagToken(cleanName, scope)
+        val wasActiveFilterTag = targetToken in _filterState.value.selectedTags &&
+            (targetChecklistId == null || _filterState.value.selectedTagChecklistId == targetChecklistId)
+        if (wasActiveFilterTag) {
+            _filterState.update { current ->
+                val remaining = current.selectedTags - targetToken
+                current.copy(
+                    selectedTags = remaining,
+                    selectedTagChecklistId = if (remaining.none { TagCatalog.isChecklistTagToken(it) }) {
+                        null
+                    } else {
+                        current.selectedTagChecklistId
+                    }
+                )
+            }
+        }
+
+        if (targetChecklistId != null) {
+            if (lastAddedTagTokenByChecklist[targetChecklistId] == targetToken) {
+                lastAddedTagTokenByChecklist.remove(targetChecklistId)
+            }
+        } else {
+            lastAddedTagTokenByChecklist.entries.removeAll { it.value == targetToken }
+        }
+
+        val currentItems = resolvedAllItems.value
+        val optimisticUpdated = LinkedHashMap<Long, String>()
+        val optimisticPrevSnapshot = LinkedHashMap<Long, String>()
+        for (item in currentItems) {
+            if (targetChecklistId != null && item.checklistId != targetChecklistId) continue
+            val parsed = TagCatalog.parseItemTags(item.tags)
+            if (targetToken in parsed) {
+                optimisticPrevSnapshot[item.id] = item.tags
+                optimisticUpdated[item.id] = TagCatalog.serializeItemTags(
+                    parsed.filterNot { it == targetToken }
+                )
+            }
+        }
+        if (optimisticUpdated.isNotEmpty()) {
+            _optimisticItemTags.update { it + optimisticUpdated }
+        }
+        viewModelScope.launch {
+            val (removedDef, removedIndex) = if (targetChecklistId != null) {
+                preferencesRepository.removeChecklistTag(targetChecklistId, cleanName)
+            } else {
+                preferencesRepository.removeTag(cleanName)
+            }
+            val dbSnapshot = repository.stripTagFromAllItems(
+                tagToken = targetToken,
+                checklistId = targetChecklistId
+            )
+            val mergedPrev = if (dbSnapshot.isNotEmpty()) dbSnapshot else optimisticPrevSnapshot
+            onDeleted(
+                DeletedTagSnapshot(
+                    tag = removedDef ?: tag.copy(name = cleanName, scope = scope),
+                    checklistId = targetChecklistId,
+                    poolIndex = if (removedIndex >= 0) removedIndex else 0,
+                    previousTagsByItemId = mergedPrev,
+                    wasActiveFilterTag = wasActiveFilterTag
+                )
+            )
+        }
+    }
+
+    fun restoreDeletedTag(snapshot: DeletedTagSnapshot) {
+        if (snapshot.previousTagsByItemId.isNotEmpty()) {
+            _optimisticItemTags.update { it + snapshot.previousTagsByItemId }
+        }
+        if (snapshot.wasActiveFilterTag) {
+            _filterState.update { current ->
+                current.copy(
+                    selectedTags = setOf(snapshot.tag.storageToken),
+                    selectedTagChecklistId = snapshot.checklistId
+                )
+            }
+        }
+        viewModelScope.launch {
+            if (snapshot.tag.scope == TagScope.CHECKLIST && snapshot.checklistId != null) {
+                preferencesRepository.insertChecklistTagAt(
+                    checklistId = snapshot.checklistId,
+                    tag = snapshot.tag,
+                    index = snapshot.poolIndex
+                )
+            } else {
+                preferencesRepository.insertTagAt(snapshot.tag, snapshot.poolIndex)
+            }
+            repository.restoreItemTagsSnapshot(snapshot.previousTagsByItemId)
+        }
+    }
+
+    fun updateItemTags(
+        checklistId: Long,
+        itemId: Long,
+        previousTags: List<String>,
+        tags: List<String>,
+        onUpdated: () -> Unit = {}
+    ) {
+        val cleanPrev = previousTags.map { TagCatalog.sanitizeTagToken(it) }.filter { it.isNotEmpty() }
+        val cleanNext = tags.map { TagCatalog.sanitizeTagToken(it) }.filter { it.isNotEmpty() }
+            .distinct()
+            .take(TagCatalog.MAX_TAGS_PER_ITEM)
+        val newlyAdded = cleanNext.filterNot { it in cleanPrev }
+        if (newlyAdded.isNotEmpty()) {
+            lastAddedTagTokenByChecklist[checklistId] = newlyAdded.last()
+        }
+        val serialized = TagCatalog.serializeItemTags(cleanNext)
         _optimisticItemTags.update { it + (itemId to serialized) }
         viewModelScope.launch {
             repository.updateItemTags(itemId = itemId, serializedTags = serialized)
             onUpdated()
+        }
+    }
+
+    fun quickToggleLastAddedTag(
+        checklistId: Long,
+        item: CheckItemEntity,
+        onResult: (QuickTagToggleResult) -> Unit
+    ) {
+        val globalTags = tagPool.value
+        val localTags = checklistTagPools.value[checklistId].orEmpty()
+        val availableTags = globalTags + localTags
+
+        val recordedToken = lastAddedTagTokenByChecklist[checklistId]
+        val resolvedTag = recordedToken?.let { token ->
+            availableTags.firstOrNull { it.storageToken == token }
+        } ?: globalTags.firstOrNull { it.name == TagCatalog.DEFAULT_TAG_NAME }
+            ?: globalTags.firstOrNull()
+
+        if (resolvedTag == null) {
+            onResult(QuickTagToggleResult.NoTagAvailable)
+            return
+        }
+
+        val targetToken = resolvedTag.storageToken
+        val currentTokens = TagCatalog.parseItemTags(item.tags)
+        if (targetToken in currentTokens) {
+            val nextTokens = currentTokens.filterNot { it == targetToken }
+            val serialized = TagCatalog.serializeItemTags(nextTokens)
+            _optimisticItemTags.update { it + (item.id to serialized) }
+            viewModelScope.launch {
+                repository.updateItemTags(itemId = item.id, serializedTags = serialized)
+            }
+            onResult(QuickTagToggleResult.Removed(resolvedTag))
+        } else if (currentTokens.size >= TagCatalog.MAX_TAGS_PER_ITEM) {
+            onResult(QuickTagToggleResult.LimitReached)
+        } else {
+            val nextTokens = currentTokens + targetToken
+            val serialized = TagCatalog.serializeItemTags(nextTokens)
+            _optimisticItemTags.update { it + (item.id to serialized) }
+            viewModelScope.launch {
+                repository.updateItemTags(itemId = item.id, serializedTags = serialized)
+            }
+            onResult(QuickTagToggleResult.Added(resolvedTag))
         }
     }
 
